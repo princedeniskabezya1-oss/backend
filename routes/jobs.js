@@ -2,50 +2,66 @@ const express = require("express");
 const router = express.Router();
 const Job = require("../models/Job");
 
-/* =========================
-   GET /api/jobs
-========================= */
+/*
+  GET /api/jobs
+  Public – all active jobs (job seekers)
+*/
 router.get("/", async (req, res) => {
   try {
-    const jobs = await Job.find().sort({ createdAt: -1 });
+    const jobs = await Job.find({ status: "active" }).sort({ createdAt: -1 });
     res.json(jobs);
   } catch (err) {
-    console.error(err);
     res.status(500).json({ message: "Failed to fetch jobs" });
   }
 });
 
-/* =========================
-   POST /api/jobs
-========================= */
+/*
+  GET /api/jobs/company/:company
+  Company – only their jobs
+*/
+router.get("/company/:company", async (req, res) => {
+  try {
+    const jobs = await Job.find({
+      company: req.params.company
+    }).sort({ createdAt: -1 });
+
+    res.json(jobs);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch company jobs" });
+  }
+});
+
+/*
+  POST /api/jobs
+  Company posts job
+*/
 router.post("/", async (req, res) => {
   try {
-    const { title, company, location, description, type } = req.body;
-
-    // ✅ validation
-    if (!title || !company || !location || !description) {
-      return res.status(400).json({
-        message: "Missing required fields",
-      });
-    }
-
-    const job = new Job({
-      title,
-      company,
-      location,
-      description,
-      type: type || "Full-time",
-      status: "active",
-    });
-
+    const job = new Job(req.body);
     const savedJob = await job.save();
-
-    console.log("✅ Job saved to MongoDB:", savedJob);
-
     res.status(201).json(savedJob);
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: "Error creating job" });
+    res.status(400).json({ message: "Failed to create job" });
+  }
+});
+
+/*
+  PATCH /api/jobs/:id/status
+  Admin – approve / suspend
+*/
+router.patch("/:id/status", async (req, res) => {
+  try {
+    const { status } = req.body;
+
+    const job = await Job.findByIdAndUpdate(
+      req.params.id,
+      { status },
+      { new: true }
+    );
+
+    res.json(job);
+  } catch (err) {
+    res.status(400).json({ message: "Failed to update job status" });
   }
 });
 
