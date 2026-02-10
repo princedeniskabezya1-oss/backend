@@ -33,4 +33,36 @@ router.get("/", (req, res) => {
   res.json(jobs);
 });
 
+/*
+  POST /api/jobs
+*/
+router.post("/", (req, res) => {
+  const { title, company, location, description, type } = req.body;
+
+  // ✅ BASIC VALIDATION
+  if (!title || !company || !location || !description) {
+    return res.status(400).json({
+      message: "Missing required fields"
+    });
+  }
+
+  const newJob = {
+    id: jobs.length + 1,
+    title,
+    company,
+    location,
+    description,
+    type: type || "Full-time",
+    status: "active",
+    postedAt: "Just now"
+  };
+
+  jobs.unshift(newJob); // add to top
+
+  console.log("✅ New job posted:", newJob);
+
+  res.status(201).json(newJob);
+});
+
 module.exports = router;
+
