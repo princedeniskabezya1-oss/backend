@@ -22,13 +22,22 @@ const JobSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    salary: {
+      type: String,
+    },
+    employerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true,
+    },
     status: {
       type: String,
-      default: "active",
+      enum: ["pending", "active", "suspended", "rejected"],
+      default: "pending", // 🔥 jobs must be approved by admin
     },
   },
   {
-    timestamps: true, // adds createdAt & updatedAt
+    timestamps: true,
   }
 );
 
