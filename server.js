@@ -36,6 +36,7 @@ app.get("/", (req, res) => {
 app.use("/api/auth", authRoutes);
 app.use("/api/jobs", jobsRoutes);
 app.use("/api/applications", applicationRoutes);
+app.use("/api/users", userRoutes);
 
 /* ============================================
    DATABASE CONNECTION
