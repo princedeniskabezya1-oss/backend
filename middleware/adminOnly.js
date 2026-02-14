@@ -1,14 +1,13 @@
-module.exports = function adminOnly(req, res, next) {
-  // TEMP admin check (later replaced by JWT)
-  const adminEmail = "princedeniskabezya1@gmail.com";
+const auth = require("./auth");
 
-  const userEmail = req.headers["x-user-email"];
-
-  if (!userEmail || userEmail !== adminEmail) {
-    return res.status(403).json({
-      message: "Admin access required"
-    });
+module.exports = [
+  auth,
+  (req, res, next) => {
+    if (req.user.role !== "admin") {
+      return res.status(403).json({
+        message: "Admin access only"
+      });
+    }
+    next();
   }
-
-  next();
-};
+];
