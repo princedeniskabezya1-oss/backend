@@ -4,30 +4,43 @@ const cors = require("cors");
 require("dotenv").config();
 
 const authRoutes = require("./routes/auth");
+const jobsRoutes = require("./routes/jobs");
 const applicationRoutes = require("./routes/applications");
 
 const app = express();
-const jobsRoutes = require("./routes/jobs");
 
-// Middlewares
-app.use(cors());
+/* ============================================
+   CORS CONFIGURATION (FIXED FOR PREFLIGHT)
+============================================ */
+app.use(cors({
+  origin: "*", // you can restrict later to your Vercel domain
+  methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+
+// Explicitly handle preflight requests
+app.options("*", cors());
+
+/* ============================================
+   MIDDLEWARES
+============================================ */
 app.use(express.json());
-app.use("/api/jobs", jobsRoutes);
 
-
-// Test route (to check if backend works)
+/* ============================================
+   ROUTES
+============================================ */
 app.get("/", (req, res) => {
   res.send("Backend is running 🟢");
 });
 
-// Routes
 app.use("/api/auth", authRoutes);
+app.use("/api/jobs", jobsRoutes);
 app.use("/api/applications", applicationRoutes);
 
-
-// Connect to MongoDB
-mongoose
-  .connect(process.env.MONGO_URI)
+/* ============================================
+   DATABASE CONNECTION
+============================================ */
+mongoose.connect(process.env.MONGO_URI)
   .then(() => {
     console.log("MongoDB connected");
     app.listen(process.env.PORT || 5000, () => {
