@@ -7,23 +7,54 @@ const adminOnly = require("../middleware/adminOnly");
 /*
 ================================================
 GET /api/jobs
-Public – all ACTIVE jobs (for talents)
+Public – all ACTIVE jobs
+================================================
+*/
+router.get("/", async (req, res) => {
+  try {
+    const jobs = await Job.find({ status: "active" })
+      .sort({ createdAt: -1 });
+
+    res.json(jobs);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch jobs" });
+  }
+});
+
+/*
+================================================
+GET /api/jobs/pending
+Admin – view pending jobs
+================================================
+*/
+router.get("/pending", adminOnly, async (req, res) => {
+  try {
+    const jobs = await Job.find({ status: "pending" })
+      .sort({ createdAt: -1 });
+
+    res.json(jobs);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to fetch pending jobs" });
+  }
+});
+
+/*
+================================================
+GET /api/jobs/admin/all
+Admin – view ALL jobs
 ================================================
 */
 router.get("/admin/all", adminOnly, async (req, res) => {
   try {
-
     const jobs = await Job.find()
+      .populate("employerId", "name email")
       .sort({ createdAt: -1 });
 
     res.json(jobs);
-
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch all jobs" });
   }
 });
-
-
 
 /*
 ================================================
@@ -46,55 +77,14 @@ router.get("/my", auth, async (req, res) => {
   }
 });
 
-
-/*
-================================================
-GET /api/jobs/admin/all
-Admin – view ALL jobs (any status)
-================================================
-*/
-router.get("/admin/all", adminOnly, async (req, res) => {
-  try {
-
-    const jobs = await Job.find()
-      .populate("employerId", "name email")
-      .sort({ createdAt: -1 });
-
-    res.json(jobs);
-
-  } catch (err) {
-    res.status(500).json({ message: "Failed to fetch all jobs" });
-  }
-});
-
-
-/*
-================================================
-DELETE /api/jobs/:id
-Admin – delete job
-================================================
-*/
-router.delete("/:id", adminOnly, async (req, res) => {
-  try {
-
-    await Job.findByIdAndDelete(req.params.id);
-
-    res.json({ message: "Job deleted successfully" });
-
-  } catch (err) {
-    res.status(400).json({ message: "Failed to delete job" });
-  }
-});
-
 /*
 ================================================
 POST /api/jobs
-Employer – create job (auto pending)
+Employer – create job
 ================================================
 */
 router.post("/", auth, async (req, res) => {
   try {
-
     if (req.user.role !== "employer") {
       return res.status(403).json({
         message: "Only employers can post jobs"
@@ -120,7 +110,6 @@ router.post("/", auth, async (req, res) => {
   }
 });
 
-
 /*
 ================================================
 PATCH /api/jobs/:id/status
@@ -129,7 +118,6 @@ Admin – approve / reject / suspend
 */
 router.patch("/:id/status", adminOnly, async (req, res) => {
   try {
-
     const { status } = req.body;
 
     if (!["active", "suspended", "rejected"].includes(status)) {
@@ -146,6 +134,21 @@ router.patch("/:id/status", adminOnly, async (req, res) => {
 
   } catch (err) {
     res.status(400).json({ message: "Failed to update job status" });
+  }
+});
+
+/*
+================================================
+DELETE /api/jobs/:id
+Admin – delete job
+================================================
+*/
+router.delete("/:id", adminOnly, async (req, res) => {
+  try {
+    await Job.findByIdAndDelete(req.params.id);
+    res.json({ message: "Job deleted successfully" });
+  } catch (err) {
+    res.status(400).json({ message: "Failed to delete job" });
   }
 });
 
