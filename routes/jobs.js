@@ -49,20 +49,24 @@ router.get("/my", auth, async (req, res) => {
 
 /*
 ================================================
-GET /api/jobs/pending
-Admin – view pending jobs
+GET /api/jobs/admin/all
+Admin – view ALL jobs (any status)
 ================================================
 */
-router.get("/pending", adminOnly, async (req, res) => {
+router.get("/admin/all", adminOnly, async (req, res) => {
   try {
-    const jobs = await Job.find({ status: "pending" })
+
+    const jobs = await Job.find()
+      .populate("employerId", "name email")
       .sort({ createdAt: -1 });
 
     res.json(jobs);
+
   } catch (err) {
-    res.status(500).json({ message: "Failed to fetch pending jobs" });
+    res.status(500).json({ message: "Failed to fetch all jobs" });
   }
 });
+
 
 
 /*
