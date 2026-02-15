@@ -6,6 +6,7 @@ require("dotenv").config();
 const authRoutes = require("./routes/auth");
 const jobsRoutes = require("./routes/jobs");
 const applicationRoutes = require("./routes/applications");
+const adminStatsRoutes = require("./routes/adminStats");
 const userRoutes = require("./routes/users"); // ✅ ADD THIS
 
 const app = express();
@@ -36,6 +37,7 @@ app.get("/", (req, res) => {
 
 app.use("/api/auth", authRoutes);
 app.use("/api/jobs", jobsRoutes);
+app.use("/api/admin", adminStatsRoutes);
 app.use("/api/applications", applicationRoutes);
 app.use("/api/users", userRoutes);
 
