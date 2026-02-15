@@ -79,18 +79,75 @@ const UserSchema = new mongoose.Schema(
       default: "none"
     },
 
-    /* ============================================
-       PROFILE EXTENSIONS (Future ready)
-    ============================================ */
-    companyName: {
-      type: String,
-      default: null
-    },
+/* ============================================
+   PROFILE EXTENSIONS (LinkedIn Style)
+============================================ */
+companyName: {
+  type: String,
+  default: null
+},
 
-    profileImage: {
-      type: String,
-      default: null
-    }
+headline: {
+  type: String,
+  default: null
+},
+
+bio: {
+  type: String,
+  default: null
+},
+
+location: {
+  type: String,
+  default: null
+},
+
+website: {
+  type: String,
+  default: null
+},
+
+profileImage: {
+  type: String,
+  default: null
+},
+
+bannerImage: {
+  type: String,
+  default: null
+},
+
+followers: {
+  type: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User"
+  }],
+  default: []
+},
+
+
+following: {
+  type: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User"
+  }],
+  default: []
+},
+
+
+/* ============================================
+   PRO ACCOUNT SYSTEM
+============================================ */
+isPro: {
+  type: Boolean,
+  default: false
+},
+
+proSince: {
+  type: Date,
+  default: null
+}
+
 
   },
   {
@@ -101,7 +158,6 @@ const UserSchema = new mongoose.Schema(
 /* ============================================
    INDEXES FOR PERFORMANCE
 ============================================ */
-UserSchema.index({ email: 1 });
 UserSchema.index({ referralCode: 1 });
 
 module.exports = mongoose.model("User", UserSchema);

@@ -8,6 +8,7 @@ const jobsRoutes = require("./routes/jobs");
 const applicationRoutes = require("./routes/applications");
 const adminStatsRoutes = require("./routes/adminStats");
 const userRoutes = require("./routes/users"); // ✅ ADD THIS
+const postRoutes = require("./routes/posts");
 
 const app = express();
 
@@ -40,6 +41,8 @@ app.use("/api/jobs", jobsRoutes);
 app.use("/api/admin", adminStatsRoutes);
 app.use("/api/applications", applicationRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/posts", postRoutes);
+
 
 /* ============================================
    DATABASE CONNECTION
