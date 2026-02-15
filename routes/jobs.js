@@ -68,6 +68,23 @@ router.get("/admin/all", adminOnly, async (req, res) => {
 });
 
 
+/*
+================================================
+DELETE /api/jobs/:id
+Admin – delete job
+================================================
+*/
+router.delete("/:id", adminOnly, async (req, res) => {
+  try {
+
+    await Job.findByIdAndDelete(req.params.id);
+
+    res.json({ message: "Job deleted successfully" });
+
+  } catch (err) {
+    res.status(400).json({ message: "Failed to delete job" });
+  }
+});
 
 /*
 ================================================
