@@ -10,16 +10,19 @@ GET /api/jobs
 Public – all ACTIVE jobs (for talents)
 ================================================
 */
-router.get("/", async (req, res) => {
+router.get("/admin/all", adminOnly, async (req, res) => {
   try {
-    const jobs = await Job.find({ status: "active" })
+
+    const jobs = await Job.find()
       .sort({ createdAt: -1 });
 
     res.json(jobs);
+
   } catch (err) {
-    res.status(500).json({ message: "Failed to fetch jobs" });
+    res.status(500).json({ message: "Failed to fetch all jobs" });
   }
 });
+
 
 
 /*
