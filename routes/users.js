@@ -4,13 +4,40 @@ const auth = require("../middleware/auth");
 const User = require("../models/User");
 
 /*
-  GET /api/users/referred
-  Agent: see all users referred by them
+================================================
+GET /api/users
+Admin – view all users
+================================================
+*/
+router.get("/", auth, async (req, res) => {
+  try {
+
+    if (req.user.role !== "admin") {
+      return res.status(403).json({
+        message: "Admin access only"
+      });
+    }
+
+    const users = await User.find().select("-password");
+    res.json(users);
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({
+      message: "Server error"
+    });
+  }
+});
+
+/*
+================================================
+GET /api/users/referred
+Agent – see all users referred by them
+================================================
 */
 router.get("/referred", auth, async (req, res) => {
   try {
 
-    // Only agent can access
     if (req.user.role !== "agent") {
       return res.status(403).json({
         message: "Access denied. Agents only."
@@ -19,7 +46,7 @@ router.get("/referred", auth, async (req, res) => {
 
     const referredUsers = await User.find({
       referredBy: req.user.id
-    }).select("-password"); // hide password
+    }).select("-password");
 
     res.json(referredUsers);
 
@@ -32,4 +59,3 @@ router.get("/referred", auth, async (req, res) => {
 });
 
 module.exports = router;
-
