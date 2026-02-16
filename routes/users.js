@@ -190,6 +190,42 @@ router.get("/:id/public", async (req, res) => {
   }
 });
 
+/*
+=========================================
+FOLLOW USER
+=========================================
+*/
+router.post("/:id/follow", auth, async (req, res) => {
+  try {
+
+    if (req.user.id === req.params.id) {
+      return res.status(400).json({ message: "Cannot follow yourself" });
+    }
+
+    const userToFollow = await User.findById(req.params.id);
+    const currentUser = await User.findById(req.user.id);
+
+    const alreadyFollowing = currentUser.following.includes(req.params.id);
+
+    if (alreadyFollowing) {
+      currentUser.following.pull(req.params.id);
+      userToFollow.followers.pull(req.user.id);
+    } else {
+      currentUser.following.push(req.params.id);
+      userToFollow.followers.push(req.user.id);
+    }
+
+    await currentUser.save();
+    await userToFollow.save();
+
+    res.json({ message: "Follow updated" });
+
+  } catch (err) {
+    res.status(400).json({ message: "Follow failed" });
+  }
+});
+
 module.exports = router;
+
 
 
