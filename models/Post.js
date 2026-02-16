@@ -20,7 +20,8 @@ const PostSchema = new mongoose.Schema({
   */
   content: {
     type: String,
-    trim: true
+    trim: true,
+    default: ""
   },
 
   /*
@@ -47,6 +48,21 @@ const PostSchema = new mongoose.Schema({
   likes: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: "User"
+  }],
+
+  comments: [{
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User"
+    },
+    text: {
+      type: String,
+      trim: true
+    },
+    createdAt: {
+      type: Date,
+      default: Date.now
+    }
   }]
 
 }, { timestamps: true });
