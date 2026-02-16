@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require("bcryptjs");
 const User = require("../models/User");
 const auth = require("../middleware/auth");
+const upload = require("../middleware/upload");
 const adminOnly = require("../middleware/adminOnly");
 
 /*
@@ -120,4 +121,50 @@ router.delete("/:id", adminOnly, async (req, res) => {
   }
 });
 
+/*
+=========================================
+UPDATE PROFILE (Photo + Banner)
+=========================================
+*/
+router.patch(
+  "/profile",
+  auth,
+  upload.fields([
+    { name: "profileImage", maxCount: 1 },
+    { name: "bannerImage", maxCount: 1 }
+  ]),
+  async (req, res) => {
+    try {
+
+      const updates = {
+        name: req.body.name,
+        headline: req.body.headline,
+        bio: req.body.bio,
+        location: req.body.location,
+        website: req.body.website
+      };
+
+      if (req.files.profileImage) {
+        updates.profileImage = req.files.profileImage[0].path;
+      }
+
+      if (req.files.bannerImage) {
+        updates.bannerImage = req.files.bannerImage[0].path;
+      }
+
+      const user = await User.findByIdAndUpdate(
+        req.user.id,
+        updates,
+        { new: true }
+      ).select("-password");
+
+      res.json(user);
+
+    } catch (err) {
+      res.status(400).json({ message: "Profile update failed" });
+    }
+  }
+);
+
 module.exports = router;
+
