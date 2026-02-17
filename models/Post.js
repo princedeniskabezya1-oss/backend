@@ -20,8 +20,7 @@ const PostSchema = new mongoose.Schema({
   */
   content: {
     type: String,
-    trim: true,
-    default: ""
+    trim: true
   },
 
   /*
@@ -36,7 +35,7 @@ const PostSchema = new mongoose.Schema({
 
   mediaType: {
     type: String,
-    enum: ["image", "video", null],
+    enum: ["image", "video"],
     default: null
   },
 
@@ -57,7 +56,7 @@ const PostSchema = new mongoose.Schema({
     },
     text: {
       type: String,
-      trim: true
+      required: true
     },
     createdAt: {
       type: Date,
