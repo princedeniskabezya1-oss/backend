@@ -224,6 +224,38 @@ router.post("/:id/follow", auth, async (req, res) => {
     res.status(400).json({ message: "Follow failed" });
   }
 });
+/*
+=========================================
+FOLLOW / UNFOLLOW
+=========================================
+*/
+router.patch("/:id/follow", auth, async (req, res) => {
+
+  const targetUser = await User.findById(req.params.id);
+  const currentUser = await User.findById(req.user.id);
+
+  if (!targetUser) {
+    return res.status(404).json({ message: "User not found" });
+  }
+
+  const isFollowing = currentUser.following.includes(targetUser._id);
+
+  if (isFollowing) {
+    currentUser.following.pull(targetUser._id);
+    targetUser.followers.pull(currentUser._id);
+  } else {
+    currentUser.following.push(targetUser._id);
+    targetUser.followers.push(currentUser._id);
+  }
+
+  await currentUser.save();
+  await targetUser.save();
+
+  res.json({
+    followers: targetUser.followers.length
+  });
+});
+
 
 module.exports = router;
 

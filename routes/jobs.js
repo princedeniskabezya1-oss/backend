@@ -151,5 +151,31 @@ router.delete("/:id", adminOnly, async (req, res) => {
     res.status(400).json({ message: "Failed to delete job" });
   }
 });
+const Application = require("../models/Application");
+
+/*
+=========================================
+EMPLOYER DASHBOARD STATS
+=========================================
+*/
+router.get("/employer/stats", auth, async (req, res) => {
+
+  const jobs = await require("../models/Job").find({
+    employerId: req.user.id
+  });
+
+  const jobIds = jobs.map(j => j._id);
+
+  const applications = await Application.find({
+    jobId: { $in: jobIds }
+  });
+
+  res.json({
+    totalJobs: jobs.length,
+    activeJobs: jobs.filter(j => j.status === "active").length,
+    totalApplications: applications.length
+  });
+});
+
 
 module.exports = router;
