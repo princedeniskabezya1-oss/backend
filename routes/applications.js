@@ -79,7 +79,7 @@ GET /api/applications
 Admin – all applications
 ================================================
 */
-router.get("/", adminOnly, async (req, res) => {
+router.get("/", auth, async (req, res) => {
   try {
     const apps = await Application.find()
       .populate("jobId")
