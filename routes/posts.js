@@ -8,6 +8,8 @@ const User = require("../models/User");
 const auth = require("../middleware/auth");
 const upload = require("../middleware/upload");
 
+const cloudinary = require("../config/cloudinary");
+
 /* =====================================================
    CREATE POST
 ===================================================== */
@@ -18,10 +20,22 @@ router.post("/", auth, upload.single("media"), async (req, res) => {
     let mediaType = null;
 
     if (req.file) {
-      mediaUrl = req.file.path;
-      mediaType = req.file.mimetype.startsWith("video")
-        ? "video"
-        : "image";
+
+      const uploadResult = await new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream(
+          {
+            folder: "aift_media",
+            resource_type: "auto"
+          },
+          (error, result) => {
+            if (error) return reject(error);
+            resolve(result);
+          }
+        ).end(req.file.buffer);
+      });
+
+      mediaUrl = uploadResult.secure_url;
+      mediaType = uploadResult.resource_type === "video" ? "video" : "image";
     }
 
     const newPost = new Post({
@@ -44,7 +58,6 @@ router.post("/", auth, upload.single("media"), async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
-
 /* =====================================================
    GET FEED
 ===================================================== */
