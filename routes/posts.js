@@ -72,11 +72,13 @@ router.get("/", auth, async (req, res) => {
 
     res.json(posts);
 
-  } catch (err) {
-    console.error("FEED ERROR:", err);
-    res.status(500).json({ message: err.message });
-  }
-});
+ } catch (err) {
+  console.error("CREATE POST ERROR FULL:", err);
+  res.status(500).json({
+    error: err.message,
+    stack: err.stack
+  });
+}
 
 /* =====================================================
    LIKE / UNLIKE
