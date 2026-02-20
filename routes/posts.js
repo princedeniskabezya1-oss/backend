@@ -22,7 +22,7 @@ router.post(
         content: req.body.content || "",
         mediaUrl: req.file ? req.file.path : null,
         mediaType: req.file
-          ? req.file.mimetype.startsWith("video")
+          ? req.file.mimetype.startsWith("video") 
             ? "video"
             : "image"
           : null
@@ -52,11 +52,12 @@ router.get("/", auth, async (req, res) => {
 
     const user = await User.findById(req.user.id);
 
-    const posts = await Post.find({
-      author: { $in: [...user.following, req.user.id] }
-    })
-      .populate("author", "name profileImage headline isPro followers")
-      .sort({ createdAt: -1 });
+const posts = await Post.find({
+  author: { $in: [...user.following, req.user.id] }
+})
+  .populate("author", "name profileImage headline isPro followers")
+  .populate("comments.user", "name profileImage")
+  .sort({ createdAt: -1 });
 
     res.json(posts);
 
