@@ -147,7 +147,37 @@ proSince: {
   type: Date,
   default: null
 }
+/* ============================================
+   PROFESSIONAL PROFILE SYSTEM
+============================================ */
 
+experience: [
+  {
+    title: { type: String },
+    company: { type: String },
+    startDate: { type: String },
+    endDate: { type: String },
+    description: { type: String }
+  }
+],
+
+education: [
+  {
+    school: { type: String },
+    degree: { type: String },
+    year: { type: String }
+  }
+],
+
+skills: {
+  type: [String],
+  default: []
+},
+
+cvUrl: {
+  type: String,
+  default: null
+}
 
   },
   {
