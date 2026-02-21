@@ -154,5 +154,21 @@ router.post("/:id/comment", auth, async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
+/* =========================================
+   GET POSTS BY USER
+========================================= */
+router.get("/user/:id", auth, async (req, res) => {
+  try {
+
+    const posts = await Post.find({ author: req.params.id })
+      .populate("author", "name profileImage headline")
+      .sort({ createdAt: -1 });
+
+    res.json(posts);
+
+  } catch (err) {
+    res.status(500).json({ message: "Failed to load user posts" });
+  }
+});
 
 module.exports = router;
