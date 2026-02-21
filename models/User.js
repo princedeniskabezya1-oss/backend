@@ -146,7 +146,7 @@ isPro: {
 proSince: {
   type: Date,
   default: null
-}
+},
 /* ============================================
    PROFESSIONAL PROFILE SYSTEM
 ============================================ */
@@ -188,6 +188,6 @@ cvUrl: {
 /* ============================================
    INDEXES FOR PERFORMANCE
 ============================================ */
-UserSchema.index({ referralCode: 1 });
+
 
 module.exports = mongoose.model("User", UserSchema);
