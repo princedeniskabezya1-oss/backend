@@ -136,6 +136,33 @@ if (req.body.location && req.body.location.trim() !== "") {
 if (req.body.website && req.body.website.trim() !== "") {
   user.website = req.body.website;
 }
+/* =============================
+   EXPERIENCE / EDUCATION / SKILLS UPDATE
+============================= */
+
+if (req.body.experience) {
+  try {
+    user.experience = JSON.parse(req.body.experience);
+  } catch (e) {
+    console.log("Experience parse error");
+  }
+}
+
+if (req.body.education) {
+  try {
+    user.education = JSON.parse(req.body.education);
+  } catch (e) {
+    console.log("Education parse error");
+  }
+}
+
+if (req.body.skills) {
+  try {
+    user.skills = JSON.parse(req.body.skills);
+  } catch (e) {
+    console.log("Skills parse error");
+  }
+}
 
       /* =============================
          PROFILE IMAGE UPLOAD
