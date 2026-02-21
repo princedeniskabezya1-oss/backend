@@ -87,11 +87,25 @@ router.patch(
       }
 
       // Update basic fields if provided
-      if (req.body.name) user.name = req.body.name;
-      if (req.body.headline) user.headline = req.body.headline;
-      if (req.body.bio) user.bio = req.body.bio;
-      if (req.body.location) user.location = req.body.location;
-      if (req.body.website) user.website = req.body.website;
+if (req.body.name && req.body.name.trim() !== "") {
+  user.name = req.body.name;
+}
+
+if (req.body.headline && req.body.headline.trim() !== "") {
+  user.headline = req.body.headline;
+}
+
+if (req.body.bio && req.body.bio.trim() !== "") {
+  user.bio = req.body.bio;
+}
+
+if (req.body.location && req.body.location.trim() !== "") {
+  user.location = req.body.location;
+}
+
+if (req.body.website && req.body.website.trim() !== "") {
+  user.website = req.body.website;
+}
 
       /* =============================
          PROFILE IMAGE UPLOAD
