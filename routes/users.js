@@ -187,39 +187,29 @@ if (req.body.skills) {
         user.profileImage = uploadResult.secure_url;
       }
 
-      /* =============================
-         BANNER IMAGE UPLOAD
-      ============================== */
-      if (req.files && req.files.bannerImage) {
+/* =============================
+   BANNER IMAGE UPLOAD
+============================= */
+if (req.files && req.files.bannerImage) {
 
-        const bannerFile = req.files.bannerImage[0];
+  const bannerFile = req.files.bannerImage[0];
 
-        const uploadResult = await new Promise((resolve, reject) => {
-          cloudinary.uploader.upload_stream(
-            {
-              folder: "aift_banners",
-              resource_type: "auto"
-            },
-            (error, result) => {
-              if (error) return reject(error);
-              resolve(result);
-            }
-          ).end(bannerFile.buffer);
-        });
-
-        user.bannerImage = uploadResult.secure_url;
+  const uploadResult = await new Promise((resolve, reject) => {
+    cloudinary.uploader.upload_stream(
+      {
+        folder: "aift_banners",
+        resource_type: "auto"
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
       }
+    ).end(bannerFile.buffer);
+  });
 
-      await user.save();
+  user.bannerImage = uploadResult.secure_url;
+}
 
-      res.json(user);
-
-    } catch (err) {
-      console.error("PROFILE UPDATE ERROR:", err);
-      res.status(500).json({ message: err.message });
-    }
-  }
-);
 /* =============================
    CV UPLOAD
 ============================= */
@@ -242,6 +232,18 @@ if (req.files && req.files.cv) {
 
   user.cvUrl = uploadResult.secure_url;
 }
+
+      await user.save();
+
+      res.json(user);
+
+    } catch (err) {
+      console.error("PROFILE UPDATE ERROR:", err);
+      res.status(500).json({ message: err.message });
+    }
+  }
+);
+
 /* ======================================================
    FOLLOW / UNFOLLOW USER
 ====================================================== */
