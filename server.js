@@ -1,3 +1,4 @@
+const messageRoutes = require("./routes/messages");
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
@@ -42,6 +43,7 @@ app.use("/api/admin", adminStatsRoutes);
 app.use("/api/applications", applicationRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/posts", postRoutes);
+app.use("/api/messages", messageRoutes);
 
 
 /* ============================================
