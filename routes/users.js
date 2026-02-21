@@ -68,6 +68,8 @@ router.get("/me", auth, async (req, res) => {
 /* ======================================================
    UPDATE PROFILE (NAME + HEADLINE + IMAGES)
 ====================================================== */
+const cloudinary = require("../config/cloudinary");
+
 router.patch(
   "/profile",
   auth,
@@ -78,37 +80,75 @@ router.patch(
   async (req, res) => {
     try {
 
-      const updates = {
-        name: req.body.name,
-        headline: req.body.headline,
-        bio: req.body.bio,
-        location: req.body.location,
-        website: req.body.website
-      };
+      const user = await User.findById(req.user.id);
 
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      // Update basic fields if provided
+      if (req.body.name) user.name = req.body.name;
+      if (req.body.headline) user.headline = req.body.headline;
+      if (req.body.bio) user.bio = req.body.bio;
+      if (req.body.location) user.location = req.body.location;
+      if (req.body.website) user.website = req.body.website;
+
+      /* =============================
+         PROFILE IMAGE UPLOAD
+      ============================== */
       if (req.files && req.files.profileImage) {
-        updates.profileImage = req.files.profileImage[0].path;
+
+        const profileFile = req.files.profileImage[0];
+
+        const uploadResult = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream(
+            {
+              folder: "aift_profiles",
+              resource_type: "auto"
+            },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          ).end(profileFile.buffer);
+        });
+
+        user.profileImage = uploadResult.secure_url;
       }
 
+      /* =============================
+         BANNER IMAGE UPLOAD
+      ============================== */
       if (req.files && req.files.bannerImage) {
-        updates.bannerImage = req.files.bannerImage[0].path;
+
+        const bannerFile = req.files.bannerImage[0];
+
+        const uploadResult = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream(
+            {
+              folder: "aift_banners",
+              resource_type: "auto"
+            },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          ).end(bannerFile.buffer);
+        });
+
+        user.bannerImage = uploadResult.secure_url;
       }
 
-      const updatedUser = await User.findByIdAndUpdate(
-        req.user.id,
-        updates,
-        { new: true }
-      ).select("-password");
+      await user.save();
 
-      res.json(updatedUser);
+      res.json(user);
 
     } catch (err) {
       console.error("PROFILE UPDATE ERROR:", err);
-      res.status(400).json({ message: "Profile update failed" });
+      res.status(500).json({ message: err.message });
     }
   }
 );
-
 /* ======================================================
    FOLLOW / UNFOLLOW USER
 ====================================================== */
