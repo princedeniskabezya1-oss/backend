@@ -102,10 +102,11 @@ const cloudinary = require("../config/cloudinary");
 router.patch(
   "/profile",
   auth,
-  upload.fields([
-    { name: "profileImage", maxCount: 1 },
-    { name: "bannerImage", maxCount: 1 }
-  ]),
+upload.fields([
+  { name: "profileImage", maxCount: 1 },
+  { name: "bannerImage", maxCount: 1 },
+  { name: "cv", maxCount: 1 }
+]),
   async (req, res) => {
     try {
 
@@ -192,6 +193,28 @@ if (req.body.website && req.body.website.trim() !== "") {
     }
   }
 );
+/* =============================
+   CV UPLOAD
+============================= */
+if (req.files && req.files.cv) {
+
+  const cvFile = req.files.cv[0];
+
+  const uploadResult = await new Promise((resolve, reject) => {
+    cloudinary.uploader.upload_stream(
+      {
+        folder: "aift_cvs",
+        resource_type: "auto"
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result);
+      }
+    ).end(cvFile.buffer);
+  });
+
+  user.cvUrl = uploadResult.secure_url;
+}
 /* ======================================================
    FOLLOW / UNFOLLOW USER
 ====================================================== */
@@ -240,8 +263,8 @@ router.get("/:id/public", async (req, res) => {
 
     const user = await User.findById(req.params.id)
       .select("-password")
-      .populate("followers", "name profileImage")
-      .populate("following", "name profileImage");
+      .populate("followers", "name profileImage headline role")
+      .populate("following", "name profileImage headline role");
 
     if (!user) {
       return res.status(404).json({ message: "User not found" });
