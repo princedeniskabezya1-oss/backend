@@ -64,6 +64,35 @@ router.get("/me", auth, async (req, res) => {
     res.status(500).json({ message: "Failed to load user" });
   }
 });
+/* =========================================
+   GET MY FOLLOWERS
+========================================= */
+router.get("/me/followers", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id)
+      .populate("followers", "name profileImage headline role");
+
+    res.json(user.followers);
+
+  } catch (err) {
+    res.status(500).json({ message: "Failed to load followers" });
+  }
+});
+
+/* =========================================
+   GET MY FOLLOWING
+========================================= */
+router.get("/me/following", auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id)
+      .populate("following", "name profileImage headline role");
+
+    res.json(user.following);
+
+  } catch (err) {
+    res.status(500).json({ message: "Failed to load following" });
+  }
+});
 
 /* ======================================================
    UPDATE PROFILE (NAME + HEADLINE + IMAGES)
