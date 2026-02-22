@@ -148,6 +148,19 @@ proSince: {
   default: null
 },
 /* ============================================
+   MESSAGING LIMIT SYSTEM
+============================================ */
+
+dailyNewConversations: {
+  type: Number,
+  default: 0
+},
+
+lastMessageReset: {
+  type: Date,
+  default: null
+},
+/* ============================================
    PROFESSIONAL PROFILE SYSTEM
 ============================================ */
 

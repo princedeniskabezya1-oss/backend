@@ -5,17 +5,96 @@ const Message = require("../models/Message");
 const auth = require("../middleware/auth");
 
 /* SEND MESSAGE */
+/* SEND MESSAGE WITH MONETIZATION LOGIC */
 router.post("/", auth, async (req, res) => {
   try {
+
     const { receiverId, text } = req.body;
 
     if (!receiverId || !text) {
       return res.status(400).json({ message: "Missing fields" });
     }
 
+    if (receiverId === req.user.id) {
+      return res.status(400).json({ message: "Cannot message yourself" });
+    }
+
+    const sender = await require("../models/User").findById(req.user.id);
+    const receiver = await require("../models/User").findById(receiverId);
+
+    if (!receiver) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    /* ==============================
+       RESET DAILY COUNTER IF NEW DAY
+    ============================== */
+
+    const today = new Date().toDateString();
+
+    if (!sender.lastMessageReset || sender.lastMessageReset.toDateString() !== today) {
+      sender.dailyNewConversations = 0;
+      sender.lastMessageReset = new Date();
+    }
+
+    /* ==============================
+       CHECK IF CONVERSATION EXISTS
+    ============================== */
+
+    const existingConversation = await Message.findOne({
+      $or: [
+        { sender: sender._id, receiver: receiver._id },
+        { sender: receiver._id, receiver: sender._id }
+      ]
+    });
+
+    const isNewConversation = !existingConversation;
+
+    /* ==============================
+       MUTUAL FOLLOW CHECK
+    ============================== */
+
+    const isMutualFollow =
+      sender.following.includes(receiver._id) &&
+      receiver.following.includes(sender._id);
+
+    /* ==============================
+       EMPLOYER -> TALENT RULE
+    ============================== */
+
+    const employerCanMessage =
+      sender.role === "employer";
+
+    /* ==============================
+       PRO USER BYPASS
+    ============================== */
+
+    const isProUser = sender.isPro === true;
+
+    /* ==============================
+       ENFORCE LIMITS
+    ============================== */
+
+    if (isNewConversation && !isMutualFollow && !employerCanMessage && !isProUser) {
+
+      if (sender.dailyNewConversations >= 3) {
+        return res.status(403).json({
+          message: "Daily new conversation limit reached. Upgrade to Pro."
+        });
+      }
+
+      sender.dailyNewConversations += 1;
+    }
+
+    await sender.save();
+
+    /* ==============================
+       CREATE MESSAGE
+    ============================== */
+
     const message = await Message.create({
-      sender: req.user.id,
-      receiver: receiverId,
+      sender: sender._id,
+      receiver: receiver._id,
       text
     });
 
