@@ -142,18 +142,26 @@ router.get("/", auth, async (req, res) => {
     .populate("sender", "name profileImage")
     .populate("receiver", "name profileImage");
 
+    const seenUsers = new Set();
     const conversations = [];
 
-    messages.forEach(msg => {
+    for (let msg of messages) {
+
       const otherUser =
         msg.sender._id.toString() === req.user.id
           ? msg.receiver
           : msg.sender;
 
-      if (!conversations.find(c => c._id.toString() === otherUser._id.toString())) {
-        conversations.push(otherUser);
+      if (!seenUsers.has(otherUser._id.toString())) {
+        seenUsers.add(otherUser._id.toString());
+
+        conversations.push({
+          user: otherUser,
+          lastMessage: msg.text,
+          lastMessageDate: msg.createdAt
+        });
       }
-    });
+    }
 
     res.json(conversations);
 
