@@ -283,7 +283,22 @@ router.patch("/:id/follow", auth, async (req, res) => {
     res.status(400).json({ message: "Follow failed" });
   }
 });
+/* ======================================================
+   GET ALL USERS (FOR NETWORK – AUTH ONLY)
+====================================================== */
+router.get("/network", auth, async (req, res) => {
+  try {
 
+    const users = await User.find()
+      .select("_id name headline role profileImage followers");
+
+    res.json(users);
+
+  } catch (err) {
+    console.error("NETWORK USERS ERROR:", err);
+    res.status(500).json({ message: "Failed to load users" });
+  }
+});
 /* ======================================================
    GET PUBLIC PROFILE
 ====================================================== */
