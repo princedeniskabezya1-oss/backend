@@ -170,5 +170,40 @@ router.get("/", auth, async (req, res) => {
     res.status(500).json({ message: "Failed to load inbox" });
   }
 });
+/* MARK CONVERSATION AS SEEN */
+router.patch("/seen/:userId", auth, async (req, res) => {
+  try {
+
+    await Message.updateMany(
+      {
+        sender: req.params.userId,
+        receiver: req.user.id,
+        seen: false
+      },
+      { seen: true }
+    );
+
+    res.json({ message: "Conversation marked as seen" });
+
+  } catch (err) {
+    console.error("SEEN ERROR:", err);
+    res.status(500).json({ message: "Failed to update seen status" });
+  }
+});
+/* GET UNREAD MESSAGE COUNT */
+router.get("/unread/count", auth, async (req, res) => {
+  try {
+
+    const count = await Message.countDocuments({
+      receiver: req.user.id,
+      seen: false
+    });
+
+    res.json({ count });
+
+  } catch (err) {
+    res.status(500).json({ message: "Failed to count unread" });
+  }
+});
 
 module.exports = router;
