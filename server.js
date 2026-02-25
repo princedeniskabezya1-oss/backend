@@ -10,6 +10,7 @@ const applicationRoutes = require("./routes/applications");
 const adminStatsRoutes = require("./routes/adminStats");
 const userRoutes = require("./routes/users"); // ✅ ADD THIS
 const postRoutes = require("./routes/posts");
+const notificationRoutes = require("./routes/notifications");
 
 const app = express();
 
@@ -44,6 +45,7 @@ app.use("/api/applications", applicationRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/messages", messageRoutes);
+app.use("/api/notifications", notificationRoutes);
 
 
 /* ============================================
