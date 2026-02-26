@@ -97,6 +97,14 @@ router.post("/", auth, async (req, res) => {
       receiver: receiver._id,
       text
     });
+// CREATE NOTIFICATION FOR RECEIVER
+await require("../models/Notification").create({
+  user: receiver._id,
+  type: "message",
+  sender: sender._id,
+  text: text,
+  link: `/messages.html?user=${sender._id}`
+});
 
     res.status(201).json(message);
 

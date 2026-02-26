@@ -269,6 +269,14 @@ router.patch("/:id/follow", auth, async (req, res) => {
     } else {
       currentUser.following.push(targetUser._id);
       targetUser.followers.push(currentUser._id);
+// CREATE FOLLOW NOTIFICATION
+await require("../models/Notification").create({
+  user: targetUser._id,
+  type: "follow",
+  sender: currentUser._id,
+  text: `${currentUser.name} started following you`,
+  link: `/public-profile.html?id=${currentUser._id}`
+});
     }
 
     await currentUser.save();
