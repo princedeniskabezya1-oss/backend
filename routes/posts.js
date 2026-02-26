@@ -64,6 +64,10 @@ router.post("/", auth, upload.single("media"), async (req, res) => {
 router.get("/", auth, async (req, res) => {
   try {
 
+    const page = parseInt(req.query.page) || 1;
+    const limit = 5;
+    const skip = (page - 1) * limit;
+
     const user = await User.findById(req.user.id);
 
     if (!user) {
@@ -72,7 +76,6 @@ router.get("/", auth, async (req, res) => {
 
     const userObjectId = new mongoose.Types.ObjectId(req.user.id);
 
-    // SAFELY handle following array
     let followingIds = [];
 
     if (Array.isArray(user.following)) {
@@ -81,17 +84,32 @@ router.get("/", auth, async (req, res) => {
         .map(id => new mongoose.Types.ObjectId(id));
     }
 
-    const posts = await Post.find({
-      author: { $in: [...followingIds, userObjectId] }
-    })
-      .populate("author", "name profileImage headline isPro followers")
-      .populate("comments.user", "name profileImage")
-      .sort({ createdAt: -1 });
+    let posts = [];
+
+    // 🔥 IF user follows people → normal feed
+    if (followingIds.length > 0) {
+      posts = await Post.find({
+        author: { $in: [...followingIds, userObjectId] }
+      })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate("author", "name profileImage headline")
+      .populate("comments.user", "name profileImage");
+    }
+
+    // 🔥 IF user follows nobody → return trending posts
+    if (followingIds.length === 0) {
+      posts = await Post.find()
+        .sort({ likes: -1, createdAt: -1 })
+        .limit(5)
+        .populate("author", "name profileImage headline");
+    }
 
     res.json(posts);
 
   } catch (err) {
-    console.error("🔥 FEED ERROR:", err);
+    console.error("FEED ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 });

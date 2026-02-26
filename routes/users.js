@@ -423,5 +423,23 @@ router.get("/activity", auth, async (req, res) => {
   });
 
 });
+router.get("/suggestions", auth, async (req, res) => {
+  try {
+
+    const user = await User.findById(req.user.id);
+
+    const suggestions = await User.find({
+      _id: { $ne: req.user.id },
+      _id: { $nin: user.following || [] }
+    })
+    .limit(5)
+    .select("name profileImage headline role");
+
+    res.json(suggestions);
+
+  } catch (err) {
+    res.status(500).json({ message: "Failed to load suggestions" });
+  }
+});
 
 module.exports = router;
