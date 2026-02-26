@@ -72,9 +72,14 @@ router.get("/", auth, async (req, res) => {
 
     const userObjectId = new mongoose.Types.ObjectId(req.user.id);
 
-    const followingIds = Array.isArray(user.following)
-      ? user.following.map(id => new mongoose.Types.ObjectId(id))
-      : [];
+    // SAFELY handle following array
+    let followingIds = [];
+
+    if (Array.isArray(user.following)) {
+      followingIds = user.following
+        .filter(id => mongoose.Types.ObjectId.isValid(id))
+        .map(id => new mongoose.Types.ObjectId(id));
+    }
 
     const posts = await Post.find({
       author: { $in: [...followingIds, userObjectId] }
