@@ -191,6 +191,13 @@ cvUrl: {
   type: String,
   default: null
 }
+/* ============================================
+   SAVED JOBS SYSTEM
+============================================ */
+savedJobs: [{
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "Job"
+}],
 
   },
   {

@@ -54,13 +54,24 @@ router.post("/", adminOnly, async (req, res) => {
 ====================================================== */
 router.get("/me", auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id)
-      .select("-password");
 
-    res.json(user);
+    const user = await User.findById(req.user.id).select("-password");
+
+    let score = 0;
+
+    if(user.profileImage) score += 15;
+    if(user.bannerImage) score += 10;
+    if(user.bio) score += 15;
+    if(user.skills.length) score += 20;
+    if(user.experience.length) score += 20;
+    if(user.cvUrl) score += 20;
+
+    res.json({
+      ...user.toObject(),
+      completeness: score
+    });
 
   } catch (err) {
-    console.error("GET ME ERROR:", err);
     res.status(500).json({ message: "Failed to load user" });
   }
 });
@@ -389,6 +400,28 @@ router.delete("/:id", adminOnly, async (req, res) => {
     console.error("DELETE USER ERROR:", err);
     res.status(400).json({ message: "Failed to delete user" });
   }
+});
+/*
+================================================
+GET /api/users/activity
+Employee activity stats
+================================================
+*/
+router.get("/activity", auth, async (req, res) => {
+
+  const Application = require("../models/Application");
+
+  const applications = await Application.find({
+    userId: req.user.id
+  });
+
+  const user = await User.findById(req.user.id);
+
+  res.json({
+    totalApplications: applications.length,
+    savedJobs: user.savedJobs.length
+  });
+
 });
 
 module.exports = router;

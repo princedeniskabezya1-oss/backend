@@ -25,6 +25,19 @@ const JobSchema = new mongoose.Schema(
     salary: {
       type: String,
     },
+/* ============================================
+   JOB MATCHING FIELDS
+============================================ */
+skills: {
+  type: [String],
+  default: []
+},
+
+experienceLevel: {
+  type: String,
+  enum: ["junior", "mid", "senior"],
+  default: "junior"
+},
     employerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

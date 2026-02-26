@@ -1,3 +1,4 @@
+const User = require("../models/User");
 const express = require("express");
 const router = express.Router();
 const Job = require("../models/Job");
@@ -12,10 +13,18 @@ Public – all ACTIVE jobs
 */
 router.get("/", async (req, res) => {
   try {
+
     const jobs = await Job.find({ status: "active" })
+      .populate("employerId", "isPro")
       .sort({ createdAt: -1 });
 
+    // Boost pro employers
+    jobs.sort((a,b)=>{
+      return (b.employerId.isPro === true) - (a.employerId.isPro === true);
+    });
+
     res.json(jobs);
+
   } catch (err) {
     res.status(500).json({ message: "Failed to fetch jobs" });
   }
@@ -177,5 +186,39 @@ router.get("/employer/stats", auth, async (req, res) => {
   });
 });
 
+/*
+================================================
+PATCH /api/jobs/:id/save
+Talent – Save / Unsave job
+================================================
+*/
+router.patch("/:id/save", auth, async (req, res) => {
+  try {
+
+    if (req.user.role !== "talent") {
+      return res.status(403).json({ message: "Only talents can save jobs" });
+    }
+
+    const user = await User.findById(req.user.id);
+
+    const alreadySaved = user.savedJobs.includes(req.params.id);
+
+    if (alreadySaved) {
+      user.savedJobs.pull(req.params.id);
+    } else {
+      user.savedJobs.push(req.params.id);
+    }
+
+    await user.save();
+
+    res.json({
+      saved: !alreadySaved,
+      totalSaved: user.savedJobs.length
+    });
+
+  } catch (err) {
+    res.status(500).json({ message: "Failed to save job" });
+  }
+});
 
 module.exports = router;
