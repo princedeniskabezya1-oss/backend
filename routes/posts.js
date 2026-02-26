@@ -72,9 +72,9 @@ router.get("/", auth, async (req, res) => {
 
     const userObjectId = new mongoose.Types.ObjectId(req.user.id);
 
-    const followingIds = user.following.map(id =>
-      new mongoose.Types.ObjectId(id)
-    );
+    const followingIds = Array.isArray(user.following)
+      ? user.following.map(id => new mongoose.Types.ObjectId(id))
+      : [];
 
     const posts = await Post.find({
       author: { $in: [...followingIds, userObjectId] }
@@ -86,7 +86,7 @@ router.get("/", auth, async (req, res) => {
     res.json(posts);
 
   } catch (err) {
-    console.error("FEED ERROR:", err);
+    console.error("🔥 FEED ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 });
