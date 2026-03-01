@@ -180,6 +180,38 @@ res.json(newComment);
   }
 });
 /* =====================================================
+   LIKE COMMENT
+===================================================== */
+router.patch("/:postId/comment/:commentId/like", auth, async (req, res) => {
+  try {
+
+    const post = await Post.findById(req.params.postId);
+    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    const comment = post.comments.id(req.params.commentId);
+    if (!comment) return res.status(404).json({ message: "Comment not found" });
+
+    const alreadyLiked = comment.likes.some(
+      id => id.toString() === req.user.id
+    );
+
+    if (alreadyLiked) {
+      comment.likes = comment.likes.filter(
+        id => id.toString() !== req.user.id
+      );
+    } else {
+      comment.likes.push(req.user.id);
+    }
+
+    await post.save();
+
+    res.json({ likes: comment.likes.length });
+
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+/* =====================================================
    GET SINGLE POST (FOR COMMENTS)
 ===================================================== */
 router.get("/:id", auth, async (req, res) => {
