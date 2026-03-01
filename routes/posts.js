@@ -179,23 +179,29 @@ res.json(newComment);
     res.status(500).json({ message: err.message });
   }
 });
-/* =====================================================
-   LIKE COMMENT
-===================================================== */
+/* =========================================
+   LIKE / UNLIKE COMMENT
+========================================= */
 router.patch("/:postId/comment/:commentId/like", auth, async (req, res) => {
   try {
 
     const post = await Post.findById(req.params.postId);
-    if (!post) return res.status(404).json({ message: "Post not found" });
+
+    if(!post){
+      return res.status(404).json({ message: "Post not found" });
+    }
 
     const comment = post.comments.id(req.params.commentId);
-    if (!comment) return res.status(404).json({ message: "Comment not found" });
+
+    if(!comment){
+      return res.status(404).json({ message: "Comment not found" });
+    }
 
     const alreadyLiked = comment.likes.some(
       id => id.toString() === req.user.id
     );
 
-    if (alreadyLiked) {
+    if(alreadyLiked){
       comment.likes = comment.likes.filter(
         id => id.toString() !== req.user.id
       );
@@ -205,9 +211,12 @@ router.patch("/:postId/comment/:commentId/like", auth, async (req, res) => {
 
     await post.save();
 
-    res.json({ likes: comment.likes.length });
+    res.json({
+      likes: comment.likes.length
+    });
 
-  } catch (err) {
+  } catch(err){
+    console.error("COMMENT LIKE ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 });
