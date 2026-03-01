@@ -168,12 +168,35 @@ router.post("/:id/comment", auth, async (req, res) => {
     await post.save();
 
     const updatedPost = await Post.findById(post._id)
-      .populate("comments.user", "name profileImage");
+  .populate("comments.user", "name profileImage");
 
-    res.json(updatedPost.comments);
+const newComment = updatedPost.comments[updatedPost.comments.length - 1];
+
+res.json(newComment);
 
   } catch (err) {
     console.error("COMMENT ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+/* =====================================================
+   GET SINGLE POST (FOR COMMENTS)
+===================================================== */
+router.get("/:id", auth, async (req, res) => {
+  try {
+
+    const post = await Post.findById(req.params.id)
+      .populate("author", "name profileImage headline")
+      .populate("comments.user", "name profileImage");
+
+    if (!post) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    res.json(post);
+
+  } catch (err) {
+    console.error("GET SINGLE POST ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 });
