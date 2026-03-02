@@ -49,8 +49,8 @@ router.post("/", auth, upload.single("media"), async (req, res) => {
 
     const populatedPost = await Post.findById(newPost._id)
       .populate("author", "name profileImage headline isPro followers")
-      .populate("comments.user", "name profileImage");
-
+.populate("comments.user", "name profileImage")
+.populate("comments.replies.user", "name profileImage");
     res.status(201).json(populatedPost);
 
   } catch (err) {
@@ -88,14 +88,32 @@ router.get("/", auth, async (req, res) => {
 
     // 🔥 IF user follows people → normal feed
     if (followingIds.length > 0) {
-      posts = await Post.find({
-        author: { $in: [...followingIds, userObjectId] }
-      })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .populate("author", "name profileImage headline")
-      .populate("comments.user", "name profileImage");
+      let posts = await Post.find({
+  author: { $in: [...followingIds, userObjectId] }
+})
+.populate("author", "name profileImage headline")
+.populate("comments.user", "name profileImage")
+.populate("comments.replies.user", "name profileImage");
+
+posts.forEach(post => {
+
+  const commentCount = post.comments.length;
+
+  const replyCount = post.comments.reduce(
+    (acc, c) => acc + (c.replies ? c.replies.length : 0),
+    0
+  );
+
+  post.score =
+    (post.likes.length * 3) +
+    (commentCount * 5) +
+    (replyCount * 2);
+
+});
+
+posts.sort((a, b) => b.score - a.score);
+
+posts = posts.slice(skip, skip + limit);
     }
 
     // 🔥 IF user follows nobody → return trending posts
@@ -230,7 +248,8 @@ router.get("/:id", auth, async (req, res) => {
 
     const post = await Post.findById(req.params.id)
       .populate("author", "name profileImage headline")
-      .populate("comments.user", "name profileImage");
+.populate("comments.user", "name profileImage")
+.populate("comments.replies.user", "name profileImage");
 
     if (!post) {
       return res.status(404).json({ message: "Post not found" });
@@ -259,5 +278,76 @@ router.get("/user/:id", auth, async (req, res) => {
     res.status(500).json({ message: "Failed to load user posts" });
   }
 });
+/* =========================================
+   ADD REPLY TO COMMENT
+========================================= */
+router.post("/:postId/comment/:commentId/reply", auth, async (req, res) => {
+  try {
 
+    const post = await Post.findById(req.params.postId);
+    if (!post) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    const comment = post.comments.id(req.params.commentId);
+    if (!comment) {
+      return res.status(404).json({ message: "Comment not found" });
+    }
+
+    comment.replies.push({
+      user: req.user.id,
+      text: req.body.text,
+      likes: []
+    });
+
+    await post.save();
+
+    const updatedPost = await Post.findById(post._id)
+      .populate("comments.user", "name profileImage")
+      .populate("comments.replies.user", "name profileImage");
+
+    const updatedComment = updatedPost.comments.id(req.params.commentId);
+
+    res.json(updatedComment);
+
+  } catch (err) {
+    console.error("REPLY ERROR:", err);
+    res.status(500).json({ message: "Reply failed" });
+  }
+});
+
+
+/* =========================================
+   LIKE / UNLIKE REPLY
+========================================= */
+router.patch("/:postId/comment/:commentId/reply/:replyId/like", auth, async (req, res) => {
+  try {
+
+    const post = await Post.findById(req.params.postId);
+    const comment = post.comments.id(req.params.commentId);
+    const reply = comment.replies.id(req.params.replyId);
+
+    if (!reply.likes) reply.likes = [];
+
+    const alreadyLiked = reply.likes.some(
+      id => id.toString() === req.user.id
+    );
+
+    if (alreadyLiked) {
+      reply.likes = reply.likes.filter(
+        id => id.toString() !== req.user.id
+      );
+    } else {
+      reply.likes.push(req.user.id);
+    }
+
+    await post.save();
+
+    res.json({ likes: reply.likes.length });
+
+  } catch (err) {
+    console.error("REPLY LIKE ERROR:", err);
+    res.status(500).json({ message: "Reply like failed" });
+  }
+});
 module.exports = router;
