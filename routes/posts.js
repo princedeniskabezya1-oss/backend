@@ -181,7 +181,8 @@ router.post("/:id/comment", auth, async (req, res) => {
     post.comments.push({
   user: req.user.id,
   text: req.body.text,
-  likes: []
+  likes: [],
+  replies: []
 });
 
     await post.save();
