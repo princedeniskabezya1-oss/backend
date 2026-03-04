@@ -135,7 +135,7 @@ if (followingIds.length > 0) {
 });
 
 /* =====================================================
-   LIKE / UNLIKE
+   LIKE / UNLIKE POST
 ===================================================== */
 router.patch("/:id/like", auth, async (req, res) => {
   try {
@@ -146,28 +146,31 @@ router.patch("/:id/like", auth, async (req, res) => {
       return res.status(404).json({ message: "Post not found" });
     }
 
+    const userId = req.user.id;
+
     const alreadyLiked = post.likes.some(
-      id => id.toString() === req.user.id
+      id => id.toString() === userId
     );
 
     if (alreadyLiked) {
-      post.likes = post.likes.filter(
-        id => id.toString() !== req.user.id
-      );
+      post.likes.pull(userId);
     } else {
-      post.likes.push(req.user.id);
+      post.likes.push(userId);
     }
 
     await post.save();
 
     const io = req.app.get("io");
 
-io.emit("post_like", {
-  postId: post._id,
-  likes: post.likes.length
-});
+    io.emit("post_like", {
+      postId: post._id,
+      likes: post.likes.length
+    });
 
-res.json({ likes: post.likes.length });
+    res.json({
+      likes: post.likes.length,
+      liked: !alreadyLiked
+    });
 
   } catch (err) {
     console.error("LIKE ERROR:", err);
