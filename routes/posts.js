@@ -84,37 +84,39 @@ router.get("/", auth, async (req, res) => {
         .map(id => new mongoose.Types.ObjectId(id));
     }
 
-    let posts = [];
+let posts = [];
 
-    // 🔥 IF user follows people → normal feed
-    if (followingIds.length > 0) {
-      let posts = await Post.find({
-  author: { $in: [...followingIds, userObjectId] }
-})
-.populate("author", "name profileImage headline")
-.populate("comments.user", "name profileImage")
-.populate("comments.replies.user", "name profileImage");
+// 🔥 IF user follows people → normal feed
+if (followingIds.length > 0) {
 
-posts.forEach(post => {
+  posts = await Post.find({
+    author: { $in: [...followingIds, userObjectId] }
+  })
+  .populate("author", "name profileImage headline")
+  .populate("comments.user", "name profileImage")
+  .populate("comments.replies.user", "name profileImage");
 
-  const commentCount = post.comments.length;
+  posts.forEach(post => {
 
-  const replyCount = post.comments.reduce(
-    (acc, c) => acc + (c.replies ? c.replies.length : 0),
-    0
-  );
+    const commentCount = post.comments.length;
 
-  post.score =
-    (post.likes.length * 3) +
-    (commentCount * 5) +
-    (replyCount * 2);
+    const replyCount = post.comments.reduce(
+      (acc, c) => acc + (c.replies ? c.replies.length : 0),
+      0
+    );
 
-});
+    post.score =
+      (post.likes.length * 3) +
+      (commentCount * 5) +
+      (replyCount * 2);
 
-posts.sort((a, b) => b.score - a.score);
+  });
 
-posts = posts.slice(skip, skip + limit);
-    }
+  posts.sort((a, b) => b.score - a.score);
+
+  posts = posts.slice(skip, skip + limit);
+
+}
 
     // 🔥 IF user follows nobody → return trending posts
     if (followingIds.length === 0) {
