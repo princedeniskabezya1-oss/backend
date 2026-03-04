@@ -160,7 +160,14 @@ router.patch("/:id/like", auth, async (req, res) => {
 
     await post.save();
 
-    res.json({ likes: post.likes.length });
+    const io = req.app.get("io");
+
+io.emit("post_like", {
+  postId: post._id,
+  likes: post.likes.length
+});
+
+res.json({ likes: post.likes.length });
 
   } catch (err) {
     console.error("LIKE ERROR:", err);
@@ -194,8 +201,14 @@ router.post("/:id/comment", auth, async (req, res) => {
 
 const newComment = updatedPost.comments[updatedPost.comments.length - 1];
 
-res.json(newComment);
+const io = req.app.get("io");
 
+io.emit("new_comment", {
+  postId: post._id,
+  comment: newComment
+});
+
+res.json(newComment);
   } catch (err) {
     console.error("COMMENT ERROR:", err);
     res.status(500).json({ message: err.message });
@@ -318,7 +331,15 @@ router.post("/:postId/comment/:commentId/reply", auth, async (req, res) => {
 
     const updatedComment = updatedPost.comments.id(req.params.commentId);
 
-    res.json(updatedComment);
+    const io = req.app.get("io");
+
+io.emit("new_reply", {
+  postId: post._id,
+  commentId: req.params.commentId,
+  comment: updatedComment
+});
+
+res.json(updatedComment);
 
   } catch (err) {
     console.error("REPLY ERROR:", err);
