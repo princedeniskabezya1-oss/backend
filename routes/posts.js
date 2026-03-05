@@ -384,4 +384,36 @@ router.patch("/:postId/comment/:commentId/reply/:replyId/like", auth, async (req
     res.status(500).json({ message: "Reply like failed" });
   }
 });
+/* =========================================
+   DELETE POST
+========================================= */
+router.delete("/:id", auth, async (req, res) => {
+  try {
+
+    const post = await Post.findById(req.params.id);
+
+    if(!post){
+      return res.status(404).json({ message:"Post not found" });
+    }
+
+    // only author can delete
+    if(post.author.toString() !== req.user.id){
+      return res.status(403).json({ message:"Not authorized" });
+    }
+
+    await Post.findByIdAndDelete(req.params.id);
+
+    const io = req.app.get("io");
+
+    io.emit("post_deleted",{
+      postId: req.params.id
+    });
+
+    res.json({ success:true });
+
+  } catch(err){
+    console.error("DELETE POST ERROR:", err);
+    res.status(500).json({ message:"Delete failed" });
+  }
+});
 module.exports = router;
