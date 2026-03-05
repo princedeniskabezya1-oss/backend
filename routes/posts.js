@@ -208,7 +208,8 @@ const io = req.app.get("io");
 
 io.emit("new_comment", {
   postId: post._id,
-  comment: newComment
+  comment: newComment,
+  sender: req.user.id
 });
 
 res.json(newComment);
