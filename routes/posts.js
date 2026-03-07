@@ -182,42 +182,53 @@ router.patch("/:id/like", auth, async (req, res) => {
    ADD COMMENT
 ===================================================== */
 router.post("/:id/comment", auth, async (req, res) => {
+
   try {
 
     const post = await Post.findById(req.params.id);
 
-    if (!post) {
-      return res.status(404).json({ message: "Post not found" });
+    if(!post){
+      return res.status(404).json({ message:"Post not found" });
     }
 
-    post.comments.push({
-  user: req.user.id,
-  text: req.body.text,
-  likes: [],
-  replies: []
-});
+    const comment = {
+      user: req.user.id,
+      text: req.body.text,
+      likes: [],
+      replies: []
+    };
+
+    post.comments.push(comment);
 
     await post.save();
 
     const updatedPost = await Post.findById(post._id)
-  .populate("comments.user", "name profileImage");
+      .populate("comments.user", "name profileImage")
+      .populate("comments.replies.user", "name profileImage");
 
-const newComment = updatedPost.comments[updatedPost.comments.length - 1];
+    const newComment = updatedPost.comments[updatedPost.comments.length - 1];
 
-const io = req.app.get("io");
+    const totalComments =
+      updatedPost.comments.reduce(
+        (total,c)=> total + 1 + (c.replies?.length || 0),
+        0
+      );
 
-io.emit("new_comment", {
-  postId: post._id,
-  comment: newComment,
-  sender: req.user.id,
-  totalComments: updatedPost.comments.length
-});
+    const io = req.app.get("io");
 
-res.json(newComment);
-  } catch (err) {
-    console.error("COMMENT ERROR:", err);
-    res.status(500).json({ message: err.message });
+    io.emit("new_comment",{
+      postId: post._id,
+      comment: newComment,
+      totalComments
+    });
+
+    res.json(newComment);
+
+  } catch(err){
+    console.error(err);
+    res.status(500).json({ message:"Comment failed" });
   }
+
 });
 /* =========================================
    LIKE / UNLIKE COMMENT
@@ -313,11 +324,13 @@ router.post("/:postId/comment/:commentId/reply", auth, async (req, res) => {
   try {
 
     const post = await Post.findById(req.params.postId);
+
     if (!post) {
       return res.status(404).json({ message: "Post not found" });
     }
 
     const comment = post.comments.id(req.params.commentId);
+
     if (!comment) {
       return res.status(404).json({ message: "Comment not found" });
     }
@@ -336,15 +349,22 @@ router.post("/:postId/comment/:commentId/reply", auth, async (req, res) => {
 
     const updatedComment = updatedPost.comments.id(req.params.commentId);
 
+    const totalComments =
+      updatedPost.comments.reduce(
+        (total, c) => total + 1 + (c.replies?.length || 0),
+        0
+      );
+
     const io = req.app.get("io");
 
-io.emit("new_reply", {
-  postId: post._id,
-  commentId: req.params.commentId,
-  comment: updatedComment
-});
+    io.emit("new_reply", {
+      postId: post._id,
+      commentId: req.params.commentId,
+      comment: updatedComment,
+      totalComments
+    });
 
-res.json(updatedComment);
+    res.json(updatedComment);
 
   } catch (err) {
     console.error("REPLY ERROR:", err);
