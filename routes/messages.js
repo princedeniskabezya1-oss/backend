@@ -3,13 +3,33 @@ const router = express.Router();
 
 const Message = require("../models/Message");
 const auth = require("../middleware/auth");
+const upload = require("../middleware/upload");
+const cloudinary = require("../config/cloudinary");
 
 /* SEND MESSAGE */
 /* SEND MESSAGE WITH MONETIZATION LOGIC */
-router.post("/", auth, async (req, res) => {
+router.post("/", auth, upload.single("file"), async (req, res) => {
   try {
 
     const { receiverId, text } = req.body;
+let fileUrl = null;
+let fileType = null;
+
+if(req.file){
+
+  const result = await new Promise((resolve, reject)=>{
+    cloudinary.uploader.upload_stream(
+      { resource_type: "auto" },
+      (error, result)=>{
+        if(error) reject(error);
+        else resolve(result);
+      }
+    ).end(req.file.buffer);
+  });
+
+  fileUrl = result.secure_url;
+  fileType = result.resource_type;
+}
 
     if (!receiverId || !text) {
       return res.status(400).json({ message: "Missing fields" });
@@ -93,10 +113,12 @@ router.post("/", auth, async (req, res) => {
     ============================== */
 
     const message = await Message.create({
-      sender: sender._id,
-      receiver: receiver._id,
-      text
-    });
+  sender: sender._id,
+  receiver: receiver._id,
+  text,
+  fileUrl,
+  fileType
+});
 // CREATE NOTIFICATION FOR RECEIVER
 await require("../models/Notification").create({
   user: receiver._id,

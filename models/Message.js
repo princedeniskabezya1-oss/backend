@@ -13,8 +13,9 @@ const messageSchema = new mongoose.Schema({
   },
   text: {
     type: String,
-    required: true
   },
+fileUrl: String,
+fileType: String,
   seen: {
     type: Boolean,
     default: false
