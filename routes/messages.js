@@ -31,9 +31,9 @@ if(req.file){
   fileType = result.resource_type;
 }
 
-    if (!receiverId || !text) {
-      return res.status(400).json({ message: "Missing fields" });
-    }
+    if (!receiverId || (!text && !req.file)) {
+  return res.status(400).json({ message: "Message or file required" });
+}
 
     if (receiverId === req.user.id) {
       return res.status(400).json({ message: "Cannot message yourself" });
