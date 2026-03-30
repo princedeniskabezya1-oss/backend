@@ -28,7 +28,7 @@ if(req.file){
   });
 
   fileUrl = result.secure_url;
-  fileType = result.resource_type;
+  fileType = req.file.mimetype;
 }
 
     if (!receiverId || (!text && !req.file)) {
