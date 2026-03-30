@@ -119,6 +119,10 @@ if(req.file){
   fileUrl,
   fileType
 });
+const io = req.app.get("io");
+
+io.to(receiver._id.toString()).emit("newMessage", message);
+
 // CREATE NOTIFICATION FOR RECEIVER
 await require("../models/Notification").create({
   user: receiver._id,

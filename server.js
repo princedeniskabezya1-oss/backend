@@ -62,6 +62,22 @@ const io = new Server(server, {
 
 io.on("connection", socket => {
   console.log("User connected:", socket.id);
+
+  // 🔥 USER JOINS THEIR ROOM
+  socket.on("join", userId => {
+    socket.join(userId);
+    console.log("User joined room:", userId);
+  });
+
+  // 🔥 TYPING INDICATOR
+  socket.on("typing", ({ to }) => {
+    socket.to(to).emit("typing");
+  });
+
+  socket.on("stopTyping", ({ to }) => {
+    socket.to(to).emit("stopTyping");
+  });
+
 });
 
 app.set("io", io);
