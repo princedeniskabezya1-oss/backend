@@ -240,4 +240,43 @@ router.get("/unread/count", auth, async (req, res) => {
   }
 });
 
+/* ADD REACTION */
+router.post("/react", auth, async (req, res) => {
+  try {
+
+    const { messageId, emoji } = req.body;
+
+    const message = await Message.findById(messageId);
+
+    if (!message) {
+      return res.status(404).json({ message: "Message not found" });
+    }
+
+    // REMOVE OLD REACTION FROM SAME USER
+    message.reactions = message.reactions.filter(
+      r => r.user.toString() !== req.user.id
+    );
+
+    // ADD NEW REACTION
+    message.reactions.push({
+      user: req.user.id,
+      emoji
+    });
+
+    await message.save();
+
+    // 🔥 REAL-TIME UPDATE
+    const io = req.app.get("io");
+
+    io.to(message.receiver.toString()).emit("reactionUpdate", message);
+    io.to(message.sender.toString()).emit("reactionUpdate", message);
+
+    res.json(message);
+
+  } catch (err) {
+    console.error("REACTION ERROR:", err);
+    res.status(500).json({ message: "Failed to react" });
+  }
+});
+
 module.exports = router;

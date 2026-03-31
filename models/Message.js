@@ -16,6 +16,15 @@ const messageSchema = new mongoose.Schema({
   },
 fileUrl: String,
 fileType: String,
+reactions: [
+  {
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User"
+    },
+    emoji: String
+  }
+],
   seen: {
     type: Boolean,
     default: false
