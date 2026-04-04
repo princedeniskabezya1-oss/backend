@@ -63,19 +63,54 @@ const io = new Server(server, {
 io.on("connection", socket => {
   console.log("User connected:", socket.id);
 
-  // 🔥 USER JOINS THEIR ROOM
   socket.on("join", userId => {
     socket.join(userId);
+    socket.userId = userId;
     console.log("User joined room:", userId);
   });
 
-  // 🔥 TYPING INDICATOR
   socket.on("typing", ({ to }) => {
     socket.to(to).emit("typing");
   });
 
   socket.on("stopTyping", ({ to }) => {
     socket.to(to).emit("stopTyping");
+  });
+
+  // =========================
+  // CALL SIGNALING
+  // =========================
+
+  socket.on("callUser", ({ to, from, callerName, callType }) => {
+    io.to(to).emit("incomingCall", {
+      from,
+      callerName,
+      callType
+    });
+  });
+
+  socket.on("acceptCall", ({ to }) => {
+    io.to(to).emit("callAccepted");
+  });
+
+  socket.on("declineCall", ({ to }) => {
+    io.to(to).emit("callDeclined");
+  });
+
+  socket.on("endCall", ({ to }) => {
+    io.to(to).emit("callEnded");
+  });
+
+  socket.on("webrtcOffer", ({ to, offer }) => {
+    io.to(to).emit("webrtcOffer", { offer });
+  });
+
+  socket.on("webrtcAnswer", ({ to, answer }) => {
+    io.to(to).emit("webrtcAnswer", { answer });
+  });
+
+  socket.on("webrtcIceCandidate", ({ to, candidate }) => {
+    io.to(to).emit("webrtcIceCandidate", { candidate });
   });
 
 });
