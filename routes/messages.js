@@ -11,7 +11,7 @@ const cloudinary = require("../config/cloudinary");
 router.post("/", auth, upload.single("file"), async (req, res) => {
   try {
 
-    const { receiverId, text } = req.body;
+    const { receiverId, text, replyTo } = req.body;
 let fileUrl = null;
 let fileType = null;
 
@@ -112,16 +112,29 @@ if(req.file){
        CREATE MESSAGE
     ============================== */
 
-    const message = await Message.create({
+const message = await Message.create({
   sender: sender._id,
   receiver: receiver._id,
   text,
   fileUrl,
-  fileType
+  fileType,
+  replyTo: replyTo || null
 });
+
+// 🔥 VERY IMPORTANT (populate everything)
+const fullMessage = await Message.findById(message._id)
+  .populate("sender", "name profileImage")
+  .populate("receiver", "name profileImage")
+  .populate({
+    path: "replyTo",
+    populate: { path: "sender", select: "name" }
+  });
+
 const io = req.app.get("io");
 
-io.to(receiver._id.toString()).emit("newMessage", message);
+// SEND TO BOTH USERS (LIKE WHATSAPP)
+io.to(receiver._id.toString()).emit("newMessage", fullMessage);
+io.to(sender._id.toString()).emit("newMessage", fullMessage);
 
 // CREATE NOTIFICATION FOR RECEIVER
 await require("../models/Notification").create({
@@ -150,9 +163,13 @@ router.get("/:userId", auth, async (req, res) => {
         { sender: req.params.userId, receiver: req.user.id }
       ]
     })
-    .populate("sender", "name profileImage")
-    .populate("receiver", "name profileImage")
-    .sort({ createdAt: 1 });
+   .populate("sender", "name profileImage")
+.populate("receiver", "name profileImage")
+.populate({
+  path: "replyTo",
+  populate: { path: "sender", select: "name" }
+})
+.sort({ createdAt: 1 });
 
     res.json(messages);
 
@@ -246,7 +263,9 @@ router.post("/react", auth, async (req, res) => {
 
     const { messageId, emoji } = req.body;
 
-    const message = await Message.findById(messageId);
+    const message = await Message.findById(messageId)
+  .populate("sender")
+  .populate("receiver");
 
     if (!message) {
       return res.status(404).json({ message: "Message not found" });
@@ -268,8 +287,14 @@ router.post("/react", auth, async (req, res) => {
     // 🔥 REAL-TIME UPDATE
     const io = req.app.get("io");
 
-    io.to(message.receiver.toString()).emit("reactionUpdate", message);
-    io.to(message.sender.toString()).emit("reactionUpdate", message);
+    const updated = await Message.findById(messageId)
+  .populate("sender", "name profileImage")
+  .populate("receiver", "name profileImage")
+  .populate("replyTo");
+
+// 🔥 FIX: use _id
+io.to(message.receiver._id.toString()).emit("reactionUpdate", updated);
+io.to(message.sender._id.toString()).emit("reactionUpdate", updated);
 
     res.json(message);
 
