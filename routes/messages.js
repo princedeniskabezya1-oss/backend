@@ -145,7 +145,7 @@ await require("../models/Notification").create({
   link: `/messages.html?user=${sender._id}`
 });
 
-    res.status(201).json(message);
+    res.status(201).json(fullMessage);
 
   } catch (err) {
     console.error("SEND MESSAGE ERROR:", err);
@@ -290,13 +290,16 @@ router.post("/react", auth, async (req, res) => {
     const updated = await Message.findById(messageId)
   .populate("sender", "name profileImage")
   .populate("receiver", "name profileImage")
-  .populate("replyTo");
+  .populate({
+    path: "replyTo",
+    populate: { path: "sender", select: "name profileImage" }
+  });
 
 // 🔥 FIX: use _id
 io.to(message.receiver._id.toString()).emit("reactionUpdate", updated);
 io.to(message.sender._id.toString()).emit("reactionUpdate", updated);
 
-    res.json(message);
+    res.json(updated);
 
   } catch (err) {
     console.error("REACTION ERROR:", err);
