@@ -16,6 +16,11 @@ const messageSchema = new mongoose.Schema({
   },
 fileUrl: String,
 fileType: String,
+replyTo: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "Message",
+  default: null
+},
 reactions: [
   {
     user: {
