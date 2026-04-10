@@ -8,9 +8,15 @@ const authRoutes = require("./routes/auth");
 const jobsRoutes = require("./routes/jobs");
 const applicationRoutes = require("./routes/applications");
 const adminStatsRoutes = require("./routes/adminStats");
-const userRoutes = require("./routes/users"); // ✅ ADD THIS
+const userRoutes = require("./routes/users");
 const postRoutes = require("./routes/posts");
 const notificationRoutes = require("./routes/notifications");
+
+const classRoutes = require("./routes/classes");
+const projectRoutes = require("./routes/projects");
+const assignmentRoutes = require("./routes/assignments");
+const submissionRoutes = require("./routes/submissions");
+const opportunityRoutes = require("./routes/opportunities");
 
 const app = express();
 
@@ -46,6 +52,12 @@ app.use("/api/users", userRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/notifications", notificationRoutes);
+
+app.use("/api/classes", classRoutes);
+app.use("/api/projects", projectRoutes);
+app.use("/api/assignments", assignmentRoutes);
+app.use("/api/submissions", submissionRoutes);
+app.use("/api/opportunities", opportunityRoutes);
 
 
 /* ============================================
