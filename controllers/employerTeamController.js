@@ -30,6 +30,9 @@ function canManageTeam(user) {
   if (!user) return false;
   if (user.role !== "employer") return false;
 
+  // Main employer account can always manage its own company team
+  if (!user.companyId) return true;
+
   if (user.teamRole === "owner" || user.teamRole === "manager") return true;
 
   if (Array.isArray(user.permissions) && user.permissions.includes("manage_team")) {
