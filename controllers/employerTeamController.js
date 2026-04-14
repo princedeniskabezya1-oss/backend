@@ -30,7 +30,7 @@ function canManageTeam(user) {
   if (!user) return false;
   if (user.role !== "employer") return false;
 
-  // Main employer account can always manage its own company team
+  // main employer account can manage team
   if (!user.companyId) return true;
 
   if (user.teamRole === "owner" || user.teamRole === "manager") return true;
@@ -56,10 +56,11 @@ exports.getEmployerTeam = async (req, res) => {
 
     const team = await User.find({
       companyId
-    }).select("-password").sort({ createdAt: -1 });
+    })
+      .select("-password")
+      .sort({ createdAt: -1 });
 
     res.json(team);
-
   } catch (err) {
     console.error("getEmployerTeam error:", err);
     res.status(500).json({ message: "Failed to load employer team." });
@@ -119,7 +120,6 @@ exports.createEmployerTeamMember = async (req, res) => {
 
     const safeMember = await User.findById(member._id).select("-password");
     res.status(201).json(safeMember);
-
   } catch (err) {
     console.error("createEmployerTeamMember error:", err);
     res.status(500).json({ message: "Failed to create team member." });
@@ -133,7 +133,13 @@ exports.updateEmployerTeamMember = async (req, res) => {
     }
 
     const { id } = req.params;
-    const { teamRole, permissions, department, name } = req.body;
+    const {
+      name,
+      email,
+      teamRole,
+      permissions,
+      department
+    } = req.body;
 
     const companyId = getCompanyId(req.user);
 
@@ -144,6 +150,29 @@ exports.updateEmployerTeamMember = async (req, res) => {
 
     if (!member) {
       return res.status(404).json({ message: "Team member not found." });
+    }
+
+    if (typeof name === "string" && name.trim()) {
+      member.name = name.trim();
+    }
+
+    if (typeof email === "string" && email.trim()) {
+      const normalizedEmail = email.toLowerCase().trim();
+
+      const existing = await User.findOne({
+        email: normalizedEmail,
+        _id: { $ne: member._id }
+      });
+
+      if (existing) {
+        return res.status(400).json({ message: "Email already exists." });
+      }
+
+      member.email = normalizedEmail;
+    }
+
+    if (typeof department === "string") {
+      member.department = department.trim() || null;
     }
 
     if (teamRole) {
@@ -157,22 +186,46 @@ exports.updateEmployerTeamMember = async (req, res) => {
       member.permissions = normalizePermissions(permissions);
     }
 
-    if (typeof department === "string") {
-      member.department = department.trim() || null;
-    }
-
-    if (typeof name === "string" && name.trim()) {
-      member.name = name.trim();
-    }
-
     await member.save();
 
     const safeMember = await User.findById(member._id).select("-password");
     res.json(safeMember);
-
   } catch (err) {
     console.error("updateEmployerTeamMember error:", err);
     res.status(500).json({ message: "Failed to update team member." });
+  }
+};
+
+exports.updateEmployerTeamPhoto = async (req, res) => {
+  try {
+    if (!canManageTeam(req.user)) {
+      return res.status(403).json({ message: "Not allowed to update team photo." });
+    }
+
+    const { id } = req.params;
+    const companyId = getCompanyId(req.user);
+
+    const member = await User.findOne({
+      _id: id,
+      companyId
+    });
+
+    if (!member) {
+      return res.status(404).json({ message: "Team member not found." });
+    }
+
+    if (!req.file || !req.file.path) {
+      return res.status(400).json({ message: "No photo uploaded." });
+    }
+
+    member.profileImage = req.file.path;
+    await member.save();
+
+    const safeMember = await User.findById(member._id).select("-password");
+    res.json(safeMember);
+  } catch (err) {
+    console.error("updateEmployerTeamPhoto error:", err);
+    res.status(500).json({ message: "Failed to update profile photo." });
   }
 };
 
@@ -199,7 +252,6 @@ exports.blockEmployerTeamMember = async (req, res) => {
 
     const safeMember = await User.findById(member._id).select("-password");
     res.json(safeMember);
-
   } catch (err) {
     console.error("blockEmployerTeamMember error:", err);
     res.status(500).json({ message: "Failed to block team member." });
@@ -229,9 +281,35 @@ exports.unblockEmployerTeamMember = async (req, res) => {
 
     const safeMember = await User.findById(member._id).select("-password");
     res.json(safeMember);
-
   } catch (err) {
     console.error("unblockEmployerTeamMember error:", err);
     res.status(500).json({ message: "Failed to unblock team member." });
+  }
+};
+
+exports.deleteEmployerTeamMember = async (req, res) => {
+  try {
+    if (!canManageTeam(req.user)) {
+      return res.status(403).json({ message: "Not allowed to delete team members." });
+    }
+
+    const { id } = req.params;
+    const companyId = getCompanyId(req.user);
+
+    const member = await User.findOne({
+      _id: id,
+      companyId
+    });
+
+    if (!member) {
+      return res.status(404).json({ message: "Team member not found." });
+    }
+
+    await User.deleteOne({ _id: member._id });
+
+    res.json({ message: "Team member deleted successfully." });
+  } catch (err) {
+    console.error("deleteEmployerTeamMember error:", err);
+    res.status(500).json({ message: "Failed to delete team member." });
   }
 };
