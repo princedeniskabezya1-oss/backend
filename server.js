@@ -11,6 +11,7 @@ const adminStatsRoutes = require("./routes/adminStats");
 const userRoutes = require("./routes/users");
 const postRoutes = require("./routes/posts");
 const notificationRoutes = require("./routes/notifications");
+const employerTeamRoutes = require("./routes/employerTeam");
 
 const classRoutes = require("./routes/classes");
 const projectRoutes = require("./routes/projects");
@@ -52,6 +53,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/employer-team", employerTeamRoutes);
 
 app.use("/api/classes", classRoutes);
 app.use("/api/projects", projectRoutes);

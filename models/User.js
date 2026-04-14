@@ -280,16 +280,66 @@ const UserSchema = new mongoose.Schema(
     /* ============================================
        SAVED JOBS SYSTEM
     ============================================ */
-    savedJobs: [
+        savedJobs: [
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Job"
       }
-    ]
+    ],
+
+    /* ============================================
+       EMPLOYER TEAM MANAGEMENT
+    ============================================ */
+    companyId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null
+    },
+
+    teamRole: {
+      type: String,
+      enum: ["owner", "manager", "talent_acquisition", "recruiter", "coordinator", "viewer"],
+      default: "viewer"
+    },
+
+    permissions: {
+      type: [String],
+      default: []
+    },
+
+    isBlockedByEmployer: {
+      type: Boolean,
+      default: false
+    },
+
+    lastLoginAt: {
+      type: Date,
+      default: null
+    },
+
+    createdByEmployer: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null
+    },
+
+    companyTags: {
+      type: [String],
+      default: []
+    },
+
+    industry: {
+      type: String,
+      default: null
+    }
   },
   {
     timestamps: true
   }
 );
+UserSchema.index({ role: 1 });
+UserSchema.index({ companyId: 1 });
+UserSchema.index({ schoolId: 1 });
+UserSchema.index({ createdByEmployer: 1 });
 
 module.exports = mongoose.model("User", UserSchema);

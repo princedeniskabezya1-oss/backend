@@ -108,7 +108,7 @@ router.post("/", auth, async (req, res) => {
       description: req.body.description,
       salary: req.body.salary,
       employerId: req.user.id,
-      status: "pending"
+            status: "active"
     });
 
     const savedJob = await job.save();
@@ -220,5 +220,43 @@ router.patch("/:id/save", auth, async (req, res) => {
     res.status(500).json({ message: "Failed to save job" });
   }
 });
+/*
+================================================
+PATCH /api/jobs/:id
+Employer – update own job
+================================================
+*/
+router.patch("/:id", auth, async (req, res) => {
+  try {
+    if (req.user.role !== "employer") {
+      return res.status(403).json({ message: "Only employers can update jobs" });
+    }
 
+    const job = await Job.findById(req.params.id);
+
+    if (!job) {
+      return res.status(404).json({ message: "Job not found" });
+    }
+
+    if (String(job.employerId) !== String(req.user._id)) {
+      return res.status(403).json({ message: "Not allowed to update this job" });
+    }
+
+    const allowedUpdates = ["title", "company", "location", "type", "description", "salary", "skills", "experienceLevel", "status"];
+
+    allowedUpdates.forEach((field) => {
+      if (req.body[field] !== undefined) {
+        job[field] = req.body[field];
+      }
+    });
+
+    await job.save();
+
+    res.json(job);
+
+  } catch (err) {
+    console.error("EMPLOYER JOB UPDATE ERROR:", err);
+    res.status(500).json({ message: "Failed to update job" });
+  }
+});
 module.exports = router;

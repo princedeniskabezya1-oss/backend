@@ -16,9 +16,9 @@ const ApplicationSchema = new mongoose.Schema(
     email: String,
     coverLetter: String,
     cvUrl: String,
-    status: {
+        status: {
       type: String,
-      enum: ["new", "shortlisted", "rejected"],
+      enum: ["new", "shortlisted", "interview", "offer", "hired", "rejected"],
       default: "new"
     }
   },

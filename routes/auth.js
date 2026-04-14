@@ -97,11 +97,20 @@ router.post("/login", async (req, res) => {
       user.password
     );
 
-    if (!isMatch) {
+        if (!isMatch) {
       return res.status(400).json({
         message: "Invalid credentials"
       });
     }
+
+    if (user.isBlockedByEmployer === true) {
+      return res.status(403).json({
+        message: "Your employer has restricted access to this account."
+      });
+    }
+
+    user.lastLoginAt = new Date();
+    await user.save();
 
     // Create token
     const token = jwt.sign(

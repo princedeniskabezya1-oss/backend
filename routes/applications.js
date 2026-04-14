@@ -1,18 +1,11 @@
 const express = require("express");
 const router = express.Router();
 const Application = require("../models/Application");
+const Job = require("../models/Job");
 const auth = require("../middleware/auth");
-const adminOnly = require("../middleware/adminOnly");
 
-/*
-================================================
-POST /api/applications
-Talent submits application (JWT required)
-================================================
-*/
 router.post("/", auth, async (req, res) => {
   try {
-
     if (req.user.role !== "talent") {
       return res.status(403).json({
         message: "Only job seekers can apply"
@@ -21,10 +14,9 @@ router.post("/", auth, async (req, res) => {
 
     const { jobId, coverLetter } = req.body;
 
-    // Prevent duplicate application
     const existing = await Application.findOne({
       jobId,
-      applicantId: req.user.id
+      applicantId: req.user._id
     });
 
     if (existing) {
@@ -35,17 +27,67 @@ router.post("/", auth, async (req, res) => {
 
     const application = new Application({
       jobId,
-      applicantId: req.user.id,
+      applicantId: req.user._id,
       name: req.user.name,
       email: req.user.email,
-      coverLetter
+      coverLetter,
+      cvUrl: req.user.cvUrl || null
     });
 
     const saved = await application.save();
     res.status(201).json(saved);
 
   } catch (err) {
+    console.error("APPLICATION CREATE ERROR:", err);
     res.status(400).json({ message: "Failed to submit application" });
+  }
+});
+
+/*
+================================================
+GET /api/applications
+Employer: own applications only
+Talent: own applications only
+Admin: all
+================================================
+*/
+router.get("/", auth, async (req, res) => {
+  try {
+    if (req.user.role === "admin") {
+      const apps = await Application.find()
+        .populate("jobId")
+        .populate("applicantId", "name email profileImage headline role cvUrl");
+      return res.json(apps);
+    }
+
+    if (req.user.role === "employer") {
+      const jobs = await Job.find({ employerId: req.user._id }).select("_id");
+      const jobIds = jobs.map(job => job._id);
+
+      const apps = await Application.find({
+        jobId: { $in: jobIds }
+      })
+        .populate("jobId")
+        .populate("applicantId", "name email profileImage headline role cvUrl skills");
+
+      return res.json(apps);
+    }
+
+    if (req.user.role === "talent") {
+      const apps = await Application.find({
+        applicantId: req.user._id
+      })
+        .populate("jobId")
+        .populate("applicantId", "name email profileImage headline role cvUrl");
+
+      return res.json(apps);
+    }
+
+    return res.status(403).json({ message: "Access denied" });
+
+  } catch (err) {
+    console.error("APPLICATION GET ERROR:", err);
+    res.status(500).json({ message: "Failed to load applications" });
   }
 });
 
@@ -57,38 +99,81 @@ Employer views applicants per job
 */
 router.get("/job/:jobId", auth, async (req, res) => {
   try {
-
     if (req.user.role !== "employer") {
       return res.status(403).json({ message: "Access denied" });
     }
 
+    const job = await Job.findById(req.params.jobId);
+
+    if (!job) {
+      return res.status(404).json({ message: "Job not found" });
+    }
+
+    if (String(job.employerId) !== String(req.user._id)) {
+      return res.status(403).json({ message: "Not allowed to view applicants for this job" });
+    }
+
     const apps = await Application.find({
       jobId: req.params.jobId
-    }).sort({ createdAt: -1 });
+    })
+      .populate("applicantId", "name email profileImage headline role cvUrl skills")
+      .sort({ createdAt: -1 });
 
     res.json(apps);
 
   } catch (err) {
+    console.error("JOB APPLICATIONS ERROR:", err);
     res.status(500).json({ message: "Failed to load applicants" });
   }
 });
 
 /*
 ================================================
-GET /api/applications
-Admin – all applications
+PATCH /api/applications/:id
+Employer updates applicant status
 ================================================
 */
-router.get("/", auth, async (req, res) => {
+router.patch("/:id", auth, async (req, res) => {
   try {
-    const apps = await Application.find()
-      .populate("jobId")
-      .populate("applicantId");
+    if (req.user.role !== "employer") {
+      return res.status(403).json({ message: "Only employers can update applications" });
+    }
 
-    res.json(apps);
+    const allowedStatuses = ["new", "shortlisted", "interview", "offer", "hired", "rejected"];
+    const { status } = req.body;
+
+    if (!allowedStatuses.includes(status)) {
+      return res.status(400).json({ message: "Invalid application status" });
+    }
+
+    const application = await Application.findById(req.params.id);
+
+    if (!application) {
+      return res.status(404).json({ message: "Application not found" });
+    }
+
+    const job = await Job.findById(application.jobId);
+
+    if (!job) {
+      return res.status(404).json({ message: "Related job not found" });
+    }
+
+    if (String(job.employerId) !== String(req.user._id)) {
+      return res.status(403).json({ message: "Not allowed to update this application" });
+    }
+
+    application.status = status;
+    await application.save();
+
+    const updated = await Application.findById(application._id)
+      .populate("jobId")
+      .populate("applicantId", "name email profileImage headline role cvUrl skills");
+
+    res.json(updated);
 
   } catch (err) {
-    res.status(500).json({ message: "Failed to load applications" });
+    console.error("APPLICATION STATUS UPDATE ERROR:", err);
+    res.status(500).json({ message: "Failed to update application" });
   }
 });
 

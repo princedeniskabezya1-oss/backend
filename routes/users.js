@@ -147,6 +147,25 @@ if (req.body.location && req.body.location.trim() !== "") {
 if (req.body.website && req.body.website.trim() !== "") {
   user.website = req.body.website;
 }
+if (req.body.companyName && req.body.companyName.trim() !== "") {
+  user.companyName = req.body.companyName;
+}
+
+if (req.body.industry && req.body.industry.trim() !== "") {
+  user.industry = req.body.industry;
+}
+
+if (req.body.contactEmail && req.body.contactEmail.trim() !== "") {
+  user.contactEmail = req.body.contactEmail;
+}
+
+if (req.body.companyTags) {
+  try {
+    user.companyTags = JSON.parse(req.body.companyTags);
+  } catch (e) {
+    console.log("Company tags parse error");
+  }
+}
 /* =============================
    EXPERIENCE / EDUCATION / SKILLS UPDATE
 ============================= */
@@ -307,9 +326,9 @@ await require("../models/Notification").create({
 ====================================================== */
 router.get("/network", auth, async (req, res) => {
   try {
-
-    const users = await User.find()
-      .select("_id name headline role profileImage followers");
+    const users = await User.find({
+      _id: { $ne: req.user._id }
+    }).select("_id name email headline bio role profileImage followers skills department course companyId teamRole isBlockedByEmployer");
 
     res.json(users);
 
