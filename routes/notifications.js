@@ -43,4 +43,35 @@ router.patch("/:id/read", auth, async (req, res) => {
   }
 });
 
+const express = require("express");
+const router = express.Router();
+const auth = require("../middleware/auth");
+const Notification = require("../models/Notification");
+
+async function getUnreadNotificationCount(req, res) {
+  try {
+    const userId = req.user.id || req.user._id;
+
+    if (!userId) {
+      return res.status(401).json({ message: "User not found in token" });
+    }
+
+    const count = await Notification.countDocuments({
+      $or: [
+        { user: userId, read: false },
+        { userId: userId, read: false }
+      ]
+    });
+
+    res.json({ count });
+
+  } catch (err) {
+    console.error("UNREAD NOTIFICATION COUNT ERROR:", err);
+    res.status(500).json({ message: "Failed to load unread notification count" });
+  }
+}
+
+router.get("/unread", auth, getUnreadNotificationCount);
+router.get("/unread-count", auth, getUnreadNotificationCount);
+
 module.exports = router;

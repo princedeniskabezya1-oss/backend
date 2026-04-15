@@ -242,20 +242,29 @@ router.patch("/seen/:userId", auth, async (req, res) => {
   }
 });
 /* GET UNREAD MESSAGE COUNT */
-router.get("/unread/count", auth, async (req, res) => {
+async function getUnreadMessageCount(req, res) {
   try {
+    const userId = req.user.id || req.user._id;
+
+    if (!userId) {
+      return res.status(401).json({ message: "User not found in token" });
+    }
 
     const count = await Message.countDocuments({
-      receiver: req.user.id,
+      receiver: userId,
       seen: false
     });
 
     res.json({ count });
 
   } catch (err) {
+    console.error("UNREAD MESSAGE COUNT ERROR:", err);
     res.status(500).json({ message: "Failed to count unread" });
   }
-});
+}
+
+router.get("/unread/count", auth, getUnreadMessageCount);
+router.get("/unread-count", auth, getUnreadMessageCount);
 
 /* ADD REACTION */
 router.post("/react", auth, async (req, res) => {
