@@ -2,40 +2,30 @@ const express = require("express");
 const router = express.Router();
 
 const auth = require("../middleware/auth");
-const upload = require("../middleware/upload"); // ✅ REQUIRED
+const upload = require("../middleware/upload");
 
 const {
   getEmployerTeam,
   createEmployerTeamMember,
   updateEmployerTeamMember,
-  updateEmployerTeamPhoto, // ✅ ADD THIS
+  updateEmployerTeamPhoto,
+  resetEmployerTeamPassword,
   blockEmployerTeamMember,
   unblockEmployerTeamMember,
-  deleteEmployerTeamMember // ✅ ADD THIS
+  deleteEmployerTeamMember,
+  getEmployerPublicProfile
 } = require("../controllers/employerTeamController");
 
-// =========================
-// TEAM ROUTES
-// =========================
 router.get("/", auth, getEmployerTeam);
-
 router.post("/create", auth, createEmployerTeamMember);
 
+router.get("/public/:id", getEmployerPublicProfile);
+
 router.patch("/:id", auth, updateEmployerTeamMember);
-
-// ✅ FIX: PROFILE PHOTO
-router.patch(
-  "/:id/photo",
-  auth,
-  upload.single("profileImage"),
-  updateEmployerTeamPhoto
-);
-
-// ✅ FIX: DELETE MEMBER
-router.delete("/:id", auth, deleteEmployerTeamMember);
-
-// BLOCK / UNBLOCK
+router.patch("/:id/photo", auth, upload.single("profileImage"), updateEmployerTeamPhoto);
+router.patch("/:id/reset-password", auth, resetEmployerTeamPassword);
 router.patch("/:id/block", auth, blockEmployerTeamMember);
 router.patch("/:id/unblock", auth, unblockEmployerTeamMember);
+router.delete("/:id", auth, deleteEmployerTeamMember);
 
 module.exports = router;

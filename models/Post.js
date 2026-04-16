@@ -1,70 +1,96 @@
 const mongoose = require("mongoose");
 
-const PostSchema = new mongoose.Schema({
-
-  author: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
-    required: true
-  },
-
-  content: {
-    type: String,
-    trim: true
-  },
-
-  mediaUrl: {
-    type: String,
-    default: null
-  },
-
-  mediaType: {
-    type: String,
-    enum: ["image", "video"],
-    default: null
-  },
-
-  likes: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User"
-  }],
-
- comments: [{
-  user: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User"
-  },
-  text: String,
-
-  likes: [{
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User"
-  }],
-
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-
-  replies: [{
+const ReplySchema = new mongoose.Schema(
+  {
     user: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User"
+      ref: "User",
+      required: true
     },
-    text: String,
+    text: {
+      type: String,
+      required: true,
+      trim: true
+    },
+    likes: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User"
+    }]
+  },
+  { timestamps: true }
+);
 
+const CommentSchema = new mongoose.Schema(
+  {
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true
+    },
+    text: {
+      type: String,
+      required: true,
+      trim: true
+    },
     likes: [{
       type: mongoose.Schema.Types.ObjectId,
       ref: "User"
     }],
+    replies: [ReplySchema]
+  },
+  { timestamps: true }
+);
 
-    createdAt: {
-      type: Date,
-      default: Date.now
+const PostSchema = new mongoose.Schema(
+  {
+    author: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: true
+    },
+    text: {
+      type: String,
+      required: true,
+      trim: true
+    },
+    mediaUrl: {
+      type: String,
+      default: null
+    },
+    mediaType: {
+      type: String,
+      default: null
+    },
+    likes: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User"
+    }],
+    comments: [CommentSchema],
+
+    /* ==========================
+       ANALYTICS
+    ========================== */
+    viewsCount: {
+      type: Number,
+      default: 0
+    },
+    uniqueViewers: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User"
+    }],
+    sharesCount: {
+      type: Number,
+      default: 0
+    },
+    engagementScore: {
+      type: Number,
+      default: 0
     }
-  }]
-}]
+  },
+  { timestamps: true }
+);
 
-}, { timestamps: true });
+PostSchema.index({ author: 1, createdAt: -1 });
+PostSchema.index({ createdAt: -1 });
 
 module.exports = mongoose.model("Post", PostSchema);

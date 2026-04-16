@@ -1,30 +1,70 @@
 const express = require("express");
 const router = express.Router();
-const mongoose = require("mongoose");
+const auth = require("../middleware/auth");
+const upload = require("../middleware/upload");
+const cloudinary = require("../config/cloudinary");
 
 const Post = require("../models/Post");
 const User = require("../models/User");
 
-const auth = require("../middleware/auth");
-const upload = require("../middleware/upload");
+function calcEngagement(post) {
+  const commentCount = post.comments.length;
+  const replyCount = post.comments.reduce((acc, c) => acc + (c.replies ? c.replies.length : 0), 0);
+  return (post.likes.length * 3) + (commentCount * 5) + (replyCount * 2) + (post.viewsCount || 0);
+}
 
-const cloudinary = require("../config/cloudinary");
+router.get("/", auth, async (req, res) => {
+  try {
+    const currentUser = await User.findById(req.user.id);
+    const followingIds = Array.isArray(currentUser.following) ? currentUser.following : [];
+    const userObjectId = currentUser._id;
+    const skip = Number(req.query.skip || 0);
+    const limit = Number(req.query.limit || 20);
 
-/* =====================================================
-   CREATE POST
-===================================================== */
+    let posts = [];
+
+    if (followingIds.length > 0) {
+      posts = await Post.find({
+        author: { $in: [...followingIds, userObjectId] }
+      })
+        .populate("author", "name companyName profileImage headline")
+        .populate("comments.user", "name profileImage")
+        .populate("comments.replies.user", "name profileImage");
+
+      posts.forEach(post => {
+        post.engagementScore = calcEngagement(post);
+      });
+
+      posts.sort((a, b) => b.engagementScore - a.engagementScore);
+      posts = posts.slice(skip, skip + limit);
+    } else {
+      posts = await Post.find()
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .populate("author", "name companyName profileImage headline");
+    }
+
+    res.json(posts);
+  } catch (err) {
+    console.error("FEED ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
 router.post("/", auth, upload.single("media"), async (req, res) => {
   try {
+    if (!req.body.text || !req.body.text.trim()) {
+      return res.status(400).json({ message: "Post content is required" });
+    }
 
     let mediaUrl = null;
     let mediaType = null;
 
     if (req.file) {
-
       const uploadResult = await new Promise((resolve, reject) => {
         cloudinary.uploader.upload_stream(
           {
-            folder: "aift_media",
+            folder: "aift_posts",
             resource_type: "auto"
           },
           (error, result) => {
@@ -35,122 +75,92 @@ router.post("/", auth, upload.single("media"), async (req, res) => {
       });
 
       mediaUrl = uploadResult.secure_url;
-      mediaType = uploadResult.resource_type === "video" ? "video" : "image";
+      mediaType = req.file.mimetype?.startsWith("video/") ? "video" : "image";
     }
 
-    const newPost = new Post({
+    const post = await Post.create({
       author: req.user.id,
-      content: req.body.content || "",
+      text: req.body.text.trim(),
       mediaUrl,
       mediaType
     });
 
-    await newPost.save();
+    const populated = await Post.findById(post._id).populate("author", "name companyName profileImage headline");
+    req.app.get("io").emit("post_created", populated);
 
-    const populatedPost = await Post.findById(newPost._id)
-      .populate("author", "name profileImage headline isPro followers")
-.populate("comments.user", "name profileImage")
-.populate("comments.replies.user", "name profileImage");
-    res.status(201).json(populatedPost);
-
+    res.status(201).json(populated);
   } catch (err) {
     console.error("CREATE POST ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 });
-/* =====================================================
-   GET FEED
-===================================================== */
-router.get("/", auth, async (req, res) => {
+
+router.patch("/:id/view", auth, async (req, res) => {
   try {
-
-    const page = parseInt(req.query.page) || 1;
-    const limit = 5;
-    const skip = (page - 1) * limit;
-
-    const user = await User.findById(req.user.id);
-
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    const userObjectId = new mongoose.Types.ObjectId(req.user.id);
-
-    let followingIds = [];
-
-    if (Array.isArray(user.following)) {
-      followingIds = user.following
-        .filter(id => mongoose.Types.ObjectId.isValid(id))
-        .map(id => new mongoose.Types.ObjectId(id));
-    }
-
-let posts = [];
-
-// 🔥 IF user follows people → normal feed
-if (followingIds.length > 0) {
-
-  posts = await Post.find({
-    author: { $in: [...followingIds, userObjectId] }
-  })
-  .populate("author", "name profileImage headline")
-  .populate("comments.user", "name profileImage")
-  .populate("comments.replies.user", "name profileImage");
-
-  posts.forEach(post => {
-
-    const commentCount = post.comments.length;
-
-    const replyCount = post.comments.reduce(
-      (acc, c) => acc + (c.replies ? c.replies.length : 0),
-      0
-    );
-
-    post.score =
-      (post.likes.length * 3) +
-      (commentCount * 5) +
-      (replyCount * 2);
-
-  });
-
-  posts.sort((a, b) => b.score - a.score);
-
-  posts = posts.slice(skip, skip + limit);
-
-}
-
-    // 🔥 IF user follows nobody → return trending posts
-    if (followingIds.length === 0) {
-      posts = await Post.find()
-        .sort({ likes: -1, createdAt: -1 })
-        .limit(5)
-        .populate("author", "name profileImage headline");
-    }
-
-    res.json(posts);
-
-  } catch (err) {
-    console.error("FEED ERROR:", err);
-    res.status(500).json({ message: err.message });
-  }
-});
-
-/* =====================================================
-   LIKE / UNLIKE POST
-===================================================== */
-router.patch("/:id/like", auth, async (req, res) => {
-  try {
-
     const post = await Post.findById(req.params.id);
-
     if (!post) {
       return res.status(404).json({ message: "Post not found" });
     }
 
-    const userId = req.user.id;
+    const viewerId = String(req.user.id);
+    const alreadyViewed = post.uniqueViewers.some(id => String(id) === viewerId);
 
-    const alreadyLiked = post.likes.some(
-      id => id.toString() === userId
-    );
+    if (!alreadyViewed) {
+      post.uniqueViewers.push(req.user.id);
+      post.viewsCount += 1;
+    }
+
+    post.engagementScore = calcEngagement(post);
+    await post.save();
+
+    res.json({
+      viewsCount: post.viewsCount,
+      uniqueViewers: post.uniqueViewers.length
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to track post view" });
+  }
+});
+
+router.get("/analytics/mine", auth, async (req, res) => {
+  try {
+    const posts = await Post.find({ author: req.user.id }).sort({ createdAt: -1 });
+
+    const summary = {
+      totalPosts: posts.length,
+      totalViews: posts.reduce((sum, p) => sum + (p.viewsCount || 0), 0),
+      totalLikes: posts.reduce((sum, p) => sum + p.likes.length, 0),
+      totalComments: posts.reduce((sum, p) => sum + p.comments.length, 0),
+      totalShares: posts.reduce((sum, p) => sum + (p.sharesCount || 0), 0)
+    };
+
+    res.json({
+      summary,
+      posts: posts.map(post => ({
+        _id: post._id,
+        text: post.text,
+        createdAt: post.createdAt,
+        viewsCount: post.viewsCount || 0,
+        likesCount: post.likes.length,
+        commentsCount: post.comments.length,
+        sharesCount: post.sharesCount || 0,
+        engagementScore: calcEngagement(post)
+      }))
+    });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to load post analytics" });
+  }
+});
+
+router.patch("/:id/like", auth, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+    if (!post) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    const userId = String(req.user.id);
+    const alreadyLiked = post.likes.some(id => String(id) === userId);
 
     if (alreadyLiked) {
       post.likes.pull(userId);
@@ -158,11 +168,10 @@ router.patch("/:id/like", auth, async (req, res) => {
       post.likes.push(userId);
     }
 
+    post.engagementScore = calcEngagement(post);
     await post.save();
 
-    const io = req.app.get("io");
-
-    io.emit("post_like", {
+    req.app.get("io").emit("post_like", {
       postId: post._id,
       likes: post.likes.length
     });
@@ -171,35 +180,31 @@ router.patch("/:id/like", auth, async (req, res) => {
       likes: post.likes.length,
       liked: !alreadyLiked
     });
-
   } catch (err) {
     console.error("LIKE ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 });
 
-/* =====================================================
-   ADD COMMENT
-===================================================== */
 router.post("/:id/comment", auth, async (req, res) => {
-
   try {
-
     const post = await Post.findById(req.params.id);
-
-    if(!post){
-      return res.status(404).json({ message:"Post not found" });
+    if (!post) {
+      return res.status(404).json({ message: "Post not found" });
     }
 
-    const comment = {
+    if (!req.body.text || !req.body.text.trim()) {
+      return res.status(400).json({ message: "Comment text is required" });
+    }
+
+    post.comments.push({
       user: req.user.id,
-      text: req.body.text,
+      text: req.body.text.trim(),
       likes: [],
       replies: []
-    };
+    });
 
-    post.comments.push(comment);
-
+    post.engagementScore = calcEngagement(post);
     await post.save();
 
     const updatedPost = await Post.findById(post._id)
@@ -207,235 +212,22 @@ router.post("/:id/comment", auth, async (req, res) => {
       .populate("comments.replies.user", "name profileImage");
 
     const newComment = updatedPost.comments[updatedPost.comments.length - 1];
+    const totalComments = updatedPost.comments.reduce(
+      (total, c) => total + 1 + (c.replies?.length || 0),
+      0
+    );
 
-    const totalComments =
-      updatedPost.comments.reduce(
-        (total,c)=> total + 1 + (c.replies?.length || 0),
-        0
-      );
-
-    const io = req.app.get("io");
-
-    io.emit("new_comment",{
+    req.app.get("io").emit("new_comment", {
       postId: post._id,
       comment: newComment,
       totalComments
     });
 
     res.json(newComment);
-
-  } catch(err){
-    console.error(err);
-    res.status(500).json({ message:"Comment failed" });
-  }
-
-});
-/* =========================================
-   LIKE / UNLIKE COMMENT
-========================================= */
-router.patch("/:postId/comment/:commentId/like", auth, async (req, res) => {
-  try {
-
-    const post = await Post.findById(req.params.postId);
-
-    if (!post) {
-      return res.status(404).json({ message: "Post not found" });
-    }
-
-    const comment = post.comments.id(req.params.commentId);
-
-    if (!comment) {
-      return res.status(404).json({ message: "Comment not found" });
-    }
-
-    const userId = req.user.id;
-
-    if (!comment.likes) {
-      comment.likes = [];
-    }
-
-    const alreadyLiked = comment.likes.some(
-      id => id.toString() === userId
-    );
-
-    if (alreadyLiked) {
-      comment.likes.pull(userId);
-    } else {
-      comment.likes.push(userId);
-    }
-
-    // 🔥 IMPORTANT: tell mongoose nested field changed
-    post.markModified("comments");
-
-    await post.save();
-
-    res.json({
-      likes: comment.likes.length,
-      liked: !alreadyLiked
-    });
-
   } catch (err) {
-    console.error("COMMENT LIKE ERROR:", err);
-    res.status(500).json({ message: "Server error" });
-  }
-});
-/* =====================================================
-   GET SINGLE POST (FOR COMMENTS)
-===================================================== */
-router.get("/:id", auth, async (req, res) => {
-  try {
-
-    const post = await Post.findById(req.params.id)
-      .populate("author", "name profileImage headline")
-.populate("comments.user", "name profileImage")
-.populate("comments.replies.user", "name profileImage");
-
-    if (!post) {
-      return res.status(404).json({ message: "Post not found" });
-    }
-
-    res.json(post);
-
-  } catch (err) {
-    console.error("GET SINGLE POST ERROR:", err);
+    console.error("ADD COMMENT ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 });
-/* =========================================
-   GET POSTS BY USER
-========================================= */
-router.get("/user/:id", auth, async (req, res) => {
-  try {
 
-    const posts = await Post.find({ author: req.params.id })
-      .populate("author", "name profileImage headline")
-      .sort({ createdAt: -1 });
-
-    res.json(posts);
-
-  } catch (err) {
-    res.status(500).json({ message: "Failed to load user posts" });
-  }
-});
-/* =========================================
-   ADD REPLY TO COMMENT
-========================================= */
-router.post("/:postId/comment/:commentId/reply", auth, async (req, res) => {
-  try {
-
-    const post = await Post.findById(req.params.postId);
-
-    if (!post) {
-      return res.status(404).json({ message: "Post not found" });
-    }
-
-    const comment = post.comments.id(req.params.commentId);
-
-    if (!comment) {
-      return res.status(404).json({ message: "Comment not found" });
-    }
-
-    comment.replies.push({
-      user: req.user.id,
-      text: req.body.text,
-      likes: []
-    });
-
-    await post.save();
-
-    const updatedPost = await Post.findById(post._id)
-      .populate("comments.user", "name profileImage")
-      .populate("comments.replies.user", "name profileImage");
-
-    const updatedComment = updatedPost.comments.id(req.params.commentId);
-
-    const totalComments =
-      updatedPost.comments.reduce(
-        (total, c) => total + 1 + (c.replies?.length || 0),
-        0
-      );
-
-    const io = req.app.get("io");
-
-    io.emit("new_reply", {
-      postId: post._id,
-      commentId: req.params.commentId,
-      comment: updatedComment,
-      totalComments
-    });
-
-    res.json(updatedComment);
-
-  } catch (err) {
-    console.error("REPLY ERROR:", err);
-    res.status(500).json({ message: "Reply failed" });
-  }
-});
-
-
-/* =========================================
-   LIKE / UNLIKE REPLY
-========================================= */
-router.patch("/:postId/comment/:commentId/reply/:replyId/like", auth, async (req, res) => {
-  try {
-
-    const post = await Post.findById(req.params.postId);
-    const comment = post.comments.id(req.params.commentId);
-    const reply = comment.replies.id(req.params.replyId);
-
-    if (!reply.likes) reply.likes = [];
-
-    const alreadyLiked = reply.likes.some(
-      id => id.toString() === req.user.id
-    );
-
-    if (alreadyLiked) {
-      reply.likes = reply.likes.filter(
-        id => id.toString() !== req.user.id
-      );
-    } else {
-      reply.likes.push(req.user.id);
-    }
-
-    await post.save();
-
-    res.json({ likes: reply.likes.length });
-
-  } catch (err) {
-    console.error("REPLY LIKE ERROR:", err);
-    res.status(500).json({ message: "Reply like failed" });
-  }
-});
-/* =========================================
-   DELETE POST
-========================================= */
-router.delete("/:id", auth, async (req, res) => {
-  try {
-
-    const post = await Post.findById(req.params.id);
-
-    if(!post){
-      return res.status(404).json({ message:"Post not found" });
-    }
-
-    // only author can delete
-    if(post.author.toString() !== req.user.id){
-      return res.status(403).json({ message:"Not authorized" });
-    }
-
-    await Post.findByIdAndDelete(req.params.id);
-
-    const io = req.app.get("io");
-
-    io.emit("post_deleted",{
-      postId: req.params.id
-    });
-
-    res.json({ success:true });
-
-  } catch(err){
-    console.error("DELETE POST ERROR:", err);
-    res.status(500).json({ message:"Delete failed" });
-  }
-});
 module.exports = router;

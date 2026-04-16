@@ -25,7 +25,7 @@ const UserSchema = new mongoose.Schema(
     },
 
     /* ============================================
-       ROLE SYSTEM (UPDATED)
+       ROLE SYSTEM
     ============================================ */
     role: {
       type: String,
@@ -66,7 +66,7 @@ const UserSchema = new mongoose.Schema(
     },
 
     /* ============================================
-       PAYMENT SYSTEM READY
+       PAYMENT / SUBSCRIPTION
     ============================================ */
     stripeCustomerId: {
       type: String,
@@ -80,7 +80,7 @@ const UserSchema = new mongoose.Schema(
     },
 
     /* ============================================
-       PROFILE EXTENSIONS (GLOBAL)
+       GLOBAL PROFILE
     ============================================ */
     companyName: {
       type: String,
@@ -117,6 +117,31 @@ const UserSchema = new mongoose.Schema(
       default: null
     },
 
+    contactEmail: {
+      type: String,
+      default: null
+    },
+
+    contactPhone: {
+      type: String,
+      default: null
+    },
+
+    industry: {
+      type: String,
+      default: null
+    },
+
+    companyTags: {
+      type: [String],
+      default: []
+    },
+
+    expectedSalary: {
+      type: String,
+      default: null
+    },
+
     followers: {
       type: [{
         type: mongoose.Schema.Types.ObjectId,
@@ -134,7 +159,7 @@ const UserSchema = new mongoose.Schema(
     },
 
     /* ============================================
-       SCHOOL PROFILE (NEW 🔥)
+       SCHOOL PROFILE
     ============================================ */
     schoolName: {
       type: String,
@@ -166,18 +191,8 @@ const UserSchema = new mongoose.Schema(
       default: null
     },
 
-    contactEmail: {
-      type: String,
-      default: null
-    },
-
-    contactPhone: {
-      type: String,
-      default: null
-    },
-
     /* ============================================
-       STUDENT INFO (NEW)
+       STUDENT INFO
     ============================================ */
     schoolId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -206,7 +221,7 @@ const UserSchema = new mongoose.Schema(
     },
 
     /* ============================================
-       TEACHER INFO (NEW)
+       TEACHER / STAFF INFO
     ============================================ */
     department: {
       type: String,
@@ -221,7 +236,7 @@ const UserSchema = new mongoose.Schema(
     ],
 
     /* ============================================
-       PRO ACCOUNT SYSTEM
+       PRO ACCOUNT
     ============================================ */
     isPro: {
       type: Boolean,
@@ -247,23 +262,23 @@ const UserSchema = new mongoose.Schema(
     },
 
     /* ============================================
-       PROFESSIONAL PROFILE SYSTEM
+       PROFESSIONAL PROFILE
     ============================================ */
     experience: [
       {
-        title: { type: String },
-        company: { type: String },
-        startDate: { type: String },
-        endDate: { type: String },
-        description: { type: String }
+        title: { type: String, default: "" },
+        company: { type: String, default: "" },
+        startDate: { type: String, default: "" },
+        endDate: { type: String, default: "" },
+        description: { type: String, default: "" }
       }
     ],
 
     education: [
       {
-        school: { type: String },
-        degree: { type: String },
-        year: { type: String }
+        school: { type: String, default: "" },
+        degree: { type: String, default: "" },
+        year: { type: String, default: "" }
       }
     ],
 
@@ -278,9 +293,9 @@ const UserSchema = new mongoose.Schema(
     },
 
     /* ============================================
-       SAVED JOBS SYSTEM
+       SAVED JOBS
     ============================================ */
-        savedJobs: [
+    savedJobs: [
       {
         type: mongoose.Schema.Types.ObjectId,
         ref: "Job"
@@ -312,24 +327,14 @@ const UserSchema = new mongoose.Schema(
       default: false
     },
 
-    lastLoginAt: {
-      type: Date,
-      default: null
-    },
-
     createdByEmployer: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       default: null
     },
 
-    companyTags: {
-      type: [String],
-      default: []
-    },
-
-    industry: {
-      type: String,
+    lastLoginAt: {
+      type: Date,
       default: null
     }
   },
@@ -337,9 +342,14 @@ const UserSchema = new mongoose.Schema(
     timestamps: true
   }
 );
+
 UserSchema.index({ role: 1 });
 UserSchema.index({ companyId: 1 });
 UserSchema.index({ schoolId: 1 });
 UserSchema.index({ createdByEmployer: 1 });
+UserSchema.index({ teamRole: 1 });
+UserSchema.index({ industry: 1 });
+UserSchema.index({ skills: 1 });
+UserSchema.index({ name: "text", headline: "text", bio: "text", companyName: "text", location: "text" });
 
 module.exports = mongoose.model("User", UserSchema);

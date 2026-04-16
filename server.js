@@ -12,6 +12,9 @@ const userRoutes = require("./routes/users");
 const postRoutes = require("./routes/posts");
 const notificationRoutes = require("./routes/notifications");
 const employerTeamRoutes = require("./routes/employerTeam");
+const scheduleRoutes = require("./routes/schedules");
+const taskRoutes = require("./routes/tasks");
+const inviteRoutes = require("./routes/invites");
 
 const classRoutes = require("./routes/classes");
 const projectRoutes = require("./routes/projects");
@@ -22,29 +25,31 @@ const opportunityRoutes = require("./routes/opportunities");
 const app = express();
 
 /* ============================================
-   CORS CONFIGURATION (FIXED FOR PREFLIGHT)
+   CORS
 ============================================ */
 app.use(cors({
-  origin: "*", // you can restrict later to your Vercel domain
-  methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+  origin: "*",
+  methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
   allowedHeaders: ["Content-Type", "Authorization"]
 }));
-
-// Explicitly handle preflight requests
 app.options("*", cors());
 
 /* ============================================
-   MIDDLEWARES
+   MIDDLEWARE
 ============================================ */
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 /* ============================================
-   ROUTES
+   HEALTH
 ============================================ */
 app.get("/", (req, res) => {
   res.send("Backend is running 🟢");
 });
 
+/* ============================================
+   ROUTES
+============================================ */
 app.use("/api/auth", authRoutes);
 app.use("/api/jobs", jobsRoutes);
 app.use("/api/admin", adminStatsRoutes);
@@ -54,6 +59,9 @@ app.use("/api/posts", postRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/employer-team", employerTeamRoutes);
+app.use("/api/schedules", scheduleRoutes);
+app.use("/api/tasks", taskRoutes);
+app.use("/api/invites", inviteRoutes);
 
 app.use("/api/classes", classRoutes);
 app.use("/api/projects", projectRoutes);
@@ -61,9 +69,8 @@ app.use("/api/assignments", assignmentRoutes);
 app.use("/api/submissions", submissionRoutes);
 app.use("/api/opportunities", opportunityRoutes);
 
-
 /* ============================================
-   DATABASE CONNECTION
+   SOCKET.IO
 ============================================ */
 const http = require("http");
 const { Server } = require("socket.io");
@@ -78,25 +85,21 @@ io.on("connection", socket => {
   console.log("User connected:", socket.id);
 
   socket.on("join", userId => {
-    socket.join(userId);
-    socket.userId = userId;
+    socket.join(String(userId));
+    socket.userId = String(userId);
     console.log("User joined room:", userId);
   });
 
   socket.on("typing", ({ to }) => {
-    socket.to(to).emit("typing");
+    socket.to(String(to)).emit("typing");
   });
 
   socket.on("stopTyping", ({ to }) => {
-    socket.to(to).emit("stopTyping");
+    socket.to(String(to)).emit("stopTyping");
   });
 
-  // =========================
-  // CALL SIGNALING
-  // =========================
-
   socket.on("callUser", ({ to, from, callerName, callType }) => {
-    io.to(to).emit("incomingCall", {
+    io.to(String(to)).emit("incomingCall", {
       from,
       callerName,
       callType
@@ -104,33 +107,35 @@ io.on("connection", socket => {
   });
 
   socket.on("acceptCall", ({ to }) => {
-    io.to(to).emit("callAccepted");
+    io.to(String(to)).emit("callAccepted");
   });
 
   socket.on("declineCall", ({ to }) => {
-    io.to(to).emit("callDeclined");
+    io.to(String(to)).emit("callDeclined");
   });
 
   socket.on("endCall", ({ to }) => {
-    io.to(to).emit("callEnded");
+    io.to(String(to)).emit("callEnded");
   });
 
   socket.on("webrtcOffer", ({ to, offer }) => {
-    io.to(to).emit("webrtcOffer", { offer });
+    io.to(String(to)).emit("webrtcOffer", { offer });
   });
 
   socket.on("webrtcAnswer", ({ to, answer }) => {
-    io.to(to).emit("webrtcAnswer", { answer });
+    io.to(String(to)).emit("webrtcAnswer", { answer });
   });
 
   socket.on("webrtcIceCandidate", ({ to, candidate }) => {
-    io.to(to).emit("webrtcIceCandidate", { candidate });
+    io.to(String(to)).emit("webrtcIceCandidate", { candidate });
   });
-
 });
 
 app.set("io", io);
 
+/* ============================================
+   DB
+============================================ */
 mongoose.connect(process.env.MONGO_URI)
   .then(() => {
     console.log("MongoDB connected");
