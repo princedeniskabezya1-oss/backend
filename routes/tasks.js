@@ -7,14 +7,43 @@ const Task = require("../models/Task");
 const Notification = require("../models/Notification");
 
 function getCompanyId(user) {
+  if (!user) return null;
   if (user.role === "employer") return user._id;
   if (user.companyId) return user.companyId;
   return null;
 }
 
+function safeString(value, fallback = "") {
+  if (value === undefined || value === null) return fallback;
+  return String(value).trim();
+}
+
+async function safeCreateNotification(payload) {
+  try {
+    await Notification.create(payload);
+  } catch (err) {
+    console.error("TASK NOTIFICATION ERROR:", err);
+  }
+}
+
+function safeEmit(req, room, event, payload) {
+  try {
+    const io = req.app.get("io");
+    if (io && room) {
+      io.to(String(room)).emit(event, payload);
+    }
+  } catch (err) {
+    console.error(`TASK SOCKET EMIT ERROR [${event}]:`, err);
+  }
+}
+
 router.get("/", auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
+    if (!user) {
+      return res.status(401).json({ message: "User not found" });
+    }
+
     const companyId = getCompanyId(user);
 
     if (user.role === "agent") {
@@ -34,43 +63,67 @@ router.get("/", auth, async (req, res) => {
     if (req.query.status) query.status = req.query.status;
 
     const tasks = await Task.find(query)
-      .populate("assigneeId", "name email profileImage teamRole department")
+      .populate("assigneeId", "name email profileImage teamRole department role companyId")
       .sort({ createdAt: -1 });
 
-    res.json(tasks);
+    return res.json(tasks);
   } catch (err) {
     console.error("GET TASKS ERROR:", err);
-    res.status(500).json({ message: "Failed to load tasks" });
+    return res.status(500).json({ message: "Failed to load tasks" });
   }
 });
 
 router.post("/", auth, async (req, res) => {
   try {
     const actor = await User.findById(req.user.id);
-    const companyId = getCompanyId(actor);
+    if (!actor) {
+      return res.status(401).json({ message: "User not found" });
+    }
 
+    const companyId = getCompanyId(actor);
     if (!companyId) {
       return res.status(403).json({ message: "Only employer team can create tasks" });
     }
 
-    const assignee = await User.findById(req.body.assigneeId);
-    if (!assignee || String(assignee.companyId) !== String(companyId)) {
+    const {
+      title,
+      assigneeId,
+      priority,
+      category,
+      dueDate,
+      description,
+      linkedScheduleId
+    } = req.body || {};
+
+    if (!safeString(title) || !safeString(assigneeId)) {
+      return res.status(400).json({ message: "Task title and assignee are required" });
+    }
+
+    const assignee = await User.findById(assigneeId);
+    if (!assignee) {
       return res.status(400).json({ message: "Invalid assignee selected" });
+    }
+
+    if (String(assignee.companyId) !== String(companyId)) {
+      return res.status(400).json({ message: "Selected assignee does not belong to this employer" });
     }
 
     const task = await Task.create({
       employerId: companyId,
-      assigneeId: req.body.assigneeId,
+      assigneeId: assignee._id,
       createdBy: actor._id,
-      title: req.body.title,
-      description: req.body.description || "",
-      priority: req.body.priority || "medium",
-      category: req.body.category || "general",
-      dueDate: req.body.dueDate || null,
-      linkedScheduleId: req.body.linkedScheduleId || null
+      title: safeString(title),
+      description: safeString(description, ""),
+      priority: safeString(priority, "medium"),
+      category: safeString(category, "general"),
+      dueDate: dueDate || null,
+      linkedScheduleId: linkedScheduleId || null
     });
 
-    await Notification.create({
+    const populatedTask = await Task.findById(task._id)
+      .populate("assigneeId", "name email profileImage teamRole department role companyId");
+
+    await safeCreateNotification({
       user: assignee._id,
       type: "task",
       sender: actor._id,
@@ -78,32 +131,50 @@ router.post("/", auth, async (req, res) => {
       link: "/agent.html?tab=tasks"
     });
 
-    req.app.get("io").to(String(assignee._id)).emit("task_created", task);
+    safeEmit(req, assignee._id, "task_created", populatedTask || task);
+    safeEmit(req, companyId, "company_task_created", populatedTask || task);
 
-    res.status(201).json(task);
+    return res.status(201).json(populatedTask || task);
   } catch (err) {
     console.error("CREATE TASK ERROR:", err);
-    res.status(500).json({ message: "Failed to create task" });
+    return res.status(500).json({
+      message: err?.message || "Failed to create task"
+    });
   }
 });
 
 router.patch("/:id", auth, async (req, res) => {
   try {
     const actor = await User.findById(req.user.id);
-    const task = await Task.findById(req.params.id);
+    if (!actor) {
+      return res.status(401).json({ message: "User not found" });
+    }
 
+    const task = await Task.findById(req.params.id);
     if (!task) {
       return res.status(404).json({ message: "Task not found" });
     }
 
     const companyId = getCompanyId(actor);
-
     const canManage =
       (companyId && String(task.employerId) === String(companyId)) ||
       String(task.assigneeId) === String(actor._id);
 
     if (!canManage) {
       return res.status(403).json({ message: "Access denied" });
+    }
+
+    if (req.body.assigneeId && String(req.body.assigneeId) !== String(task.assigneeId)) {
+      if (!companyId || String(task.employerId) !== String(companyId)) {
+        return res.status(403).json({ message: "Only employer team can reassign tasks" });
+      }
+
+      const newAssignee = await User.findById(req.body.assigneeId);
+      if (!newAssignee || String(newAssignee.companyId) !== String(companyId)) {
+        return res.status(400).json({ message: "Invalid assignee selected" });
+      }
+
+      task.assigneeId = newAssignee._id;
     }
 
     const allowed = [
@@ -118,29 +189,45 @@ router.patch("/:id", auth, async (req, res) => {
 
     allowed.forEach((field) => {
       if (req.body[field] !== undefined) {
-        task[field] = req.body[field];
+        task[field] = typeof req.body[field] === "string"
+          ? req.body[field].trim()
+          : req.body[field];
       }
     });
 
     if (req.body.status === "done") {
       task.completedAt = new Date();
+    } else if (req.body.status && req.body.status !== "done") {
+      task.completedAt = null;
     }
 
     await task.save();
-    req.app.get("io").to(String(task.assigneeId)).emit("task_updated", task);
 
-    res.json(task);
+    const populatedTask = await Task.findById(task._id)
+      .populate("assigneeId", "name email profileImage teamRole department role companyId");
+
+    safeEmit(req, task.assigneeId, "task_updated", populatedTask || task);
+    if (task.employerId) {
+      safeEmit(req, task.employerId, "company_task_updated", populatedTask || task);
+    }
+
+    return res.json(populatedTask || task);
   } catch (err) {
     console.error("UPDATE TASK ERROR:", err);
-    res.status(500).json({ message: "Failed to update task" });
+    return res.status(500).json({
+      message: err?.message || "Failed to update task"
+    });
   }
 });
 
 router.delete("/:id", auth, async (req, res) => {
   try {
     const actor = await User.findById(req.user.id);
-    const companyId = getCompanyId(actor);
+    if (!actor) {
+      return res.status(401).json({ message: "User not found" });
+    }
 
+    const companyId = getCompanyId(actor);
     if (!companyId) {
       return res.status(403).json({ message: "Access denied" });
     }
@@ -150,13 +237,23 @@ router.delete("/:id", auth, async (req, res) => {
       return res.status(404).json({ message: "Task not found" });
     }
 
-    await Task.findByIdAndDelete(task._id);
-    req.app.get("io").to(String(task.assigneeId)).emit("task_deleted", { _id: task._id });
+    const deletedPayload = {
+      _id: task._id,
+      assigneeId: task.assigneeId,
+      employerId: task.employerId
+    };
 
-    res.json({ message: "Task deleted successfully" });
+    await Task.findByIdAndDelete(task._id);
+
+    safeEmit(req, task.assigneeId, "task_deleted", deletedPayload);
+    safeEmit(req, companyId, "company_task_deleted", deletedPayload);
+
+    return res.json({ message: "Task deleted successfully" });
   } catch (err) {
     console.error("DELETE TASK ERROR:", err);
-    res.status(500).json({ message: "Failed to delete task" });
+    return res.status(500).json({
+      message: err?.message || "Failed to delete task"
+    });
   }
 });
 
