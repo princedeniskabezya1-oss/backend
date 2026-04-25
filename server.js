@@ -16,6 +16,10 @@ const scheduleRoutes = require("./routes/schedules");
 const taskRoutes = require("./routes/tasks");
 const inviteRoutes = require("./routes/invites");
 
+const workTaskRoutes = require("./routes/workTasks");
+const taskTemplateRoutes = require("./routes/taskTemplates");
+const agentSessionRoutes = require("./routes/agentSessions");
+
 const classRoutes = require("./routes/classes");
 const projectRoutes = require("./routes/projects");
 const assignmentRoutes = require("./routes/assignments");
@@ -62,6 +66,18 @@ app.use("/api/employer-team", employerTeamRoutes);
 app.use("/api/schedules", scheduleRoutes);
 app.use("/api/tasks", taskRoutes);
 app.use("/api/invites", inviteRoutes);
+
+/* ============================================
+   NEW ADVANCED HIRING + BPO OPERATIONS SYSTEM
+   Does NOT replace your old /api/tasks route
+============================================ */
+app.use("/api/work-tasks", workTaskRoutes);
+app.use("/api/task-templates", taskTemplateRoutes);
+app.use("/api/agent-sessions", agentSessionRoutes);
+
+/* Optional aliases for frontend compatibility */
+app.use("/api/agent-activity", agentSessionRoutes);
+app.use("/api/agent-attendance", agentSessionRoutes);
 
 app.use("/api/classes", classRoutes);
 app.use("/api/projects", projectRoutes);
@@ -128,6 +144,10 @@ io.on("connection", socket => {
 
   socket.on("webrtcIceCandidate", ({ to, candidate }) => {
     io.to(String(to)).emit("webrtcIceCandidate", { candidate });
+  });
+
+  socket.on("disconnect", () => {
+    console.log("User disconnected:", socket.id);
   });
 });
 
