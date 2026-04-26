@@ -1,5 +1,6 @@
 const express = require("express");
 const router = express.Router();
+
 const auth = require("../middleware/auth");
 const upload = require("../middleware/upload");
 const cloudinary = require("../config/cloudinary");
@@ -7,12 +8,21 @@ const cloudinary = require("../config/cloudinary");
 const Post = require("../models/Post");
 const User = require("../models/User");
 
+const USER_POPULATE =
+  "name companyName profileImage headline role isVerified verified adminVerified badges following";
+
+function getIo(req) {
+  return req.app.get("io");
+}
+
+function isOwnerOrAdmin(req, post) {
+  return String(post.author) === String(req.user.id) || req.user.role === "admin";
+}
+
 function calcEngagement(post) {
   const commentCount = post.comments?.length || 0;
-  const replyCount = post.comments?.reduce(
-    (acc, c) => acc + (c.replies ? c.replies.length : 0),
-    0
-  ) || 0;
+  const replyCount =
+    post.comments?.reduce((acc, c) => acc + (c.replies ? c.replies.length : 0), 0) || 0;
 
   return (
     ((post.likes?.length || 0) * 3) +
@@ -25,12 +35,12 @@ function calcEngagement(post) {
 
 async function populatePost(postId) {
   return Post.findById(postId)
-    .populate("author", "name companyName profileImage headline role")
-    .populate("likes", "name companyName profileImage headline role")
-    .populate("comments.user", "name companyName profileImage headline role")
-    .populate("comments.likes", "name profileImage")
-    .populate("comments.replies.user", "name companyName profileImage headline role")
-    .populate("comments.replies.likes", "name profileImage");
+    .populate("author", USER_POPULATE)
+    .populate("likes", USER_POPULATE)
+    .populate("comments.user", USER_POPULATE)
+    .populate("comments.likes", USER_POPULATE)
+    .populate("comments.replies.user", USER_POPULATE)
+    .populate("comments.replies.likes", USER_POPULATE);
 }
 
 /* ==========================
@@ -41,27 +51,25 @@ router.get("/", auth, async (req, res) => {
     const currentUser = await User.findById(req.user.id);
     const followingIds = Array.isArray(currentUser?.following) ? currentUser.following : [];
 
-    const skip = Number(req.query.skip || 0);
-    const limit = Number(req.query.limit || 20);
+    const skip = Math.max(Number(req.query.skip || 0), 0);
+    const limit = Math.min(Math.max(Number(req.query.limit || 20), 1), 50);
 
-    let query = {};
+    const query = { isHiddenByAdmin: { $ne: true } };
 
     if (followingIds.length > 0) {
-      query = {
-        author: { $in: [...followingIds, currentUser._id] }
-      };
+      query.author = { $in: [...followingIds, currentUser._id] };
     }
 
     const posts = await Post.find(query)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate("author", "name companyName profileImage headline role")
-      .populate("likes", "name companyName profileImage headline role")
-      .populate("comments.user", "name companyName profileImage headline role")
-      .populate("comments.likes", "name profileImage")
-      .populate("comments.replies.user", "name companyName profileImage headline role")
-      .populate("comments.replies.likes", "name profileImage");
+      .populate("author", USER_POPULATE)
+      .populate("likes", USER_POPULATE)
+      .populate("comments.user", USER_POPULATE)
+      .populate("comments.likes", USER_POPULATE)
+      .populate("comments.replies.user", USER_POPULATE)
+      .populate("comments.replies.likes", USER_POPULATE);
 
     res.json(posts);
   } catch (err) {
@@ -75,8 +83,11 @@ router.get("/", auth, async (req, res) => {
 ========================== */
 router.post("/", auth, upload.single("media"), async (req, res) => {
   try {
-    if (!req.body.text || !req.body.text.trim()) {
-      return res.status(400).json({ message: "Post content is required" });
+    const text = req.body.text?.trim();
+    const hasMedia = Boolean(req.file);
+
+    if (!text && !hasMedia) {
+      return res.status(400).json({ message: "Post content or media is required" });
     }
 
     let mediaUrl = null;
@@ -84,16 +95,18 @@ router.post("/", auth, upload.single("media"), async (req, res) => {
 
     if (req.file) {
       const uploadResult = await new Promise((resolve, reject) => {
-        cloudinary.uploader.upload_stream(
-          {
-            folder: "aift_posts",
-            resource_type: "auto"
-          },
-          (error, result) => {
-            if (error) return reject(error);
-            resolve(result);
-          }
-        ).end(req.file.buffer);
+        cloudinary.uploader
+          .upload_stream(
+            {
+              folder: "aift_posts",
+              resource_type: "auto"
+            },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          )
+          .end(req.file.buffer);
       });
 
       mediaUrl = uploadResult.secure_url;
@@ -102,18 +115,202 @@ router.post("/", auth, upload.single("media"), async (req, res) => {
 
     const post = await Post.create({
       author: req.user.id,
-      text: req.body.text.trim(),
+      text: text || " ",
       mediaUrl,
       mediaType
     });
 
     const populated = await populatePost(post._id);
 
-    req.app.get("io")?.emit("post_created", populated);
+    getIo(req)?.emit("post_created", populated);
 
     res.status(201).json(populated);
   } catch (err) {
     console.error("CREATE POST ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* ==========================
+   ANALYTICS — MUST STAY ABOVE /:id
+========================== */
+router.get("/analytics/mine", auth, async (req, res) => {
+  try {
+    const posts = await Post.find({ author: req.user.id }).sort({ createdAt: -1 });
+
+    const summary = {
+      totalPosts: posts.length,
+      totalViews: posts.reduce((sum, p) => sum + (p.viewsCount || 0), 0),
+      totalLikes: posts.reduce((sum, p) => sum + p.likes.length, 0),
+      totalComments: posts.reduce((sum, p) => sum + p.comments.length, 0),
+      totalShares: posts.reduce((sum, p) => sum + (p.sharesCount || 0), 0)
+    };
+
+    res.json({
+      summary,
+      posts: posts.map(post => ({
+        _id: post._id,
+        text: post.text,
+        createdAt: post.createdAt,
+        viewsCount: post.viewsCount || 0,
+        likesCount: post.likes.length,
+        commentsCount: post.comments.length,
+        sharesCount: post.sharesCount || 0,
+        engagementScore: calcEngagement(post)
+      }))
+    });
+  } catch (err) {
+    console.error("ANALYTICS ERROR:", err);
+    res.status(500).json({ message: "Failed to load post analytics" });
+  }
+});
+
+/* ==========================
+   FOLLOW / UNFOLLOW USER
+========================== */
+router.patch("/users/:userId/follow", auth, async (req, res) => {
+  try {
+    if (String(req.user.id) === String(req.params.userId)) {
+      return res.status(400).json({ message: "You cannot follow yourself" });
+    }
+
+    const me = await User.findById(req.user.id);
+    const target = await User.findById(req.params.userId);
+
+    if (!me || !target) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    me.following = Array.isArray(me.following) ? me.following : [];
+
+    const alreadyFollowing = me.following.some(
+      id => String(id) === String(target._id)
+    );
+
+    if (alreadyFollowing) {
+      me.following.pull(target._id);
+    } else {
+      me.following.push(target._id);
+    }
+
+    await me.save();
+
+    getIo(req)?.emit("user_follow_updated", {
+      followerId: me._id,
+      targetId: target._id,
+      following: !alreadyFollowing
+    });
+
+    res.json({
+      following: !alreadyFollowing,
+      targetId: target._id
+    });
+  } catch (err) {
+    console.error("FOLLOW ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* ==========================
+   GET SINGLE POST — BELOW SPECIAL ROUTES
+========================== */
+router.get("/:id", auth, async (req, res) => {
+  try {
+    const post = await populatePost(req.params.id);
+
+    if (!post || post.isHiddenByAdmin) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    res.json(post);
+  } catch (err) {
+    console.error("GET SINGLE POST ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* ==========================
+   EDIT POST — OWNER OR ADMIN ONLY
+========================== */
+router.patch("/:id", auth, upload.single("media"), async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+
+    if (!post || post.isHiddenByAdmin) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    if (!isOwnerOrAdmin(req, post)) {
+      return res.status(403).json({ message: "You can only edit your own post" });
+    }
+
+    const text = req.body.text?.trim();
+
+    if (text !== undefined && text !== "") {
+      post.text = text;
+    }
+
+    if (req.file) {
+      const uploadResult = await new Promise((resolve, reject) => {
+        cloudinary.uploader
+          .upload_stream(
+            {
+              folder: "aift_posts",
+              resource_type: "auto"
+            },
+            (error, result) => {
+              if (error) return reject(error);
+              resolve(result);
+            }
+          )
+          .end(req.file.buffer);
+      });
+
+      post.mediaUrl = uploadResult.secure_url;
+      post.mediaType = req.file.mimetype?.startsWith("video/") ? "video" : "image";
+    }
+
+    post.engagementScore = calcEngagement(post);
+    await post.save();
+
+    const populated = await populatePost(post._id);
+
+    getIo(req)?.emit("post_updated", populated);
+
+    res.json(populated);
+  } catch (err) {
+    console.error("EDIT POST ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* ==========================
+   DELETE POST — OWNER OR ADMIN ONLY
+========================== */
+router.delete("/:id", auth, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+
+    if (!post) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    if (!isOwnerOrAdmin(req, post)) {
+      return res.status(403).json({ message: "You can only delete your own post" });
+    }
+
+    await Post.findByIdAndDelete(req.params.id);
+
+    getIo(req)?.emit("post_deleted", {
+      postId: req.params.id
+    });
+
+    res.json({
+      deleted: true,
+      postId: req.params.id
+    });
+  } catch (err) {
+    console.error("DELETE POST ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 });
@@ -125,12 +322,13 @@ router.patch("/:id/view", auth, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
 
-    if (!post) {
+    if (!post || post.isHiddenByAdmin) {
       return res.status(404).json({ message: "Post not found" });
     }
 
-    const viewerId = String(req.user.id);
-    const alreadyViewed = post.uniqueViewers.some(id => String(id) === viewerId);
+    const alreadyViewed = post.uniqueViewers.some(
+      id => String(id) === String(req.user.id)
+    );
 
     if (!alreadyViewed) {
       post.uniqueViewers.push(req.user.id);
@@ -145,23 +343,25 @@ router.patch("/:id/view", auth, async (req, res) => {
       uniqueViewers: post.uniqueViewers.length
     });
   } catch (err) {
+    console.error("VIEW POST ERROR:", err);
     res.status(500).json({ message: "Failed to track post view" });
   }
 });
 
 /* ==========================
-   LIKE / UNLIKE POST
+   LIKE / UNLIKE POST — SAVED IN MONGODB
 ========================== */
 router.patch("/:id/like", auth, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
 
-    if (!post) {
+    if (!post || post.isHiddenByAdmin) {
       return res.status(404).json({ message: "Post not found" });
     }
 
-    const userId = String(req.user.id);
-    const alreadyLiked = post.likes.some(id => String(id) === userId);
+    const alreadyLiked = post.likes.some(
+      id => String(id) === String(req.user.id)
+    );
 
     if (alreadyLiked) {
       post.likes.pull(req.user.id);
@@ -174,10 +374,11 @@ router.patch("/:id/like", auth, async (req, res) => {
 
     const populated = await populatePost(post._id);
 
-    req.app.get("io")?.emit("post_like", {
+    getIo(req)?.emit("post_like", {
       postId: post._id,
       likes: populated.likes,
       likesCount: populated.likes.length,
+      likedBy: req.user.id,
       liked: !alreadyLiked
     });
 
@@ -197,27 +398,27 @@ router.patch("/:id/like", auth, async (req, res) => {
 ========================== */
 router.get("/:id/likes", auth, async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id)
-      .populate("likes", "name companyName profileImage headline role");
+    const post = await Post.findById(req.params.id).populate("likes", USER_POPULATE);
 
-    if (!post) {
+    if (!post || post.isHiddenByAdmin) {
       return res.status(404).json({ message: "Post not found" });
     }
 
     res.json(post.likes || []);
   } catch (err) {
+    console.error("LOAD LIKES ERROR:", err);
     res.status(500).json({ message: "Failed to load likes" });
   }
 });
 
 /* ==========================
-   ADD COMMENT
+   ADD COMMENT — SAVED IN MONGODB
 ========================== */
 router.post("/:id/comment", auth, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
 
-    if (!post) {
+    if (!post || post.isHiddenByAdmin) {
       return res.status(404).json({ message: "Post not found" });
     }
 
@@ -240,7 +441,7 @@ router.post("/:id/comment", auth, async (req, res) => {
     const populated = await populatePost(post._id);
     const newComment = populated.comments[populated.comments.length - 1];
 
-    req.app.get("io")?.emit("new_comment", {
+    getIo(req)?.emit("new_comment", {
       postId: post._id,
       comment: newComment
     });
@@ -252,20 +453,53 @@ router.post("/:id/comment", auth, async (req, res) => {
   }
 });
 
-/* same route alias for cleaner frontend */
-router.post("/:id/comments", auth, async (req, res, next) => {
-  req.url = `/${req.params.id}/comment`;
-  next();
+router.post("/:id/comments", auth, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+
+    if (!post || post.isHiddenByAdmin) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    const text = req.body.text?.trim();
+
+    if (!text) {
+      return res.status(400).json({ message: "Comment text is required" });
+    }
+
+    post.comments.push({
+      user: req.user.id,
+      text,
+      likes: [],
+      replies: []
+    });
+
+    post.engagementScore = calcEngagement(post);
+    await post.save();
+
+    const populated = await populatePost(post._id);
+    const newComment = populated.comments[populated.comments.length - 1];
+
+    getIo(req)?.emit("new_comment", {
+      postId: post._id,
+      comment: newComment
+    });
+
+    res.json(newComment);
+  } catch (err) {
+    console.error("ADD COMMENT ALIAS ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
 });
 
 /* ==========================
-   LIKE / UNLIKE COMMENT
+   DELETE COMMENT — POST OWNER, COMMENT OWNER, OR ADMIN
 ========================== */
-router.patch("/:postId/comments/:commentId/like", auth, async (req, res) => {
+router.delete("/:postId/comments/:commentId", auth, async (req, res) => {
   try {
     const post = await Post.findById(req.params.postId);
 
-    if (!post) {
+    if (!post || post.isHiddenByAdmin) {
       return res.status(404).json({ message: "Post not found" });
     }
 
@@ -275,8 +509,55 @@ router.patch("/:postId/comments/:commentId/like", auth, async (req, res) => {
       return res.status(404).json({ message: "Comment not found" });
     }
 
-    const userId = String(req.user.id);
-    const alreadyLiked = comment.likes.some(id => String(id) === userId);
+    const canDelete =
+      String(post.author) === String(req.user.id) ||
+      String(comment.user) === String(req.user.id) ||
+      req.user.role === "admin";
+
+    if (!canDelete) {
+      return res.status(403).json({ message: "You cannot delete this comment" });
+    }
+
+    comment.deleteOne();
+
+    post.engagementScore = calcEngagement(post);
+    await post.save();
+
+    getIo(req)?.emit("comment_deleted", {
+      postId: post._id,
+      commentId: req.params.commentId
+    });
+
+    res.json({
+      deleted: true,
+      commentId: req.params.commentId
+    });
+  } catch (err) {
+    console.error("DELETE COMMENT ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* ==========================
+   LIKE / UNLIKE COMMENT — SAVED IN MONGODB
+========================== */
+router.patch("/:postId/comments/:commentId/like", auth, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.postId);
+
+    if (!post || post.isHiddenByAdmin) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    const comment = post.comments.id(req.params.commentId);
+
+    if (!comment) {
+      return res.status(404).json({ message: "Comment not found" });
+    }
+
+    const alreadyLiked = comment.likes.some(
+      id => String(id) === String(req.user.id)
+    );
 
     if (alreadyLiked) {
       comment.likes.pull(req.user.id);
@@ -290,10 +571,12 @@ router.patch("/:postId/comments/:commentId/like", auth, async (req, res) => {
     const populated = await populatePost(post._id);
     const updatedComment = populated.comments.id(req.params.commentId);
 
-    req.app.get("io")?.emit("comment_like", {
+    getIo(req)?.emit("comment_like", {
       postId: post._id,
       commentId: comment._id,
+      likes: updatedComment.likes,
       likesCount: updatedComment.likes.length,
+      likedBy: req.user.id,
       liked: !alreadyLiked
     });
 
@@ -309,13 +592,13 @@ router.patch("/:postId/comments/:commentId/like", auth, async (req, res) => {
 });
 
 /* ==========================
-   REPLY TO COMMENT
+   REPLY TO COMMENT — SAVED IN MONGODB
 ========================== */
 router.post("/:postId/comments/:commentId/reply", auth, async (req, res) => {
   try {
     const post = await Post.findById(req.params.postId);
 
-    if (!post) {
+    if (!post || post.isHiddenByAdmin) {
       return res.status(404).json({ message: "Post not found" });
     }
 
@@ -344,7 +627,7 @@ router.post("/:postId/comments/:commentId/reply", auth, async (req, res) => {
     const updatedComment = populated.comments.id(req.params.commentId);
     const newReply = updatedComment.replies[updatedComment.replies.length - 1];
 
-    req.app.get("io")?.emit("new_reply", {
+    getIo(req)?.emit("new_reply", {
       postId: post._id,
       commentId: comment._id,
       reply: newReply
@@ -358,13 +641,13 @@ router.post("/:postId/comments/:commentId/reply", auth, async (req, res) => {
 });
 
 /* ==========================
-   LIKE / UNLIKE REPLY
+   DELETE REPLY — POST OWNER, REPLY OWNER, OR ADMIN
 ========================== */
-router.patch("/:postId/comments/:commentId/replies/:replyId/like", auth, async (req, res) => {
+router.delete("/:postId/comments/:commentId/replies/:replyId", auth, async (req, res) => {
   try {
     const post = await Post.findById(req.params.postId);
 
-    if (!post) {
+    if (!post || post.isHiddenByAdmin) {
       return res.status(404).json({ message: "Post not found" });
     }
 
@@ -380,8 +663,62 @@ router.patch("/:postId/comments/:commentId/replies/:replyId/like", auth, async (
       return res.status(404).json({ message: "Reply not found" });
     }
 
-    const userId = String(req.user.id);
-    const alreadyLiked = reply.likes.some(id => String(id) === userId);
+    const canDelete =
+      String(post.author) === String(req.user.id) ||
+      String(reply.user) === String(req.user.id) ||
+      req.user.role === "admin";
+
+    if (!canDelete) {
+      return res.status(403).json({ message: "You cannot delete this reply" });
+    }
+
+    reply.deleteOne();
+
+    post.engagementScore = calcEngagement(post);
+    await post.save();
+
+    getIo(req)?.emit("reply_deleted", {
+      postId: post._id,
+      commentId: comment._id,
+      replyId: req.params.replyId
+    });
+
+    res.json({
+      deleted: true,
+      replyId: req.params.replyId
+    });
+  } catch (err) {
+    console.error("DELETE REPLY ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* ==========================
+   LIKE / UNLIKE REPLY — SAVED IN MONGODB
+========================== */
+router.patch("/:postId/comments/:commentId/replies/:replyId/like", auth, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.postId);
+
+    if (!post || post.isHiddenByAdmin) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    const comment = post.comments.id(req.params.commentId);
+
+    if (!comment) {
+      return res.status(404).json({ message: "Comment not found" });
+    }
+
+    const reply = comment.replies.id(req.params.replyId);
+
+    if (!reply) {
+      return res.status(404).json({ message: "Reply not found" });
+    }
+
+    const alreadyLiked = reply.likes.some(
+      id => String(id) === String(req.user.id)
+    );
 
     if (alreadyLiked) {
       reply.likes.pull(req.user.id);
@@ -389,11 +726,27 @@ router.patch("/:postId/comments/:commentId/replies/:replyId/like", auth, async (
       reply.likes.push(req.user.id);
     }
 
+    post.engagementScore = calcEngagement(post);
     await post.save();
+
+    const populated = await populatePost(post._id);
+    const updatedComment = populated.comments.id(req.params.commentId);
+    const updatedReply = updatedComment.replies.id(req.params.replyId);
+
+    getIo(req)?.emit("reply_like", {
+      postId: post._id,
+      commentId: comment._id,
+      replyId: reply._id,
+      likes: updatedReply.likes,
+      likesCount: updatedReply.likes.length,
+      likedBy: req.user.id,
+      liked: !alreadyLiked
+    });
 
     res.json({
       liked: !alreadyLiked,
-      likesCount: reply.likes.length
+      likesCount: updatedReply.likes.length,
+      reply: updatedReply
     });
   } catch (err) {
     console.error("REPLY LIKE ERROR:", err);
@@ -402,13 +755,13 @@ router.patch("/:postId/comments/:commentId/replies/:replyId/like", auth, async (
 });
 
 /* ==========================
-   REPOST / SHARE TRACKING
+   SHARE TRACKING
 ========================== */
 router.post("/:id/share", auth, async (req, res) => {
   try {
     const original = await Post.findById(req.params.id);
 
-    if (!original) {
+    if (!original || original.isHiddenByAdmin) {
       return res.status(404).json({ message: "Post not found" });
     }
 
@@ -416,7 +769,7 @@ router.post("/:id/share", auth, async (req, res) => {
     original.engagementScore = calcEngagement(original);
     await original.save();
 
-    req.app.get("io")?.emit("post_shared", {
+    getIo(req)?.emit("post_shared", {
       postId: original._id,
       sharesCount: original.sharesCount
     });
@@ -431,22 +784,25 @@ router.post("/:id/share", auth, async (req, res) => {
   }
 });
 
+/* ==========================
+   REPOST
+========================== */
 router.post("/:id/repost", auth, async (req, res) => {
   try {
-    const original = await Post.findById(req.params.id)
-      .populate("author", "name companyName profileImage headline role");
+    const original = await Post.findById(req.params.id).populate("author", USER_POPULATE);
 
-    if (!original) {
+    if (!original || original.isHiddenByAdmin) {
       return res.status(404).json({ message: "Post not found" });
     }
 
     const caption = req.body.text?.trim();
+    const originalAuthor = original.author?.companyName || original.author?.name || "AIFT user";
 
     const repost = await Post.create({
       author: req.user.id,
       text: caption
-        ? `${caption}\n\n↳ Reposted from ${original.author?.name || "AIFT user"}:\n${original.text}`
-        : `↳ Reposted from ${original.author?.name || "AIFT user"}:\n${original.text}`,
+        ? `${caption}\n\n↳ Reposted from ${originalAuthor}:\n${original.text}`
+        : `↳ Reposted from ${originalAuthor}:\n${original.text}`,
       mediaUrl: original.mediaUrl,
       mediaType: original.mediaType
     });
@@ -457,7 +813,11 @@ router.post("/:id/repost", auth, async (req, res) => {
 
     const populated = await populatePost(repost._id);
 
-    req.app.get("io")?.emit("post_created", populated);
+    getIo(req)?.emit("post_created", populated);
+    getIo(req)?.emit("post_shared", {
+      postId: original._id,
+      sharesCount: original.sharesCount
+    });
 
     res.status(201).json(populated);
   } catch (err) {
@@ -467,75 +827,41 @@ router.post("/:id/repost", auth, async (req, res) => {
 });
 
 /* ==========================
-   ANALYTICS
+   REPORT POST
 ========================== */
-router.get("/analytics/mine", auth, async (req, res) => {
+router.post("/:id/report", auth, async (req, res) => {
   try {
-    const posts = await Post.find({ author: req.user.id }).sort({ createdAt: -1 });
+    const post = await Post.findById(req.params.id);
 
-    const summary = {
-      totalPosts: posts.length,
-      totalViews: posts.reduce((sum, p) => sum + (p.viewsCount || 0), 0),
-      totalLikes: posts.reduce((sum, p) => sum + p.likes.length, 0),
-      totalComments: posts.reduce((sum, p) => sum + p.comments.length, 0),
-      totalShares: posts.reduce((sum, p) => sum + (p.sharesCount || 0), 0)
-    };
-
-    res.json({
-      summary,
-      posts: posts.map(post => ({
-        _id: post._id,
-        text: post.text,
-        createdAt: post.createdAt,
-        viewsCount: post.viewsCount || 0,
-        likesCount: post.likes.length,
-        commentsCount: post.comments.length,
-        sharesCount: post.sharesCount || 0,
-        engagementScore: calcEngagement(post)
-      }))
-    });
-  } catch (err) {
-    res.status(500).json({ message: "Failed to load post analytics" });
-  }
-});
-router.patch("/users/:userId/follow", auth, async (req, res) => {
-  try {
-    if (String(req.user.id) === String(req.params.userId)) {
-      return res.status(400).json({ message: "You cannot follow yourself" });
+    if (!post || post.isHiddenByAdmin) {
+      return res.status(404).json({ message: "Post not found" });
     }
 
-    const me = await User.findById(req.user.id);
-    const target = await User.findById(req.params.userId);
+    post.reports = Array.isArray(post.reports) ? post.reports : [];
 
-    if (!me || !target) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    me.following = Array.isArray(me.following) ? me.following : [];
-
-    const alreadyFollowing = me.following.some(
-      id => String(id) === String(target._id)
+    const alreadyReported = post.reports.some(
+      report => String(report.user) === String(req.user.id)
     );
 
-    if (alreadyFollowing) {
-      me.following.pull(target._id);
-    } else {
-      me.following.push(target._id);
+    if (!alreadyReported) {
+      post.reports.push({
+        user: req.user.id,
+        reason: req.body.reason || "Reported from feed"
+      });
+
+      await post.save();
     }
 
-    await me.save();
-
-    req.app.get("io")?.emit("user_follow_updated", {
-      followerId: me._id,
-      targetId: target._id,
-      following: !alreadyFollowing
+    getIo(req)?.emit("post_reported", {
+      postId: post._id
     });
 
     res.json({
-      following: !alreadyFollowing,
-      targetId: target._id
+      reported: true,
+      reportsCount: post.reports.length
     });
   } catch (err) {
+    console.error("REPORT POST ERROR:", err);
     res.status(500).json({ message: err.message });
   }
 });
