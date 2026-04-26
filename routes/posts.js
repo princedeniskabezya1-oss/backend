@@ -332,27 +332,29 @@ router.patch("/:id/view", auth, async (req, res) => {
       return res.status(404).json({ message: "Post not found" });
     }
 
-    post.uniqueViewers = Array.isArray(post.uniqueViewers) ? post.uniqueViewers : [];
-
-const alreadyViewed = post.uniqueViewers.some(
-  id => String(id) === String(req.user.id)
-);
+    const alreadyViewed = Array.isArray(post.uniqueViewers)
+      ? post.uniqueViewers.some(id => String(id) === String(req.user.id))
+      : false;
 
     if (!alreadyViewed) {
-      post.uniqueViewers.push(req.user.id);
-      post.viewsCount += 1;
+      await Post.findByIdAndUpdate(req.params.id, {
+        $addToSet: { uniqueViewers: req.user.id },
+        $inc: { viewsCount: 1 }
+      });
     }
 
-    post.engagementScore = calcEngagement(post);
-    await post.save();
+    const updated = await Post.findById(req.params.id);
+
+    updated.engagementScore = calcEngagement(updated);
+    await updated.save();
 
     res.json({
-      viewsCount: post.viewsCount,
-      uniqueViewers: post.uniqueViewers.length
+      viewsCount: updated.viewsCount || 0,
+      uniqueViewers: updated.uniqueViewers?.length || 0
     });
   } catch (err) {
     console.error("VIEW POST ERROR:", err);
-    res.status(500).json({ message: "Failed to track post view" });
+    res.status(500).json({ message: err.message });
   }
 });
 
@@ -361,23 +363,26 @@ const alreadyViewed = post.uniqueViewers.some(
 ========================== */
 router.patch("/:id/like", auth, async (req, res) => {
   try {
-    const post = await Post.findById(req.params.id);
+    let post = await Post.findById(req.params.id);
 
     if (!post || post.isHiddenByAdmin) {
       return res.status(404).json({ message: "Post not found" });
     }
 
-   post.likes = Array.isArray(post.likes) ? post.likes : [];
-
-const alreadyLiked = post.likes.some(
-  id => String(id) === String(req.user.id)
-);
+    const likes = Array.isArray(post.likes) ? post.likes : [];
+    const alreadyLiked = likes.some(id => String(id) === String(req.user.id));
 
     if (alreadyLiked) {
-      post.likes.pull(req.user.id);
+      await Post.findByIdAndUpdate(req.params.id, {
+        $pull: { likes: req.user.id }
+      });
     } else {
-      post.likes.push(req.user.id);
+      await Post.findByIdAndUpdate(req.params.id, {
+        $addToSet: { likes: req.user.id }
+      });
     }
+
+    post = await Post.findById(req.params.id);
 
     post.engagementScore = calcEngagement(post);
     await post.save();
@@ -386,16 +391,16 @@ const alreadyLiked = post.likes.some(
 
     getIo(req)?.emit("post_like", {
       postId: post._id,
-      likes: populated.likes,
-      likesCount: populated.likes.length,
+      likes: populated.likes || [],
+      likesCount: populated.likes?.length || 0,
       likedBy: req.user.id,
       liked: !alreadyLiked
     });
 
     res.json({
       liked: !alreadyLiked,
-      likesCount: populated.likes.length,
-      likes: populated.likes
+      likesCount: populated.likes?.length || 0,
+      likes: populated.likes || []
     });
   } catch (err) {
     console.error("LIKE ERROR:", err);
