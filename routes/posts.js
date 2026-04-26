@@ -8,41 +8,60 @@ const Post = require("../models/Post");
 const User = require("../models/User");
 
 function calcEngagement(post) {
-  const commentCount = post.comments.length;
-  const replyCount = post.comments.reduce((acc, c) => acc + (c.replies ? c.replies.length : 0), 0);
-  return (post.likes.length * 3) + (commentCount * 5) + (replyCount * 2) + (post.viewsCount || 0);
+  const commentCount = post.comments?.length || 0;
+  const replyCount = post.comments?.reduce(
+    (acc, c) => acc + (c.replies ? c.replies.length : 0),
+    0
+  ) || 0;
+
+  return (
+    ((post.likes?.length || 0) * 3) +
+    (commentCount * 5) +
+    (replyCount * 2) +
+    (post.viewsCount || 0) +
+    ((post.sharesCount || 0) * 4)
+  );
 }
 
+async function populatePost(postId) {
+  return Post.findById(postId)
+    .populate("author", "name companyName profileImage headline role")
+    .populate("likes", "name companyName profileImage headline role")
+    .populate("comments.user", "name companyName profileImage headline role")
+    .populate("comments.likes", "name profileImage")
+    .populate("comments.replies.user", "name companyName profileImage headline role")
+    .populate("comments.replies.likes", "name profileImage");
+}
+
+/* ==========================
+   GET FEED
+========================== */
 router.get("/", auth, async (req, res) => {
   try {
     const currentUser = await User.findById(req.user.id);
-    const followingIds = Array.isArray(currentUser.following) ? currentUser.following : [];
-    const userObjectId = currentUser._id;
+    const followingIds = Array.isArray(currentUser?.following) ? currentUser.following : [];
+
     const skip = Number(req.query.skip || 0);
     const limit = Number(req.query.limit || 20);
 
-    let posts = [];
+    let query = {};
 
     if (followingIds.length > 0) {
-      posts = await Post.find({
-        author: { $in: [...followingIds, userObjectId] }
-      })
-        .populate("author", "name companyName profileImage headline")
-        .populate("comments.user", "name profileImage")
-        .populate("comments.replies.user", "name profileImage");
-
-      posts.forEach(post => {
-        post.engagementScore = calcEngagement(post);
-      });
-
-      posts.sort((a, b) => b.engagementScore - a.engagementScore);
-      posts = posts.slice(skip, skip + limit);
-    } else {
-      posts = await Post.find()
-        .sort({ createdAt: -1 })
-        .limit(10)
-        .populate("author", "name companyName profileImage headline");
+      query = {
+        author: { $in: [...followingIds, currentUser._id] }
+      };
     }
+
+    const posts = await Post.find(query)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate("author", "name companyName profileImage headline role")
+      .populate("likes", "name companyName profileImage headline role")
+      .populate("comments.user", "name companyName profileImage headline role")
+      .populate("comments.likes", "name profileImage")
+      .populate("comments.replies.user", "name companyName profileImage headline role")
+      .populate("comments.replies.likes", "name profileImage");
 
     res.json(posts);
   } catch (err) {
@@ -51,6 +70,9 @@ router.get("/", auth, async (req, res) => {
   }
 });
 
+/* ==========================
+   CREATE POST
+========================== */
 router.post("/", auth, upload.single("media"), async (req, res) => {
   try {
     if (!req.body.text || !req.body.text.trim()) {
@@ -85,8 +107,9 @@ router.post("/", auth, upload.single("media"), async (req, res) => {
       mediaType
     });
 
-    const populated = await Post.findById(post._id).populate("author", "name companyName profileImage headline");
-    req.app.get("io").emit("post_created", populated);
+    const populated = await populatePost(post._id);
+
+    req.app.get("io")?.emit("post_created", populated);
 
     res.status(201).json(populated);
   } catch (err) {
@@ -95,9 +118,13 @@ router.post("/", auth, upload.single("media"), async (req, res) => {
   }
 });
 
+/* ==========================
+   VIEW POST
+========================== */
 router.patch("/:id/view", auth, async (req, res) => {
   try {
     const post = await Post.findById(req.params.id);
+
     if (!post) {
       return res.status(404).json({ message: "Post not found" });
     }
@@ -122,6 +149,326 @@ router.patch("/:id/view", auth, async (req, res) => {
   }
 });
 
+/* ==========================
+   LIKE / UNLIKE POST
+========================== */
+router.patch("/:id/like", auth, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+
+    if (!post) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    const userId = String(req.user.id);
+    const alreadyLiked = post.likes.some(id => String(id) === userId);
+
+    if (alreadyLiked) {
+      post.likes.pull(req.user.id);
+    } else {
+      post.likes.push(req.user.id);
+    }
+
+    post.engagementScore = calcEngagement(post);
+    await post.save();
+
+    const populated = await populatePost(post._id);
+
+    req.app.get("io")?.emit("post_like", {
+      postId: post._id,
+      likes: populated.likes,
+      likesCount: populated.likes.length,
+      liked: !alreadyLiked
+    });
+
+    res.json({
+      liked: !alreadyLiked,
+      likesCount: populated.likes.length,
+      likes: populated.likes
+    });
+  } catch (err) {
+    console.error("LIKE ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* ==========================
+   GET PEOPLE WHO LIKED POST
+========================== */
+router.get("/:id/likes", auth, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id)
+      .populate("likes", "name companyName profileImage headline role");
+
+    if (!post) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    res.json(post.likes || []);
+  } catch (err) {
+    res.status(500).json({ message: "Failed to load likes" });
+  }
+});
+
+/* ==========================
+   ADD COMMENT
+========================== */
+router.post("/:id/comment", auth, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.id);
+
+    if (!post) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    const text = req.body.text?.trim();
+
+    if (!text) {
+      return res.status(400).json({ message: "Comment text is required" });
+    }
+
+    post.comments.push({
+      user: req.user.id,
+      text,
+      likes: [],
+      replies: []
+    });
+
+    post.engagementScore = calcEngagement(post);
+    await post.save();
+
+    const populated = await populatePost(post._id);
+    const newComment = populated.comments[populated.comments.length - 1];
+
+    req.app.get("io")?.emit("new_comment", {
+      postId: post._id,
+      comment: newComment
+    });
+
+    res.json(newComment);
+  } catch (err) {
+    console.error("ADD COMMENT ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* same route alias for cleaner frontend */
+router.post("/:id/comments", auth, async (req, res, next) => {
+  req.url = `/${req.params.id}/comment`;
+  next();
+});
+
+/* ==========================
+   LIKE / UNLIKE COMMENT
+========================== */
+router.patch("/:postId/comments/:commentId/like", auth, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.postId);
+
+    if (!post) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    const comment = post.comments.id(req.params.commentId);
+
+    if (!comment) {
+      return res.status(404).json({ message: "Comment not found" });
+    }
+
+    const userId = String(req.user.id);
+    const alreadyLiked = comment.likes.some(id => String(id) === userId);
+
+    if (alreadyLiked) {
+      comment.likes.pull(req.user.id);
+    } else {
+      comment.likes.push(req.user.id);
+    }
+
+    post.engagementScore = calcEngagement(post);
+    await post.save();
+
+    const populated = await populatePost(post._id);
+    const updatedComment = populated.comments.id(req.params.commentId);
+
+    req.app.get("io")?.emit("comment_like", {
+      postId: post._id,
+      commentId: comment._id,
+      likesCount: updatedComment.likes.length,
+      liked: !alreadyLiked
+    });
+
+    res.json({
+      liked: !alreadyLiked,
+      likesCount: updatedComment.likes.length,
+      comment: updatedComment
+    });
+  } catch (err) {
+    console.error("COMMENT LIKE ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* ==========================
+   REPLY TO COMMENT
+========================== */
+router.post("/:postId/comments/:commentId/reply", auth, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.postId);
+
+    if (!post) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    const comment = post.comments.id(req.params.commentId);
+
+    if (!comment) {
+      return res.status(404).json({ message: "Comment not found" });
+    }
+
+    const text = req.body.text?.trim();
+
+    if (!text) {
+      return res.status(400).json({ message: "Reply text is required" });
+    }
+
+    comment.replies.push({
+      user: req.user.id,
+      text,
+      likes: []
+    });
+
+    post.engagementScore = calcEngagement(post);
+    await post.save();
+
+    const populated = await populatePost(post._id);
+    const updatedComment = populated.comments.id(req.params.commentId);
+    const newReply = updatedComment.replies[updatedComment.replies.length - 1];
+
+    req.app.get("io")?.emit("new_reply", {
+      postId: post._id,
+      commentId: comment._id,
+      reply: newReply
+    });
+
+    res.json(newReply);
+  } catch (err) {
+    console.error("REPLY ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* ==========================
+   LIKE / UNLIKE REPLY
+========================== */
+router.patch("/:postId/comments/:commentId/replies/:replyId/like", auth, async (req, res) => {
+  try {
+    const post = await Post.findById(req.params.postId);
+
+    if (!post) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    const comment = post.comments.id(req.params.commentId);
+
+    if (!comment) {
+      return res.status(404).json({ message: "Comment not found" });
+    }
+
+    const reply = comment.replies.id(req.params.replyId);
+
+    if (!reply) {
+      return res.status(404).json({ message: "Reply not found" });
+    }
+
+    const userId = String(req.user.id);
+    const alreadyLiked = reply.likes.some(id => String(id) === userId);
+
+    if (alreadyLiked) {
+      reply.likes.pull(req.user.id);
+    } else {
+      reply.likes.push(req.user.id);
+    }
+
+    await post.save();
+
+    res.json({
+      liked: !alreadyLiked,
+      likesCount: reply.likes.length
+    });
+  } catch (err) {
+    console.error("REPLY LIKE ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* ==========================
+   REPOST / SHARE TRACKING
+========================== */
+router.post("/:id/share", auth, async (req, res) => {
+  try {
+    const original = await Post.findById(req.params.id);
+
+    if (!original) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    original.sharesCount += 1;
+    original.engagementScore = calcEngagement(original);
+    await original.save();
+
+    req.app.get("io")?.emit("post_shared", {
+      postId: original._id,
+      sharesCount: original.sharesCount
+    });
+
+    res.json({
+      shared: true,
+      sharesCount: original.sharesCount
+    });
+  } catch (err) {
+    console.error("SHARE ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+router.post("/:id/repost", auth, async (req, res) => {
+  try {
+    const original = await Post.findById(req.params.id)
+      .populate("author", "name companyName profileImage headline role");
+
+    if (!original) {
+      return res.status(404).json({ message: "Post not found" });
+    }
+
+    const caption = req.body.text?.trim();
+
+    const repost = await Post.create({
+      author: req.user.id,
+      text: caption
+        ? `${caption}\n\n↳ Reposted from ${original.author?.name || "AIFT user"}:\n${original.text}`
+        : `↳ Reposted from ${original.author?.name || "AIFT user"}:\n${original.text}`,
+      mediaUrl: original.mediaUrl,
+      mediaType: original.mediaType
+    });
+
+    original.sharesCount += 1;
+    original.engagementScore = calcEngagement(original);
+    await original.save();
+
+    const populated = await populatePost(repost._id);
+
+    req.app.get("io")?.emit("post_created", populated);
+
+    res.status(201).json(populated);
+  } catch (err) {
+    console.error("REPOST ERROR:", err);
+    res.status(500).json({ message: err.message });
+  }
+});
+
+/* ==========================
+   ANALYTICS
+========================== */
 router.get("/analytics/mine", auth, async (req, res) => {
   try {
     const posts = await Post.find({ author: req.user.id }).sort({ createdAt: -1 });
@@ -149,84 +496,6 @@ router.get("/analytics/mine", auth, async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ message: "Failed to load post analytics" });
-  }
-});
-
-router.patch("/:id/like", auth, async (req, res) => {
-  try {
-    const post = await Post.findById(req.params.id);
-    if (!post) {
-      return res.status(404).json({ message: "Post not found" });
-    }
-
-    const userId = String(req.user.id);
-    const alreadyLiked = post.likes.some(id => String(id) === userId);
-
-    if (alreadyLiked) {
-      post.likes.pull(userId);
-    } else {
-      post.likes.push(userId);
-    }
-
-    post.engagementScore = calcEngagement(post);
-    await post.save();
-
-    req.app.get("io").emit("post_like", {
-      postId: post._id,
-      likes: post.likes.length
-    });
-
-    res.json({
-      likes: post.likes.length,
-      liked: !alreadyLiked
-    });
-  } catch (err) {
-    console.error("LIKE ERROR:", err);
-    res.status(500).json({ message: err.message });
-  }
-});
-
-router.post("/:id/comment", auth, async (req, res) => {
-  try {
-    const post = await Post.findById(req.params.id);
-    if (!post) {
-      return res.status(404).json({ message: "Post not found" });
-    }
-
-    if (!req.body.text || !req.body.text.trim()) {
-      return res.status(400).json({ message: "Comment text is required" });
-    }
-
-    post.comments.push({
-      user: req.user.id,
-      text: req.body.text.trim(),
-      likes: [],
-      replies: []
-    });
-
-    post.engagementScore = calcEngagement(post);
-    await post.save();
-
-    const updatedPost = await Post.findById(post._id)
-      .populate("comments.user", "name profileImage")
-      .populate("comments.replies.user", "name profileImage");
-
-    const newComment = updatedPost.comments[updatedPost.comments.length - 1];
-    const totalComments = updatedPost.comments.reduce(
-      (total, c) => total + 1 + (c.replies?.length || 0),
-      0
-    );
-
-    req.app.get("io").emit("new_comment", {
-      postId: post._id,
-      comment: newComment,
-      totalComments
-    });
-
-    res.json(newComment);
-  } catch (err) {
-    console.error("ADD COMMENT ERROR:", err);
-    res.status(500).json({ message: err.message });
   }
 });
 
