@@ -345,15 +345,21 @@ router.patch("/:id/view", auth, async (req, res) => {
 
     const updated = await Post.findById(req.params.id);
 
-    updated.engagementScore = calcEngagement(updated);
-    await updated.save();
+    const engagementScore = calcEngagement(updated);
+
+    await Post.findByIdAndUpdate(req.params.id, {
+      $set: {
+        engagementScore,
+        text: updated.text || " "
+      }
+    });
 
     res.json({
       viewsCount: updated.viewsCount || 0,
       uniqueViewers: updated.uniqueViewers?.length || 0
     });
   } catch (err) {
-    console.error("VIEW POST ERROR:", err);
+    console.error("VIEW POST ERROR:", err.message);
     res.status(500).json({ message: err.message });
   }
 });
@@ -384,8 +390,14 @@ router.patch("/:id/like", auth, async (req, res) => {
 
     post = await Post.findById(req.params.id);
 
-    post.engagementScore = calcEngagement(post);
-    await post.save();
+    const engagementScore = calcEngagement(post);
+
+    await Post.findByIdAndUpdate(req.params.id, {
+      $set: {
+        engagementScore,
+        text: post.text || " "
+      }
+    });
 
     const populated = await populatePost(post._id);
 
@@ -403,7 +415,7 @@ router.patch("/:id/like", auth, async (req, res) => {
       likes: populated.likes || []
     });
   } catch (err) {
-    console.error("LIKE ERROR:", err);
+    console.error("LIKE ERROR:", err.message);
     res.status(500).json({ message: err.message });
   }
 });
