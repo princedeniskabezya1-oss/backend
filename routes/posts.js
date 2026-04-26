@@ -20,16 +20,22 @@ function isOwnerOrAdmin(req, post) {
 }
 
 function calcEngagement(post) {
-  const commentCount = post.comments?.length || 0;
-  const replyCount =
-    post.comments?.reduce((acc, c) => acc + (c.replies ? c.replies.length : 0), 0) || 0;
+  const likes = Array.isArray(post.likes) ? post.likes : [];
+  const comments = Array.isArray(post.comments) ? post.comments : [];
+
+  const commentCount = comments.length;
+
+  const replyCount = comments.reduce(
+    (acc, c) => acc + (Array.isArray(c.replies) ? c.replies.length : 0),
+    0
+  );
 
   return (
-    ((post.likes?.length || 0) * 3) +
+    (likes.length * 3) +
     (commentCount * 5) +
     (replyCount * 2) +
-    (post.viewsCount || 0) +
-    ((post.sharesCount || 0) * 4)
+    (Number(post.viewsCount || 0)) +
+    (Number(post.sharesCount || 0) * 4)
   );
 }
 
@@ -326,9 +332,11 @@ router.patch("/:id/view", auth, async (req, res) => {
       return res.status(404).json({ message: "Post not found" });
     }
 
-    const alreadyViewed = post.uniqueViewers.some(
-      id => String(id) === String(req.user.id)
-    );
+    post.uniqueViewers = Array.isArray(post.uniqueViewers) ? post.uniqueViewers : [];
+
+const alreadyViewed = post.uniqueViewers.some(
+  id => String(id) === String(req.user.id)
+);
 
     if (!alreadyViewed) {
       post.uniqueViewers.push(req.user.id);
@@ -359,9 +367,11 @@ router.patch("/:id/like", auth, async (req, res) => {
       return res.status(404).json({ message: "Post not found" });
     }
 
-    const alreadyLiked = post.likes.some(
-      id => String(id) === String(req.user.id)
-    );
+   post.likes = Array.isArray(post.likes) ? post.likes : [];
+
+const alreadyLiked = post.likes.some(
+  id => String(id) === String(req.user.id)
+);
 
     if (alreadyLiked) {
       post.likes.pull(req.user.id);
