@@ -498,5 +498,46 @@ router.get("/analytics/mine", auth, async (req, res) => {
     res.status(500).json({ message: "Failed to load post analytics" });
   }
 });
+router.patch("/users/:userId/follow", auth, async (req, res) => {
+  try {
+    if (String(req.user.id) === String(req.params.userId)) {
+      return res.status(400).json({ message: "You cannot follow yourself" });
+    }
+
+    const me = await User.findById(req.user.id);
+    const target = await User.findById(req.params.userId);
+
+    if (!me || !target) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    me.following = Array.isArray(me.following) ? me.following : [];
+
+    const alreadyFollowing = me.following.some(
+      id => String(id) === String(target._id)
+    );
+
+    if (alreadyFollowing) {
+      me.following.pull(target._id);
+    } else {
+      me.following.push(target._id);
+    }
+
+    await me.save();
+
+    req.app.get("io")?.emit("user_follow_updated", {
+      followerId: me._id,
+      targetId: target._id,
+      following: !alreadyFollowing
+    });
+
+    res.json({
+      following: !alreadyFollowing,
+      targetId: target._id
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
 
 module.exports = router;
