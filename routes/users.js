@@ -125,9 +125,14 @@ router.patch(
       };
 
       [
-        "name", "headline", "bio", "location", "website",
-        "companyName", "industry", "contactEmail", "department"
-      ].forEach(assignIfPresent);
+  "name", "headline", "bio", "location", "website",
+  "companyName", "industry", "contactEmail", "department",
+  "profession", "availability", "workPreference"
+].forEach(assignIfPresent);
+
+if (req.body.yearsOfExperience !== undefined) {
+  user.yearsOfExperience = Number(req.body.yearsOfExperience || 0);
+}
 
       if (req.body.companyTags) {
         try { user.companyTags = JSON.parse(req.body.companyTags); } catch {}
@@ -139,8 +144,16 @@ router.patch(
         try { user.education = JSON.parse(req.body.education); } catch {}
       }
       if (req.body.skills) {
-        try { user.skills = JSON.parse(req.body.skills); } catch {}
-      }
+  try { user.skills = JSON.parse(req.body.skills); } catch {}
+}
+
+if (req.body.languages) {
+  try { user.languages = JSON.parse(req.body.languages); } catch {}
+}
+
+if (req.body.certifications) {
+  try { user.certifications = JSON.parse(req.body.certifications); } catch {}
+}
 
       if (req.files?.profileImage?.[0]) {
         const result = await new Promise((resolve, reject) => {
@@ -235,7 +248,7 @@ router.get("/network", auth, async (req, res) => {
   try {
     const users = await User.find({
       _id: { $ne: req.user.id }
-    }).select("_id name email headline bio role profileImage followers skills department course companyId teamRole isBlockedByEmployer education experience expectedSalary companyName location");
+    }).select("_id name email headline bio role profileImage followers skills languages certifications profession availability workPreference yearsOfExperience aiftVerified aiftCertified department course companyId teamRole isBlockedByEmployer education experience expectedSalary companyName industry schoolName programs location");
 
     res.json(users);
   } catch (err) {
@@ -272,7 +285,7 @@ router.get("/jobseekers/discover", auth, async (req, res) => {
     }
 
     const users = await User.find(query)
-      .select("_id name email role headline bio profileImage skills education experience expectedSalary location companyId teamRole")
+      .select("_id name email role headline bio profileImage skills languages certifications profession availability workPreference yearsOfExperience aiftVerified aiftCertified education experience expectedSalary location companyId teamRole")
       .sort({ createdAt: -1 })
       .limit(100);
 
