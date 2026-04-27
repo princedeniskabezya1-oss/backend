@@ -261,10 +261,56 @@ const UserSchema = new mongoose.Schema(
       default: null
     },
 
-    /* ============================================
-       PROFESSIONAL PROFILE
-    ============================================ */
-    experience: [
+   /* ============================================
+   PROFESSIONAL PROFILE
+============================================ */
+profession: {
+  type: String,
+  default: null
+},
+
+languages: {
+  type: [String],
+  default: []
+},
+
+certifications: [
+  {
+    title: { type: String, default: "" },
+    issuer: { type: String, default: "AIFT" },
+    year: { type: String, default: "" },
+    verifiedByAIFT: { type: Boolean, default: false }
+  }
+],
+
+availability: {
+  type: String,
+  enum: ["full-time", "part-time", "freelance", "internship", "not-specified"],
+  default: "not-specified"
+},
+
+workPreference: {
+  type: String,
+  enum: ["remote", "onsite", "hybrid", "not-specified"],
+  default: "not-specified"
+},
+
+yearsOfExperience: {
+  type: Number,
+  default: 0
+},
+
+aiftVerified: {
+  type: Boolean,
+  default: false
+},
+
+aiftCertified: {
+  type: Boolean,
+  default: false
+},
+
+experience: [
       {
         title: { type: String, default: "" },
         company: { type: String, default: "" },
@@ -350,6 +396,12 @@ UserSchema.index({ createdByEmployer: 1 });
 UserSchema.index({ teamRole: 1 });
 UserSchema.index({ industry: 1 });
 UserSchema.index({ skills: 1 });
-UserSchema.index({ name: "text", headline: "text", bio: "text", companyName: "text", location: "text" });
+UserSchema.index({ profession: 1 });
+UserSchema.index({ languages: 1 });
+UserSchema.index({ availability: 1 });
+UserSchema.index({ workPreference: 1 });
+UserSchema.index({ aiftVerified: 1 });
+UserSchema.index({ aiftCertified: 1 });
+UserSchema.index({ name: "text", headline: "text", bio: "text", companyName: "text", location: "text", profession: "text" });
 
 module.exports = mongoose.model("User", UserSchema);
