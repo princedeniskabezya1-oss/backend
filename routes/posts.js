@@ -798,12 +798,12 @@ router.post("/:id/send", auth, async (req, res) => {
     }
 
     const notifications = allowedTargets.map(userId => ({
-      user: userId,
-      type: "post_share",
-      sender: sender._id,
-      text: `${sender.companyName || sender.name || "Someone"} shared a post with you`,
-      link: `/public-profile.html?post=${post._id}`
-    }));
+  user: userId,
+  type: "message",
+  sender: sender._id,
+  text: `${sender.companyName || sender.name || "Someone"} shared a post with you`,
+  link: `/feed.html?post=${post._id}`
+}));
 
     await Notification.insertMany(notifications);
 
@@ -817,13 +817,13 @@ router.post("/:id/send", auth, async (req, res) => {
       sharesCount: post.sharesCount
     });
 
-    allowedTargets.forEach(userId => {
-      getIo(req)?.emit("notification_created", {
-        user: userId,
-        type: "post_share",
-        postId: post._id
-      });
-    });
+   allowedTargets.forEach(userId => {
+  getIo(req)?.emit("notification_created", {
+    user: userId,
+    type: "message",
+    postId: post._id
+  });
+});
 
     res.json({
       sent: true,
