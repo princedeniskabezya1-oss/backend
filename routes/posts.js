@@ -253,7 +253,37 @@ router.patch("/users/:userId/follow", auth, async (req, res) => {
     res.status(500).json({ message: err.message });
   }
 });
+/* ==========================
+   PUBLIC COMPANY POSTS
+   GET /api/posts/company/:companyId/public
+========================== */
+router.get("/company/:companyId/public", async (req, res) => {
+  try {
+    const { companyId } = req.params;
 
+    const limit = Math.min(Math.max(Number(req.query.limit || 20), 1), 50);
+    const skip = Math.max(Number(req.query.skip || 0), 0);
+
+    const posts = await Post.find({
+      author: companyId,
+      isHiddenByAdmin: { $ne: true }
+    })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate("author", USER_POPULATE)
+      .populate("likes", USER_POPULATE)
+      .populate("comments.user", USER_POPULATE)
+      .populate("comments.likes", USER_POPULATE)
+      .populate("comments.replies.user", USER_POPULATE)
+      .populate("comments.replies.likes", USER_POPULATE);
+
+    res.json(posts);
+  } catch (err) {
+    console.error("PUBLIC COMPANY POSTS ERROR:", err.message);
+    res.status(500).json({ message: "Failed to load company posts" });
+  }
+});
 /* ==========================
    GET SINGLE POST — BELOW SPECIAL GET ROUTES
 ========================== */
