@@ -297,41 +297,82 @@ router.get("/jobseekers/discover", auth, async (req, res) => {
 
 /* ============================================
    EMPLOYER PUBLIC PROFILE
+   GET /api/users/employer/:id/public
 ============================================ */
 router.get("/employer/:id/public", async (req, res) => {
   try {
     const employer = await User.findById(req.params.id)
-      .select("-password");
+      .select(
+        "_id name email role companyName headline bio location website profileImage bannerImage contactEmail contactPhone industry companyTags followers following aiftVerified aiftCertified createdAt"
+      )
+      .populate("followers", "_id name profileImage headline role")
+      .populate("following", "_id name profileImage headline role");
 
     if (!employer) {
       return res.status(404).json({ message: "Employer not found" });
     }
 
-    const jobs = await Job.find({ employerId: employer._id, status: "active" })
-      .sort({ createdAt: -1 })
-      .limit(10);
+    if (!["employer", "school"].includes(employer.role)) {
+      return res.status(400).json({ message: "This profile is not an employer profile" });
+    }
 
-    const applications = await Application.find({ employerId: employer._id });
+    const jobs = await Job.find({
+      employerId: employer._id,
+      status: "active"
+    })
+      .select("_id title location type salary description status createdAt viewsCount applicationsCount")
+      .sort({ createdAt: -1 })
+      .limit(20);
+
+    const applicationsCount = await Application.countDocuments({
+      employerId: employer._id
+    });
+
     const team = await User.find({
       companyId: employer._id,
-      isBlockedByEmployer: false
-    }).select("name profileImage headline teamRole department");
+      isBlockedByEmployer: { $ne: true }
+    })
+      .select("_id name profileImage headline teamRole department profession location skills languages aiftVerified aiftCertified")
+      .sort({ createdAt: -1 })
+      .limit(60);
+
+    let posts = [];
+    try {
+      const Post = require("../models/Post");
+
+      posts = await Post.find({
+        author: employer._id,
+        isHiddenByAdmin: { $ne: true }
+      })
+        .sort({ createdAt: -1 })
+        .limit(20)
+        .populate("author", "name companyName profileImage headline role aiftVerified aiftCertified followers")
+        .populate("comments.user", "name profileImage headline role")
+        .populate("comments.replies.user", "name profileImage headline role");
+    } catch (postErr) {
+      console.warn("PUBLIC EMPLOYER POSTS SKIPPED:", postErr.message);
+      posts = [];
+    }
 
     res.json({
       employer,
       jobs,
       team,
+      posts,
       stats: {
         activeJobs: jobs.length,
-        totalApplications: applications.length,
-        followers: employer.followers?.length || 0
+        totalApplications: applicationsCount,
+        teamMembers: team.length,
+        followers: employer.followers?.length || 0,
+        following: employer.following?.length || 0,
+        posts: posts.length
       }
     });
   } catch (err) {
+    console.error("EMPLOYER PUBLIC PROFILE ERROR:", err);
     res.status(500).json({ message: "Failed to load employer public profile" });
   }
 });
-
 /* ============================================
    PUBLIC PROFILE
 ============================================ */
