@@ -45,7 +45,28 @@ async function populatePost(postId) {
     .populate("comments.user", USER_POPULATE)
     .populate("comments.likes", USER_POPULATE)
     .populate("comments.replies.user", USER_POPULATE)
-    .populate("comments.replies.likes", USER_POPULATE);
+    .populate("comments.replies.likes", USER_POPULATE)
+    .populate({
+      path: "repostOf",
+      populate: [
+        {
+          path: "author",
+          select: USER_POPULATE
+        },
+        {
+          path: "likes",
+          select: USER_POPULATE
+        },
+        {
+          path: "comments.user",
+          select: USER_POPULATE
+        },
+        {
+          path: "comments.replies.user",
+          select: USER_POPULATE
+        }
+      ]
+    });
 }
 
 async function getCurrentUser(req) {
@@ -98,7 +119,28 @@ router.get("/", auth, async (req, res) => {
       .populate("comments.user", USER_POPULATE)
       .populate("comments.likes", USER_POPULATE)
       .populate("comments.replies.user", USER_POPULATE)
-      .populate("comments.replies.likes", USER_POPULATE);
+      .populate("comments.replies.likes", USER_POPULATE)
+.populate({
+  path: "repostOf",
+  populate: [
+    {
+      path: "author",
+      select: USER_POPULATE
+    },
+    {
+      path: "likes",
+      select: USER_POPULATE
+    },
+    {
+      path: "comments.user",
+      select: USER_POPULATE
+    },
+    {
+      path: "comments.replies.user",
+      select: USER_POPULATE
+    }
+  ]
+});
 
     res.json(posts);
   } catch (err) {
@@ -110,33 +152,46 @@ router.get("/", auth, async (req, res) => {
 /* ==========================
    CREATE POST
 ========================== */
-router.post("/", auth, upload.single("media"), async (req, res) => {
+router.post("/", auth, upload.array("media", 10), async (req, res) => {
   try {
     const text = req.body.text?.trim();
-    const hasMedia = Boolean(req.file);
+    const files = req.files || [];
+const hasMedia = files.length > 0;
 
     if (!text && !hasMedia) {
       return res.status(400).json({ message: "Post content or media is required" });
     }
 
-    let mediaUrl = null;
-    let mediaType = null;
+let mediaUrl = null;
+let mediaType = null;
+const media = [];
 
-    if (req.file) {
-      const uploadResult = await new Promise((resolve, reject) => {
-        cloudinary.uploader
-          .upload_stream(
-            { folder: "aift_posts", resource_type: "auto" },
-            (error, result) => (error ? reject(error) : resolve(result))
-          )
-          .end(req.file.buffer);
-      });
+for (const file of files) {
+  const uploadResult = await new Promise((resolve, reject) => {
+    cloudinary.uploader
+      .upload_stream(
+        { folder: "aift_posts", resource_type: "auto" },
+        (error, result) => (error ? reject(error) : resolve(result))
+      )
+      .end(file.buffer);
+  });
 
-      mediaUrl = uploadResult.secure_url;
-      mediaType = req.file.mimetype?.startsWith("video/") ? "video" : "image";
-    }
+  const type = file.mimetype?.startsWith("video/") ? "video" : "image";
+
+  media.push({
+    url: uploadResult.secure_url,
+    type
+  });
+}
+
+if (media.length) {
+  mediaUrl = media[0].url;
+  mediaType = media[0].type;
+}
 
     const post = await Post.create({
+      media,
+repostOf: null,
       author: req.user.id,
       text: text || " ",
       mediaUrl,
@@ -147,6 +202,7 @@ router.post("/", auth, upload.single("media"), async (req, res) => {
       sharesCount: 0,
       viewsCount: 0,
       engagementScore: 0
+    
     });
 
     const populated = await populatePost(post._id);
@@ -276,7 +332,28 @@ router.get("/company/:companyId/public", async (req, res) => {
       .populate("comments.user", USER_POPULATE)
       .populate("comments.likes", USER_POPULATE)
       .populate("comments.replies.user", USER_POPULATE)
-      .populate("comments.replies.likes", USER_POPULATE);
+      .populate("comments.replies.likes", USER_POPULATE)
+.populate({
+  path: "repostOf",
+  populate: [
+    {
+      path: "author",
+      select: USER_POPULATE
+    },
+    {
+      path: "likes",
+      select: USER_POPULATE
+    },
+    {
+      path: "comments.user",
+      select: USER_POPULATE
+    },
+    {
+      path: "comments.replies.user",
+      select: USER_POPULATE
+    }
+  ]
+});
 
     res.json(posts);
   } catch (err) {
@@ -880,16 +957,14 @@ router.post("/:id/repost", auth, async (req, res) => {
     original.text = original.text || " ";
 
     const caption = req.body.text?.trim();
-    const originalAuthor =
-      original.author?.companyName || original.author?.name || "AIFT user";
 
-    const repost = await Post.create({
-      author: req.user.id,
-      text: caption
-        ? `${caption}\n\n↳ Reposted from ${originalAuthor}:\n${original.text}`
-        : `↳ Reposted from ${originalAuthor}:\n${original.text}`,
-      mediaUrl: original.mediaUrl || null,
-      mediaType: original.mediaType || null,
+const repost = await Post.create({
+  author: req.user.id,
+  text: caption || " ",
+  repostOf: original._id,
+  mediaUrl: null,
+  mediaType: null,
+  media: [],
       likes: [],
       comments: [],
       uniqueViewers: [],
