@@ -69,11 +69,11 @@ const PostSchema = new mongoose.Schema(
       required: true
     },
 
-    text: {
-      type: String,
-      required: true,
-      trim: true
-    },
+text: {
+  type: String,
+  default: "",
+  trim: true
+},
 
     mediaUrl: {
       type: String,
