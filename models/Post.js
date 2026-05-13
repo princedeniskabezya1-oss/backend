@@ -85,7 +85,21 @@ const PostSchema = new mongoose.Schema(
       enum: ["image", "video", null],
       default: null
     },
+media: [
+  {
+    url: String,
+    type: {
+      type: String,
+      enum: ["image", "video"]
+    }
+  }
+],
 
+repostOf: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "Post",
+  default: null
+},
     likes: [
       {
         type: mongoose.Schema.Types.ObjectId,
