@@ -193,7 +193,7 @@ if (media.length) {
       media,
 repostOf: null,
       author: req.user.id,
-      text: text || " ",
+      text: text || "",
       mediaUrl,
       mediaType,
       likes: [],
@@ -480,10 +480,15 @@ router.patch("/:id/view", auth, async (req, res) => {
 
     await safeSavePost(post);
 
-    res.json({
-      viewsCount: post.viewsCount || 0,
-      uniqueViewers: post.uniqueViewers.length
-    });
+const payload = {
+  postId: post._id,
+  viewsCount: post.viewsCount || 0,
+  uniqueViewers: post.uniqueViewers.length
+};
+
+getIo(req)?.emit("post_viewed", payload);
+
+res.json(payload);
   } catch (err) {
     console.error("VIEW POST ERROR:", err.message);
     res.status(500).json({ message: err.message });
