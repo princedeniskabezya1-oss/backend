@@ -124,10 +124,29 @@ router.patch(
         }
       };
 
-      [
-  "name", "headline", "bio", "location", "website",
-  "companyName", "industry", "contactEmail", "department",
-  "profession", "availability", "workPreference"
+[
+  "name",
+  "headline",
+  "bio",
+  "location",
+  "website",
+  "companyName",
+  "industry",
+  "contactEmail",
+  "contactPhone",
+  "department",
+  "profession",
+  "availability",
+  "workPreference",
+  "preferredRole",
+  "salaryExpectation",
+  "noticePeriod",
+  "workSetup",
+  "preferredShift",
+  "employmentType",
+  "schoolName",
+  "schoolDescription",
+  "address"
 ].forEach(assignIfPresent);
 
 if (req.body.yearsOfExperience !== undefined) {
@@ -143,6 +162,9 @@ if (req.body.yearsOfExperience !== undefined) {
       if (req.body.education) {
         try { user.education = JSON.parse(req.body.education); } catch {}
       }
+       if (req.body.portfolio) {
+  try { user.portfolio = JSON.parse(req.body.portfolio); } catch {}
+}
       if (req.body.skills) {
   try { user.skills = JSON.parse(req.body.skills); } catch {}
 }
@@ -154,7 +176,9 @@ if (req.body.languages) {
 if (req.body.certifications) {
   try { user.certifications = JSON.parse(req.body.certifications); } catch {}
 }
-
+if (req.body.isPublic !== undefined) {
+  user.isPublic = req.body.isPublic === "true" || req.body.isPublic === true;
+}
       if (req.files?.profileImage?.[0]) {
         const result = await new Promise((resolve, reject) => {
           cloudinary.uploader.upload_stream(
@@ -378,19 +402,97 @@ router.get("/employer/:id/public", async (req, res) => {
 ============================================ */
 router.get("/:id/public", async (req, res) => {
   try {
+
     const user = await User.findById(req.params.id)
       .select("-password")
-      .populate("followers", "name profileImage headline role")
-      .populate("following", "name profileImage headline role");
+      .populate(
+        "followers",
+        "name profileImage headline role"
+      )
+      .populate(
+        "following",
+        "name profileImage headline role"
+      )
+      .populate(
+        "companyId",
+        "name companyName profileImage bannerImage headline"
+      )
+      .populate(
+        "schoolId",
+        "name schoolName schoolLogo schoolBanner"
+      );
 
     if (!user) {
-      return res.status(404).json({ message: "User not found" });
+      return res.status(404).json({
+        message: "User not found"
+      });
     }
 
-    res.json(user);
+    if(user.isPublic === false){
+      return res.status(403).json({
+        message: "This profile is private"
+      });
+    }
+
+    user.profileViews =
+      Number(user.profileViews || 0) + 1;
+
+    await user.save();
+
+    let posts = [];
+
+    try{
+
+      const Post =
+        require("../models/Post");
+
+      posts = await Post.find({
+        author:user._id,
+        isHiddenByAdmin:{
+          $ne:true
+        }
+      })
+      .sort({ createdAt:-1 })
+      .limit(25)
+      .populate(
+        "author",
+        "name profileImage headline role aiftVerified aiftCertified"
+      );
+
+    }catch(postErr){
+
+      console.warn(
+        "PUBLIC POSTS ERROR:",
+        postErr.message
+      );
+
+    }
+
+    res.json({
+      user,
+      posts,
+      stats:{
+        followers:user.followers?.length || 0,
+        following:user.following?.length || 0,
+        skills:user.skills?.length || 0,
+        languages:user.languages?.length || 0,
+        experience:user.experience?.length || 0,
+        education:user.education?.length || 0,
+        profileViews:user.profileViews || 0
+      }
+    });
+
   } catch (err) {
-    console.error("PUBLIC PROFILE ERROR:", err);
-    res.status(500).json({ message: "Failed to load profile" });
+
+    console.error(
+      "PUBLIC PROFILE ERROR:",
+      err
+    );
+
+    res.status(500).json({
+      message: "Failed to load profile"
+    });
+
   }
 });
 
