@@ -379,10 +379,66 @@ experience: [
       default: null
     },
 
-    lastLoginAt: {
-      type: Date,
-      default: null
-    }
+ lastLoginAt: {
+  type: Date,
+  default: null
+},
+
+/* ============================================
+   PUBLIC PROFILE SETTINGS
+============================================ */
+isPublic: {
+  type: Boolean,
+  default: true
+},
+
+profileViews: {
+  type: Number,
+  default: 0
+},
+
+postImpressions: {
+  type: Number,
+  default: 0
+},
+
+preferredRole: {
+  type: String,
+  default: null
+},
+
+salaryExpectation: {
+  type: String,
+  default: null
+},
+
+noticePeriod: {
+  type: String,
+  default: null
+},
+
+workSetup: {
+  type: String,
+  default: null
+},
+
+preferredShift: {
+  type: String,
+  default: null
+},
+
+employmentType: {
+  type: String,
+  default: null
+},
+
+portfolio: [
+  {
+    title: { type: String, default: "" },
+    url: { type: String, default: "" },
+    description: { type: String, default: "" }
+  }
+]
   },
   {
     timestamps: true
@@ -402,6 +458,8 @@ UserSchema.index({ availability: 1 });
 UserSchema.index({ workPreference: 1 });
 UserSchema.index({ aiftVerified: 1 });
 UserSchema.index({ aiftCertified: 1 });
+UserSchema.index({ isPublic: 1 });
+UserSchema.index({ profileViews: -1 });
 UserSchema.index({ name: "text", headline: "text", bio: "text", companyName: "text", location: "text", profession: "text" });
 
 module.exports = mongoose.model("User", UserSchema);
