@@ -259,10 +259,17 @@ if (req.body.allowProfileIndexing !== undefined) {
 
       if (req.files?.cv?.[0]) {
         const result = await new Promise((resolve, reject) => {
-          cloudinary.uploader.upload_stream(
-            { folder: "aift_cvs", resource_type: "auto" },
-            (error, output) => error ? reject(error) : resolve(output)
-          ).end(req.files.cv[0].buffer);
+cloudinary.uploader.upload_stream(
+  {
+    folder: "aift_cvs",
+    resource_type: "raw",
+    type: "upload",
+    access_mode: "public",
+    use_filename: true,
+    unique_filename: true
+  },
+  (error, output) => error ? reject(error) : resolve(output)
+).end(req.files.cv[0].buffer);
         });
         user.cvUrl = result.secure_url;
       }
