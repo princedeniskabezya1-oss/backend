@@ -6,6 +6,8 @@ const Job = require("../models/Job");
 const User = require("../models/User");
 const Notification = require("../models/Notification");
 const auth = require("../middleware/auth");
+const upload = require("../middleware/upload");
+const cloudinary = require("../config/cloudinary");
 
 function getCompanyId(user) {
   if (user.role === "employer") return user._id;
@@ -28,13 +30,24 @@ async function syncJobAnalytics(jobId) {
   return job;
 }
 
-router.post("/", auth, async (req, res) => {
+router.post("/", auth, upload.single("cv"), async (req, res) => {
   try {
-    if (req.user.role !== "talent" && req.user.role !== "agent") {
-      return res.status(403).json({ message: "Only job seekers can apply" });
+    if (!["talent", "agent", "school"].includes(req.user.role)) {
+      return res.status(403).json({ message: "Only job seekers and students can apply" });
     }
 
-    const { jobId, coverLetter } = req.body;
+    const {
+      jobId,
+      coverLetter,
+      applicationType,
+      useProfileCV,
+      schoolName,
+      course,
+      yearLevel,
+      internshipHours,
+      internshipStartDate
+    } = req.body;
+
     const job = await Job.findById(jobId);
 
     if (!job || job.status !== "active") {
@@ -50,6 +63,33 @@ router.post("/", auth, async (req, res) => {
       return res.status(400).json({ message: "You already applied to this job" });
     }
 
+    let finalCvUrl = "";
+    let cvSource = "none";
+
+    if (useProfileCV === "true" && req.user.cvUrl) {
+      finalCvUrl = req.user.cvUrl;
+      cvSource = "profile";
+    }
+
+    if (req.file) {
+      const result = await new Promise((resolve, reject) => {
+        cloudinary.uploader.upload_stream(
+          {
+            folder: "aift_application_cvs",
+            resource_type: "raw",
+            type: "upload",
+            access_mode: "public",
+            use_filename: true,
+            unique_filename: true
+          },
+          (error, output) => error ? reject(error) : resolve(output)
+        ).end(req.file.buffer);
+      });
+
+      finalCvUrl = result.secure_url;
+      cvSource = "uploaded";
+    }
+
     const application = await Application.create({
       jobId,
       employerId: job.employerId,
@@ -57,7 +97,16 @@ router.post("/", auth, async (req, res) => {
       name: req.user.name,
       email: req.user.email,
       coverLetter,
-      cvUrl: req.user.cvUrl || null,
+      applicationType: applicationType === "internship" ? "internship" : "job",
+      cvUrl: finalCvUrl,
+      cvSource,
+      studentInfo: {
+        schoolName: schoolName || req.user.schoolName || "",
+        course: course || req.user.course || "",
+        yearLevel: yearLevel || req.user.yearLevel || "",
+        internshipHours: internshipHours || "",
+        internshipStartDate: internshipStartDate || ""
+      },
       statusHistory: [
         {
           status: "new",
@@ -82,8 +131,6 @@ router.post("/", auth, async (req, res) => {
     res.status(400).json({ message: "Failed to submit application" });
   }
 });
-
-router.get("/", auth, async (req, res) => {
   try {
     if (req.user.role === "admin") {
       const apps = await Application.find()
@@ -172,6 +219,70 @@ router.patch("/:id/status", auth, async (req, res) => {
   } catch (err) {
     console.error("APPLICATION STATUS ERROR:", err);
     res.status(500).json({ message: "Failed to update application status" });
+  }
+});
+router.patch("/:id/follow-up", auth, async (req, res) => {
+  try {
+    const application = await Application.findById(req.params.id)
+      .populate("jobId", "title employerId");
+
+    if (!application) {
+      return res.status(404).json({ message: "Application not found" });
+    }
+
+    if (String(application.applicantId) !== String(req.user._id)) {
+      return res.status(403).json({ message: "You can only follow up on your own application" });
+    }
+
+    if (application.followUp?.sentAt) {
+      return res.status(400).json({ message: "You already sent a follow-up for this application" });
+    }
+
+    const createdAt = new Date(application.createdAt).getTime();
+    const hoursPassed = (Date.now() - createdAt) / (1000 * 60 * 60);
+
+    if (hoursPassed < 24) {
+      return res.status(400).json({
+        message: "You can send a follow-up 24 hours after applying"
+      });
+    }
+
+    const message = String(req.body.message || "").trim();
+
+    if (!message) {
+      return res.status(400).json({ message: "Follow-up message is required" });
+    }
+
+    application.followUp = {
+      message,
+      sentAt: new Date()
+    };
+
+    application.statusHistory.push({
+      status: application.status,
+      changedAt: new Date(),
+      changedBy: req.user._id
+    });
+
+    await application.save();
+
+    await Notification.create({
+      user: application.employerId,
+      type: "application_follow_up",
+      sender: req.user._id,
+      text: `${req.user.name} followed up on their application for ${application.jobId?.title || "your job"}`,
+      link: `/employer.html?tab=pipeline`
+    });
+
+    req.app.get("io").to(String(application.employerId)).emit("application_follow_up", {
+      applicationId: application._id,
+      message
+    });
+
+    res.json(application);
+  } catch (err) {
+    console.error("FOLLOW UP ERROR:", err);
+    res.status(500).json({ message: "Failed to send follow-up" });
   }
 });
 
