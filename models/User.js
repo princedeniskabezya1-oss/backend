@@ -463,7 +463,89 @@ portfolio: [
     url: { type: String, default: "" },
     description: { type: String, default: "" }
   }
-]
+],
+
+services: {
+  type: [String],
+  default: []
+},
+
+tools: {
+  type: [String],
+  default: []
+},
+
+industries: {
+  type: [String],
+  default: []
+},
+
+employerPraise: [
+  {
+    title: { type: String, default: "" },
+    message: { type: String, default: "" },
+    employerId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null
+    },
+    approvedByAgent: {
+      type: Boolean,
+      default: false
+    },
+    approvedByEmployer: {
+      type: Boolean,
+      default: false
+    },
+    isPublic: {
+      type: Boolean,
+      default: false
+    }
+  }
+],
+
+achievements: [
+  {
+    title: { type: String, default: "" },
+    description: { type: String, default: "" },
+    addedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null
+    },
+    approvedByAgent: {
+      type: Boolean,
+      default: false
+    },
+    approvedByEmployer: {
+      type: Boolean,
+      default: false
+    },
+    isPublic: {
+      type: Boolean,
+      default: false
+    }
+  }
+],
+
+performanceMetrics: {
+  taskCompletion: {
+    type: Number,
+    default: 0
+  },
+  attendance: {
+    type: Number,
+    default: 0
+  },
+  csat: {
+    type: Number,
+    default: 0
+  },
+  responseTime: {
+    type: String,
+    default: ""
+  }
+}
   },
   {
     timestamps: true
@@ -480,6 +562,9 @@ UserSchema.index({ skills: 1 });
 UserSchema.index({ profession: 1 });
 UserSchema.index({ languages: 1 });
 UserSchema.index({ availability: 1 });
+UserSchema.index({ services: 1 });
+UserSchema.index({ tools: 1 });
+UserSchema.index({ industries: 1 });
 UserSchema.index({ workPreference: 1 });
 UserSchema.index({ aiftVerified: 1 });
 UserSchema.index({ aiftCertified: 1 });
