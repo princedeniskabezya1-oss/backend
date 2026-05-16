@@ -253,6 +253,9 @@ if (req.body.allowProfileIndexing !== undefined) {
         });
         user.bannerImage = result.secure_url;
       }
+       if (req.body.removeCV === "true") {
+  user.cvUrl = "";
+}
 
       if (req.files?.cv?.[0]) {
         const result = await new Promise((resolve, reject) => {
