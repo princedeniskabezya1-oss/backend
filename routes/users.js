@@ -118,11 +118,11 @@ router.patch(
         return res.status(404).json({ message: "User not found" });
       }
 
-      const assignIfPresent = (field) => {
-        if (req.body[field] !== undefined && String(req.body[field]).trim() !== "") {
-          user[field] = req.body[field];
-        }
-      };
+const assignIfPresent = (field) => {
+  if (req.body[field] !== undefined) {
+    user[field] = String(req.body[field]).trim();
+  }
+};
 
 [
   "name",
@@ -171,6 +171,18 @@ if (req.body.yearsOfExperience !== undefined || req.body.experienceYears !== und
 
 if (req.body.languages) {
   try { user.languages = JSON.parse(req.body.languages); } catch {}
+}
+
+if (req.body.services) {
+  try { user.services = JSON.parse(req.body.services); } catch {}
+}
+
+if (req.body.tools) {
+  try { user.tools = JSON.parse(req.body.tools); } catch {}
+}
+
+if (req.body.industries) {
+  try { user.industries = JSON.parse(req.body.industries); } catch {}
 }
 
 if (req.body.certifications) {
