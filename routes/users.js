@@ -177,7 +177,39 @@ if (req.body.certifications) {
   try { user.certifications = JSON.parse(req.body.certifications); } catch {}
 }
 if (req.body.isPublic !== undefined) {
-  user.isPublic = req.body.isPublic === "true" || req.body.isPublic === true;
+  user.isPublic =
+    req.body.isPublic === "true" ||
+    req.body.isPublic === true;
+}
+
+if (req.body.showEmail !== undefined) {
+  user.showEmail =
+    req.body.showEmail === "true" ||
+    req.body.showEmail === true;
+}
+
+if (req.body.showPhone !== undefined) {
+  user.showPhone =
+    req.body.showPhone === "true" ||
+    req.body.showPhone === true;
+}
+
+if (req.body.showCV !== undefined) {
+  user.showCV =
+    req.body.showCV === "true" ||
+    req.body.showCV === true;
+}
+
+if (req.body.allowMessages !== undefined) {
+  user.allowMessages =
+    req.body.allowMessages === "true" ||
+    req.body.allowMessages === true;
+}
+
+if (req.body.allowProfileIndexing !== undefined) {
+  user.allowProfileIndexing =
+    req.body.allowProfileIndexing === "true" ||
+    req.body.allowProfileIndexing === true;
 }
       if (req.files?.profileImage?.[0]) {
         const result = await new Promise((resolve, reject) => {
