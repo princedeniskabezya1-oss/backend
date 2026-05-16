@@ -392,6 +392,31 @@ isPublic: {
   default: true
 },
 
+showEmail: {
+  type: Boolean,
+  default: false
+},
+
+showPhone: {
+  type: Boolean,
+  default: false
+},
+
+showCV: {
+  type: Boolean,
+  default: true
+},
+
+allowMessages: {
+  type: Boolean,
+  default: true
+},
+
+allowProfileIndexing: {
+  type: Boolean,
+  default: true
+},
+
 profileViews: {
   type: Number,
   default: 0
