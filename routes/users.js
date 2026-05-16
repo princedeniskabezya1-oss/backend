@@ -337,7 +337,7 @@ router.get("/network", auth, async (req, res) => {
   try {
     const users = await User.find({
       _id: { $ne: req.user.id }
-    }).select("_id name email headline bio role profileImage followers skills languages certifications profession availability workPreference yearsOfExperience aiftVerified aiftCertified department course companyId teamRole isBlockedByEmployer education experience expectedSalary companyName industry schoolName programs location");
+    }).select("_id name email headline bio role profileImage bannerImage followers following skills languages certifications profession availability workPreference yearsOfExperience aiftVerified aiftCertified department course companyId teamRole isBlockedByEmployer education experience expectedSalary companyName industry schoolName programs location");
 
     res.json(users);
   } catch (err) {
