@@ -149,8 +149,8 @@ router.patch(
   "address"
 ].forEach(assignIfPresent);
 
-if (req.body.yearsOfExperience !== undefined) {
-  user.yearsOfExperience = Number(req.body.yearsOfExperience || 0);
+if (req.body.yearsOfExperience !== undefined || req.body.experienceYears !== undefined) {
+  user.yearsOfExperience = Number(req.body.yearsOfExperience || req.body.experienceYears || 0);
 }
 
       if (req.body.companyTags) {
