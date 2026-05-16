@@ -165,6 +165,17 @@ if (req.body.yearsOfExperience !== undefined || req.body.experienceYears !== und
        if (req.body.portfolio) {
   try { user.portfolio = JSON.parse(req.body.portfolio); } catch {}
 }
+       if (req.body.employerPraise) {
+  try { user.employerPraise = JSON.parse(req.body.employerPraise); } catch {}
+}
+
+if (req.body.achievements) {
+  try { user.achievements = JSON.parse(req.body.achievements); } catch {}
+}
+
+if (req.body.performanceMetrics) {
+  try { user.performanceMetrics = JSON.parse(req.body.performanceMetrics); } catch {}
+}
       if (req.body.skills) {
   try { user.skills = JSON.parse(req.body.skills); } catch {}
 }
