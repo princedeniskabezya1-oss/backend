@@ -18,10 +18,39 @@ const ApplicationSchema = new mongoose.Schema(
       required: true
     },
 
-    name: String,
-    email: String,
-    coverLetter: String,
-    cvUrl: String,
+name: String,
+email: String,
+coverLetter: String,
+
+applicationType: {
+  type: String,
+  enum: ["job", "internship"],
+  default: "job"
+},
+
+cvUrl: {
+  type: String,
+  default: ""
+},
+
+cvSource: {
+  type: String,
+  enum: ["profile", "uploaded", "none"],
+  default: "none"
+},
+
+studentInfo: {
+  schoolName: { type: String, default: "" },
+  course: { type: String, default: "" },
+  yearLevel: { type: String, default: "" },
+  internshipHours: { type: String, default: "" },
+  internshipStartDate: { type: String, default: "" }
+},
+
+followUp: {
+  message: { type: String, default: "" },
+  sentAt: { type: Date, default: null }
+},
 
     status: {
       type: String,
@@ -69,5 +98,6 @@ const ApplicationSchema = new mongoose.Schema(
 ApplicationSchema.index({ applicantId: 1, createdAt: -1 });
 ApplicationSchema.index({ employerId: 1, createdAt: -1 });
 ApplicationSchema.index({ jobId: 1, status: 1 });
+ApplicationSchema.index({ applicationType: 1, createdAt: -1 });
 
 module.exports = mongoose.model("Application", ApplicationSchema);
