@@ -465,6 +465,38 @@ router.get("/employer/:id/public", async (req, res) => {
 /* ============================================
    PUBLIC PROFILE
 ============================================ */
+router.get("/:id/cv/inline", async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id).select("cvUrl showCV isPublic");
+
+    if (!user || !user.cvUrl) {
+      return res.status(404).send("CV not found");
+    }
+
+    if (user.showCV === false || user.isPublic === false) {
+      return res.status(403).send("CV is private");
+    }
+
+    const fileRes = await fetch(user.cvUrl);
+
+    if (!fileRes.ok) {
+      return res.status(404).send("Could not load CV");
+    }
+
+    const buffer = Buffer.from(await fileRes.arrayBuffer());
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", "inline; filename=cv.pdf");
+    res.setHeader("Cache-Control", "public, max-age=3600");
+
+    return res.send(buffer);
+
+  } catch (err) {
+    console.error("INLINE CV ERROR:", err);
+    res.status(500).send("CV preview failed");
+  }
+});
+
 router.get("/:id/public", async (req, res) => {
   try {
 
