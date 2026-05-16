@@ -19,7 +19,7 @@ function getCompanyId(user) {
 router.get("/", async (req, res) => {
   try {
     const jobs = await Job.find({ status: "active" })
-      .populate("employerId", "isPro companyName profileImage")
+      .populate("employerId", "isPro name companyName profileImage bannerImage headline industry location aiftVerified")
       .sort({ createdAt: -1 });
 
     jobs.sort((a, b) => {
