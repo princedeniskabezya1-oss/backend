@@ -15,6 +15,10 @@ function getCompanyId(user) {
   return null;
 }
 
+function getUserId(req) {
+  return req.user?.id || req.user?._id;
+}
+
 async function syncJobAnalytics(jobId) {
   const job = await Job.findById(jobId);
   if (!job) return null;
@@ -30,9 +34,17 @@ async function syncJobAnalytics(jobId) {
   return job;
 }
 
+/* CREATE APPLICATION */
 router.post("/", auth, upload.single("cv"), async (req, res) => {
   try {
-    if (!["talent", "agent", "school"].includes(req.user.role)) {
+    const userId = getUserId(req);
+    const applicant = await User.findById(userId);
+
+    if (!applicant) {
+      return res.status(401).json({ message: "Please login again" });
+    }
+
+    if (!["talent", "agent", "school"].includes(applicant.role)) {
       return res.status(403).json({ message: "Only job seekers and students can apply" });
     }
 
@@ -48,15 +60,23 @@ router.post("/", auth, upload.single("cv"), async (req, res) => {
       internshipStartDate
     } = req.body;
 
+    if (!jobId) {
+      return res.status(400).json({ message: "Job ID is required" });
+    }
+
     const job = await Job.findById(jobId);
 
-    if (!job || job.status !== "active") {
-      return res.status(404).json({ message: "Job not found or unavailable" });
+    if (!job) {
+      return res.status(404).json({ message: "Job not found" });
+    }
+
+    if (String(job.status || "").toLowerCase() !== "active") {
+      return res.status(400).json({ message: "This job is not accepting applications right now" });
     }
 
     const existing = await Application.findOne({
       jobId,
-      applicantId: req.user._id
+      applicantId: applicant._id
     });
 
     if (existing) {
@@ -66,8 +86,8 @@ router.post("/", auth, upload.single("cv"), async (req, res) => {
     let finalCvUrl = "";
     let cvSource = "none";
 
-    if (useProfileCV === "true" && req.user.cvUrl) {
-      finalCvUrl = req.user.cvUrl;
+    if (useProfileCV === "true" && applicant.cvUrl) {
+      finalCvUrl = applicant.cvUrl;
       cvSource = "profile";
     }
 
@@ -93,24 +113,24 @@ router.post("/", auth, upload.single("cv"), async (req, res) => {
     const application = await Application.create({
       jobId,
       employerId: job.employerId,
-      applicantId: req.user._id,
-      name: req.user.name,
-      email: req.user.email,
-      coverLetter,
+      applicantId: applicant._id,
+      name: applicant.name,
+      email: applicant.email,
+      coverLetter: coverLetter || "",
       applicationType: applicationType === "internship" ? "internship" : "job",
       cvUrl: finalCvUrl,
       cvSource,
       studentInfo: {
-        schoolName: schoolName || req.user.schoolName || "",
-        course: course || req.user.course || "",
-        yearLevel: yearLevel || req.user.yearLevel || "",
+        schoolName: schoolName || applicant.schoolName || "",
+        course: course || applicant.course || "",
+        yearLevel: yearLevel || applicant.yearLevel || "",
         internshipHours: internshipHours || "",
         internshipStartDate: internshipStartDate || ""
       },
       statusHistory: [
         {
           status: "new",
-          changedBy: req.user._id
+          changedBy: applicant._id
         }
       ]
     });
@@ -118,45 +138,69 @@ router.post("/", auth, upload.single("cv"), async (req, res) => {
     await Notification.create({
       user: job.employerId,
       type: "application",
-      sender: req.user._id,
-      text: `${req.user.name} applied for ${job.title}`,
+      sender: applicant._id,
+      text: `${applicant.name} applied for ${job.title}`,
       link: `/employer.html?tab=pipeline`
     });
 
-    req.app.get("io").to(String(job.employerId)).emit("application_created", application);
+    const io = req.app.get("io");
+    if (io) {
+      io.to(String(job.employerId)).emit("application_created", application);
+    }
 
     res.status(201).json(application);
   } catch (err) {
     console.error("APPLICATION CREATE ERROR:", err);
-    res.status(400).json({ message: "Failed to submit application" });
+    res.status(400).json({ message: err.message || "Failed to submit application" });
   }
 });
+
+/* LIST APPLICATIONS */
+router.get("/", auth, async (req, res) => {
   try {
-    if (req.user.role === "admin") {
+    const userId = getUserId(req);
+    const actor = await User.findById(userId);
+
+    if (!actor) {
+      return res.status(401).json({ message: "Please login again" });
+    }
+
+    if (actor.role === "admin") {
       const apps = await Application.find()
         .populate("jobId")
-        .populate("applicantId", "name email profileImage headline role cvUrl skills");
+        .populate("employerId", "name companyName profileImage")
+        .populate("applicantId", "name email profileImage headline role cvUrl skills")
+        .sort({ createdAt: -1 });
+
       return res.json(apps);
     }
 
-    if (req.user.role === "employer") {
-      const apps = await Application.find({ employerId: req.user._id })
+    if (actor.role === "employer") {
+      const apps = await Application.find({ employerId: actor._id })
         .populate("jobId")
-        .populate("applicantId", "name email profileImage headline role cvUrl skills education experience expectedSalary");
+        .populate("employerId", "name companyName profileImage")
+        .populate("applicantId", "name email profileImage headline role cvUrl skills education experience expectedSalary")
+        .sort({ createdAt: -1 });
+
       return res.json(apps);
     }
 
-    if (req.user.companyId) {
-      const apps = await Application.find({ employerId: req.user.companyId })
+    if (actor.companyId) {
+      const apps = await Application.find({ employerId: actor.companyId })
         .populate("jobId")
-        .populate("applicantId", "name email profileImage headline role cvUrl skills education experience expectedSalary");
+        .populate("employerId", "name companyName profileImage")
+        .populate("applicantId", "name email profileImage headline role cvUrl skills education experience expectedSalary")
+        .sort({ createdAt: -1 });
+
       return res.json(apps);
     }
 
-    if (req.user.role === "talent" || req.user.role === "agent") {
-      const apps = await Application.find({ applicantId: req.user._id })
+    if (["talent", "agent", "school"].includes(actor.role)) {
+      const apps = await Application.find({ applicantId: actor._id })
         .populate("jobId")
-        .populate("employerId", "name companyName profileImage");
+        .populate("employerId", "name companyName profileImage")
+        .sort({ createdAt: -1 });
+
       return res.json(apps);
     }
 
@@ -167,10 +211,13 @@ router.post("/", auth, upload.single("cv"), async (req, res) => {
   }
 });
 
+/* UPDATE APPLICATION STATUS */
 router.patch("/:id/status", auth, async (req, res) => {
   try {
-    const actor = await User.findById(req.user.id);
+    const userId = getUserId(req);
+    const actor = await User.findById(userId);
     const companyId = getCompanyId(actor);
+
     if (!companyId) {
       return res.status(403).json({ message: "Access denied" });
     }
@@ -183,16 +230,19 @@ router.patch("/:id/status", auth, async (req, res) => {
     }
 
     const allowed = ["new", "shortlisted", "interview", "offer", "hired", "rejected"];
+
     if (!allowed.includes(req.body.status)) {
       return res.status(400).json({ message: "Invalid status" });
     }
 
     application.status = req.body.status;
+
     if (req.body.notes !== undefined) {
       application.notes = req.body.notes;
     }
 
     application.viewedByEmployerAt = application.viewedByEmployerAt || new Date();
+
     application.statusHistory.push({
       status: req.body.status,
       changedAt: new Date(),
@@ -207,13 +257,16 @@ router.patch("/:id/status", auth, async (req, res) => {
       type: "application_status",
       sender: actor._id,
       text: `Your application for ${application.jobId.title} is now ${req.body.status}`,
-      link: "/talent.html?tab=applications"
+      link: "/my-applications.html"
     });
 
-    req.app.get("io").to(String(application.applicantId)).emit("application_status_updated", {
-      applicationId: application._id,
-      status: application.status
-    });
+    const io = req.app.get("io");
+    if (io) {
+      io.to(String(application.applicantId)).emit("application_status_updated", {
+        applicationId: application._id,
+        status: application.status
+      });
+    }
 
     res.json(application);
   } catch (err) {
@@ -221,8 +274,12 @@ router.patch("/:id/status", auth, async (req, res) => {
     res.status(500).json({ message: "Failed to update application status" });
   }
 });
+
+/* FOLLOW UP AFTER 24 HOURS */
 router.patch("/:id/follow-up", auth, async (req, res) => {
   try {
+    const userId = getUserId(req);
+
     const application = await Application.findById(req.params.id)
       .populate("jobId", "title employerId");
 
@@ -230,7 +287,7 @@ router.patch("/:id/follow-up", auth, async (req, res) => {
       return res.status(404).json({ message: "Application not found" });
     }
 
-    if (String(application.applicantId) !== String(req.user._id)) {
+    if (String(application.applicantId) !== String(userId)) {
       return res.status(403).json({ message: "You can only follow up on your own application" });
     }
 
@@ -261,23 +318,28 @@ router.patch("/:id/follow-up", auth, async (req, res) => {
     application.statusHistory.push({
       status: application.status,
       changedAt: new Date(),
-      changedBy: req.user._id
+      changedBy: userId
     });
 
     await application.save();
 
+    const sender = await User.findById(userId).select("name");
+
     await Notification.create({
       user: application.employerId,
       type: "application_follow_up",
-      sender: req.user._id,
-      text: `${req.user.name} followed up on their application for ${application.jobId?.title || "your job"}`,
+      sender: userId,
+      text: `${sender?.name || "An applicant"} followed up on their application for ${application.jobId?.title || "your job"}`,
       link: `/employer.html?tab=pipeline`
     });
 
-    req.app.get("io").to(String(application.employerId)).emit("application_follow_up", {
-      applicationId: application._id,
-      message
-    });
+    const io = req.app.get("io");
+    if (io) {
+      io.to(String(application.employerId)).emit("application_follow_up", {
+        applicationId: application._id,
+        message
+      });
+    }
 
     res.json(application);
   } catch (err) {
