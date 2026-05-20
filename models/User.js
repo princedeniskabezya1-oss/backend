@@ -27,11 +27,12 @@ const UserSchema = new mongoose.Schema(
     /* ============================================
        ROLE SYSTEM
     ============================================ */
-    role: {
-      type: String,
-      enum: ["talent", "employer", "admin", "agent", "school"],
-      default: "talent"
-    },
+role: {
+  type: String,
+  enum: ["talent", "employer", "admin", "agent", "school", "teacher", "student"],
+  default: "talent",
+  index: true
+},
 
     status: {
       type: String,
@@ -223,17 +224,46 @@ const UserSchema = new mongoose.Schema(
     /* ============================================
        TEACHER / STAFF INFO
     ============================================ */
-    department: {
-      type: String,
-      default: null
-    },
+department: {
+  type: String,
+  default: null
+},
 
-    assignedClasses: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Class"
-      }
-    ],
+subject: {
+  type: String,
+  default: null
+},
+
+teacherBio: {
+  type: String,
+  default: null
+},
+
+studentBio: {
+  type: String,
+  default: null
+},
+
+linkedSchoolId: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "User",
+  default: null,
+  index: true
+},
+
+createdBySchool: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "User",
+  default: null,
+  index: true
+},
+
+assignedClasses: [
+  {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Class"
+  }
+],
 
     /* ============================================
        PRO ACCOUNT
@@ -571,5 +601,8 @@ UserSchema.index({ aiftCertified: 1 });
 UserSchema.index({ isPublic: 1 });
 UserSchema.index({ profileViews: -1 });
 UserSchema.index({ name: "text", headline: "text", bio: "text", companyName: "text", location: "text", profession: "text" });
+UserSchema.index({ linkedSchoolId: 1 });
+UserSchema.index({ createdBySchool: 1 });
+UserSchema.index({ subject: 1 });
 
 module.exports = mongoose.model("User", UserSchema);
