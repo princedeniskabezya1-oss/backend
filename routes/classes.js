@@ -1,3 +1,5 @@
+const upload = require("../middleware/upload");
+const cloudinary = require("../config/cloudinary");
 const express = require("express");
 const router = express.Router();
 
@@ -11,6 +13,20 @@ function canManageSchool(user, schoolId) {
   if (user.role === "school" && String(user._id) === String(schoolId)) return true;
   if (user.role === "teacher" && String(user.schoolId || user.linkedSchoolId) === String(schoolId)) return true;
   return false;
+}
+function uploadClassCover(file) {
+  return new Promise((resolve, reject) => {
+    cloudinary.uploader.upload_stream(
+      {
+        folder: "aift_classes",
+        resource_type: "auto"
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        resolve(result.secure_url);
+      }
+    ).end(file.buffer);
+  });
 }
 
 /* ============================================
@@ -80,9 +96,10 @@ router.get("/:id", auth, async (req, res) => {
 /* ============================================
    CREATE CLASS
 ============================================ */
-router.post("/", auth, async (req, res) => {
+router.post("/", auth, upload.single("coverImage"), async (req, res) => {
   try {
     const {
+      coverImage,
       schoolId,
       title,
       subject,
@@ -134,6 +151,11 @@ router.post("/", auth, async (req, res) => {
         return res.status(403).json({ message: "Teacher is not linked to this school" });
       }
     }
+    let uploadedCover = null;
+
+if (req.file) {
+  uploadedCover = await uploadClassCover(req.file);
+}
 
     const item = await Class.create({
       schoolId: finalSchoolId,
@@ -145,6 +167,7 @@ router.post("/", auth, async (req, res) => {
       meetingLink: meetingLink || null,
       schedule: schedule || null,
       description: description || null,
+      coverImage: uploadedCover || coverImage || null,
       materials: Array.isArray(materials) ? materials : []
     });
 
@@ -178,7 +201,7 @@ router.post("/", auth, async (req, res) => {
 /* ============================================
    UPDATE CLASS
 ============================================ */
-router.patch("/:id", auth, async (req, res) => {
+router.patch("/:id", auth, upload.single("coverImage"), async (req, res) => {
   try {
     const item = await Class.findById(req.params.id);
 
@@ -216,11 +239,19 @@ router.patch("/:id", auth, async (req, res) => {
       item.studentIds = req.body.studentIds;
     }
 
-    if (Array.isArray(req.body.materials)) {
-      item.materials = req.body.materials;
-    }
+if (Array.isArray(req.body.materials)) {
+  item.materials = req.body.materials;
+}
 
-    await item.save();
+if (req.file) {
+  item.coverImage = await uploadClassCover(req.file);
+}
+
+if (req.body.coverImage !== undefined && !req.file) {
+  item.coverImage = req.body.coverImage || null;
+}
+
+await item.save();
 
     const newTeacherId = item.teacherId ? String(item.teacherId) : null;
 
