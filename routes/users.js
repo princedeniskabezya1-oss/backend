@@ -11,6 +11,21 @@ const auth = require("../middleware/auth");
 const adminOnly = require("../middleware/adminOnly");
 const upload = require("../middleware/upload");
 const cloudinary = require("../config/cloudinary");
+function canSchoolManageUser(manager, targetUser) {
+  if (!manager || !targetUser) return false;
+
+  if (manager.role === "admin") return true;
+  if (manager.role !== "school") return false;
+
+  const schoolId = String(manager._id || manager.id);
+
+  return (
+    String(targetUser.schoolId || "") === schoolId ||
+    String(targetUser.linkedSchoolId || "") === schoolId ||
+    String(targetUser.companyId || "") === schoolId ||
+    String(targetUser.createdBySchool || "") === schoolId
+  );
+}
 
 /* ============================================
    ADMIN GET ALL USERS
@@ -680,20 +695,65 @@ router.get("/:id/public", async (req, res) => {
 /* ============================================
    ADMIN
 ============================================ */
-router.patch("/:id", adminOnly, async (req, res) => {
+router.patch("/:id", auth, async (req, res) => {
   try {
-    const { role, status } = req.body;
+    const targetUser = await User.findById(req.params.id);
 
-    const updated = await User.findByIdAndUpdate(
-      req.params.id,
-      { role, status },
-      { new: true }
-    ).select("-password");
+    if (!targetUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const isAdmin = req.user.role === "admin";
+    const isSchoolAllowed = canSchoolManageUser(req.user, targetUser);
+
+    if (!isAdmin && !isSchoolAllowed) {
+      return res.status(403).json({ message: "Not allowed to update this user" });
+    }
+
+    const allowedFields = [
+      "name",
+      "email",
+      "role",
+      "status",
+      "course",
+      "subject",
+      "department",
+      "bio",
+      "teacherBio",
+      "studentBio",
+      "schoolId",
+      "linkedSchoolId",
+      "companyId"
+    ];
+
+    allowedFields.forEach(field => {
+      if (req.body[field] !== undefined) {
+        targetUser[field] = req.body[field];
+      }
+    });
+
+    if (req.body.password) {
+      targetUser.password = await bcrypt.hash(req.body.password, 10);
+    }
+
+    if (!isAdmin) {
+      if (!["teacher", "student"].includes(String(targetUser.role))) {
+        return res.status(403).json({ message: "School can only update teachers/students" });
+      }
+
+      targetUser.schoolId = req.user._id;
+      targetUser.linkedSchoolId = req.user._id;
+      targetUser.companyId = req.user._id;
+    }
+
+    await targetUser.save();
+
+    const updated = await User.findById(targetUser._id).select("-password");
 
     res.json(updated);
   } catch (err) {
-    console.error("ADMIN UPDATE ERROR:", err);
-    res.status(400).json({ message: "Failed to update user" });
+    console.error("SCHOOL USER UPDATE ERROR:", err);
+    res.status(400).json({ message: err.message || "Failed to update user" });
   }
 });
 
@@ -711,13 +771,45 @@ router.patch("/:id/password", adminOnly, async (req, res) => {
   }
 });
 
-router.delete("/:id", adminOnly, async (req, res) => {
+router.delete("/:id", auth, async (req, res) => {
   try {
-    await User.findByIdAndDelete(req.params.id);
-    res.json({ message: "User deleted successfully" });
+    const targetUser = await User.findById(req.params.id);
+
+    if (!targetUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const isAdmin = req.user.role === "admin";
+    const isSchoolAllowed = canSchoolManageUser(req.user, targetUser);
+
+    if (!isAdmin && !isSchoolAllowed) {
+      return res.status(403).json({ message: "Not allowed to remove this user" });
+    }
+
+    if (isAdmin) {
+      await targetUser.deleteOne();
+      return res.json({ message: "User deleted successfully" });
+    }
+
+    if (!["teacher", "student", "talent"].includes(String(targetUser.role))) {
+      return res.status(403).json({ message: "School can only remove teachers/students" });
+    }
+
+    targetUser.schoolId = null;
+    targetUser.linkedSchoolId = null;
+    targetUser.companyId = null;
+    targetUser.createdBySchool = null;
+
+    if (targetUser.role === "teacher") {
+      targetUser.assignedClasses = [];
+    }
+
+    await targetUser.save();
+
+    res.json({ message: "User removed from school" });
   } catch (err) {
-    console.error("DELETE USER ERROR:", err);
-    res.status(400).json({ message: "Failed to delete user" });
+    console.error("SCHOOL USER DELETE ERROR:", err);
+    res.status(400).json({ message: err.message || "Failed to remove user" });
   }
 });
 
