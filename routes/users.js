@@ -54,6 +54,68 @@ router.post("/", adminOnly, async (req, res) => {
 });
 
 /* ============================================
+   SCHOOL CREATE TEACHER / STUDENT
+============================================ */
+router.post("/school-create", auth, async (req, res) => {
+  try {
+    if (!["school", "admin"].includes(req.user.role)) {
+      return res.status(403).json({ message: "Only school/admin can create users" });
+    }
+
+    const { name, email, password, role, course, subject, department, bio } = req.body;
+
+    const cleanRole = String(role || "").toLowerCase();
+
+    if (!["teacher", "student"].includes(cleanRole)) {
+      return res.status(400).json({ message: "Role must be teacher or student" });
+    }
+
+    if (!name || !email || !password) {
+      return res.status(400).json({ message: "Name, email, and password are required" });
+    }
+
+    const existing = await User.findOne({
+      email: String(email).toLowerCase().trim()
+    });
+
+    if (existing) {
+      return res.status(400).json({ message: "User already exists" });
+    }
+
+    const schoolId = req.user.role === "admin" && req.body.schoolId
+      ? req.body.schoolId
+      : req.user.id;
+
+    const hashed = await bcrypt.hash(password, 10);
+
+    const user = await User.create({
+      name: String(name).trim(),
+      email: String(email).toLowerCase().trim(),
+      password: hashed,
+      role: cleanRole,
+      schoolId,
+      linkedSchoolId: schoolId,
+      companyId: schoolId,
+      createdBySchool: req.user.id,
+      course: cleanRole === "student" ? course || null : null,
+      subject: cleanRole === "teacher" ? subject || department || null : null,
+      department: cleanRole === "teacher" ? department || subject || null : null,
+      bio: bio || null
+    });
+
+    const safeUser = await User.findById(user._id).select("-password");
+
+    const io = req.app.get("io");
+    if (io) io.to(String(schoolId)).emit("user:new", safeUser);
+
+    res.status(201).json(safeUser);
+  } catch (err) {
+    console.error("SCHOOL CREATE USER ERROR:", err);
+    res.status(500).json({ message: err.message || "Failed to create user" });
+  }
+});
+
+/* ============================================
    GET CURRENT USER
 ============================================ */
 router.get("/me", auth, async (req, res) => {
@@ -106,11 +168,14 @@ router.get("/me/following", auth, async (req, res) => {
 router.patch(
   "/profile",
   auth,
-  upload.fields([
-    { name: "profileImage", maxCount: 1 },
-    { name: "bannerImage", maxCount: 1 },
-    { name: "cv", maxCount: 1 }
-  ]),
+upload.fields([
+  { name: "profileImage", maxCount: 1 },
+  { name: "logo", maxCount: 1 },
+  { name: "bannerImage", maxCount: 1 },
+  { name: "banner", maxCount: 1 },
+  { name: "coverImage", maxCount: 1 },
+  { name: "cv", maxCount: 1 }
+]),
   async (req, res) => {
     try {
       const user = await User.findById(req.user.id);
@@ -146,16 +211,26 @@ const assignIfPresent = (field) => {
   "employmentType",
   "schoolName",
   "schoolDescription",
-  "address"
+  "address",
+   "phone",
+"schoolType"
 ].forEach(assignIfPresent);
 
 if (req.body.yearsOfExperience !== undefined || req.body.experienceYears !== undefined) {
   user.yearsOfExperience = Number(req.body.yearsOfExperience || req.body.experienceYears || 0);
 }
 
-      if (req.body.companyTags) {
-        try { user.companyTags = JSON.parse(req.body.companyTags); } catch {}
-      }
+if (req.body.programs) {
+  try {
+    const parsed = JSON.parse(req.body.programs);
+    user.programs = Array.isArray(parsed) ? parsed : [];
+  } catch {
+    user.programs = String(req.body.programs)
+      .split(",")
+      .map(x => x.trim())
+      .filter(Boolean);
+  }
+}
       if (req.body.experience) {
         try { user.experience = JSON.parse(req.body.experience); } catch {}
       }
@@ -234,24 +309,33 @@ if (req.body.allowProfileIndexing !== undefined) {
     req.body.allowProfileIndexing === "true" ||
     req.body.allowProfileIndexing === true;
 }
-      if (req.files?.profileImage?.[0]) {
+      const logoFile = req.files?.profileImage?.[0] || req.files?.logo?.[0];
+
+if (logoFile) {
         const result = await new Promise((resolve, reject) => {
           cloudinary.uploader.upload_stream(
             { folder: "aift_profiles", resource_type: "auto" },
             (error, output) => error ? reject(error) : resolve(output)
-          ).end(req.files.profileImage[0].buffer);
+          ).end(logoFile.buffer);
         });
         user.profileImage = result.secure_url;
+   user.schoolLogo = result.secure_url;
       }
 
-      if (req.files?.bannerImage?.[0]) {
+     const bannerFile =
+  req.files?.bannerImage?.[0] ||
+  req.files?.banner?.[0] ||
+  req.files?.coverImage?.[0];
+
+if (bannerFile) {
         const result = await new Promise((resolve, reject) => {
           cloudinary.uploader.upload_stream(
             { folder: "aift_banners", resource_type: "auto" },
             (error, output) => error ? reject(error) : resolve(output)
-          ).end(req.files.bannerImage[0].buffer);
+          ).end(bannerFile.buffer);
         });
         user.bannerImage = result.secure_url;
+   user.schoolBanner = result.secure_url;
       }
        if (req.body.removeCV === "true") {
   user.cvUrl = "";
