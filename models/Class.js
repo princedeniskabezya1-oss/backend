@@ -50,6 +50,12 @@ const classSchema = new mongoose.Schema(
       maxlength: 500,
       default: null
     },
+    coverImage: {
+  type: String,
+  trim: true,
+  maxlength: 800,
+  default: null
+},
 
     schedule: {
       type: String,
