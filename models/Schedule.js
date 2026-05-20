@@ -1,87 +1,88 @@
 const mongoose = require("mongoose");
 
-const ScheduleSchema = new mongoose.Schema(
+const scheduleSchema = new mongoose.Schema(
   {
-    employerId: {
+    schoolId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true
+      required: true,
+      index: true
     },
-    agentId: {
+
+    classId: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true
+      ref: "Class",
+      default: null,
+      index: true
     },
-    createdBy: {
+
+    teacherId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true
+      default: null,
+      index: true
     },
 
     title: {
       type: String,
-      required: true,
-      trim: true
+      trim: true,
+      maxlength: 140,
+      default: "Class Schedule"
     },
 
-    shiftType: {
-      type: String,
-      enum: ["morning", "mid", "night", "flex", "custom"],
-      default: "custom"
+    date: {
+      type: Date,
+      default: null,
+      index: true
     },
 
-    locationType: {
+    time: {
       type: String,
-      enum: ["onsite", "remote", "hybrid"],
-      default: "onsite"
-    },
-
-    startDate: {
-      type: String,
-      required: true
-    },
-
-    endDate: {
-      type: String,
-      required: true
+      trim: true,
+      maxlength: 50,
+      default: null
     },
 
     startTime: {
       type: String,
-      required: true
+      trim: true,
+      maxlength: 50,
+      default: null
     },
 
     endTime: {
       type: String,
-      required: true
+      trim: true,
+      maxlength: 50,
+      default: null
     },
 
-    recurrence: {
+    meetingLink: {
       type: String,
-      enum: ["once", "daily", "weekly", "monthly"],
-      default: "once"
-    },
-
-    timezone: {
-      type: String,
-      default: "Asia/Manila"
+      trim: true,
+      maxlength: 500,
+      default: null
     },
 
     notes: {
       type: String,
-      default: ""
+      trim: true,
+      maxlength: 3000,
+      default: null
     },
 
     status: {
       type: String,
-      enum: ["scheduled", "active", "completed", "cancelled"],
-      default: "scheduled"
+      enum: ["scheduled", "completed", "cancelled"],
+      default: "scheduled",
+      index: true
     }
   },
   { timestamps: true }
 );
 
-ScheduleSchema.index({ employerId: 1, createdAt: -1 });
-ScheduleSchema.index({ agentId: 1, startDate: 1 });
+scheduleSchema.index({ schoolId: 1, date: 1 });
+scheduleSchema.index({ teacherId: 1, date: 1 });
+scheduleSchema.index({ classId: 1, date: 1 });
 
-module.exports = mongoose.model("Schedule", ScheduleSchema);
+module.exports = mongoose.model("Schedule", scheduleSchema);
