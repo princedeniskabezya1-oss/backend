@@ -79,6 +79,18 @@ const schoolUpdateSchema = new mongoose.Schema(
       maxlength: 800,
       default: null
     },
+    mediaUrl: {
+  type: String,
+  trim: true,
+  maxlength: 800,
+  default: null
+},
+
+mediaType: {
+  type: String,
+  enum: ["image", "video", "file", null],
+  default: null
+},
 
     dueDate: {
       type: Date,
