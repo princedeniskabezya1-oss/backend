@@ -1,3 +1,5 @@
+const upload = require("../middleware/upload");
+const cloudinary = require("../config/cloudinary");
 const express = require("express");
 const router = express.Router();
 
@@ -7,6 +9,29 @@ const Class = require("../models/Class");
 
 function id(value) {
   return String(value?._id || value || "");
+}
+function uploadUpdateMedia(file) {
+  return new Promise((resolve, reject) => {
+    cloudinary.uploader.upload_stream(
+      {
+        folder: "aift_school_updates",
+        resource_type: "auto"
+      },
+      (error, result) => {
+        if (error) return reject(error);
+
+        let mediaType = "file";
+
+        if (result.resource_type === "image") mediaType = "image";
+        if (result.resource_type === "video") mediaType = "video";
+
+        resolve({
+          mediaUrl: result.secure_url,
+          mediaType
+        });
+      }
+    ).end(file.buffer);
+  });
 }
 
 function getUserSchoolId(user) {
@@ -93,7 +118,7 @@ router.get("/", auth, async (req, res) => {
 /* ============================================
    CREATE SCHOOL UPDATE
 ============================================ */
-router.post("/", auth, async (req, res) => {
+router.post("/", auth, upload.single("media"), async (req, res) => {
   try {
     const {
       schoolId,
@@ -134,11 +159,18 @@ router.post("/", auth, async (req, res) => {
         return res.status(403).json({ message: "Class does not belong to this school" });
       }
     }
+    let uploadedMedia = null;
+
+if (req.file) {
+  uploadedMedia = await uploadUpdateMedia(req.file);
+}
 
     const update = await SchoolUpdate.create({
       schoolId: finalSchoolId,
       authorId: req.user._id,
       classId: classId || null,
+      mediaUrl: uploadedMedia?.mediaUrl || req.body.mediaUrl || null,
+mediaType: uploadedMedia?.mediaType || req.body.mediaType || null,
       audience: audience || "all",
       studentIds: Array.isArray(studentIds) ? studentIds : [],
       teacherIds: Array.isArray(teacherIds) ? teacherIds : [],
@@ -183,7 +215,7 @@ router.post("/", auth, async (req, res) => {
 /* ============================================
    UPDATE SCHOOL UPDATE
 ============================================ */
-router.patch("/:id", auth, async (req, res) => {
+router.patch("/:id", auth, upload.single("media"), async (req, res) => {
   try {
     const update = await SchoolUpdate.findById(req.params.id);
 
@@ -217,11 +249,22 @@ router.patch("/:id", auth, async (req, res) => {
       update.studentIds = req.body.studentIds;
     }
 
-    if (Array.isArray(req.body.teacherIds)) {
-      update.teacherIds = req.body.teacherIds;
-    }
+if (Array.isArray(req.body.teacherIds)) {
+  update.teacherIds = req.body.teacherIds;
+}
 
-    await update.save();
+if (req.file) {
+  const uploadedMedia = await uploadUpdateMedia(req.file);
+  update.mediaUrl = uploadedMedia.mediaUrl;
+  update.mediaType = uploadedMedia.mediaType;
+}
+
+if (req.body.mediaUrl !== undefined && !req.file) {
+  update.mediaUrl = req.body.mediaUrl || null;
+  update.mediaType = req.body.mediaType || null;
+}
+
+await update.save();
 
     const populated = await SchoolUpdate.findById(update._id)
       .populate("authorId", "name profileImage role")
