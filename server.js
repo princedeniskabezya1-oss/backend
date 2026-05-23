@@ -28,6 +28,11 @@ const opportunityRoutes = require("./routes/opportunities");
 const schoolUpdateRoutes = require("./routes/schoolUpdates");
 const attendanceRoutes = require("./routes/attendance");
 
+const classModuleRoutes = require("./routes/classModules");
+const classLessonRoutes = require("./routes/classLessons");
+const quizRoutes = require("./routes/quizzes");
+const lessonProgressRoutes = require("./routes/lessonProgress");
+
 const app = express();
 
 /* ============================================
@@ -89,6 +94,10 @@ app.use("/api/opportunities", opportunityRoutes);
 app.use("/api/school-updates", schoolUpdateRoutes);
 app.use("/api/attendance", attendanceRoutes);
 
+app.use("/api/class-modules", classModuleRoutes);
+app.use("/api/class-lessons", classLessonRoutes);
+app.use("/api/quizzes", quizRoutes);
+app.use("/api/lesson-progress", lessonProgressRoutes);
 /* ============================================
    SOCKET.IO
 ============================================ */
