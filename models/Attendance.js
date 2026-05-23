@@ -1,3 +1,4 @@
+// models/Attendance.js
 const mongoose = require("mongoose");
 
 const AttendanceSchema = new mongoose.Schema(
@@ -46,8 +47,8 @@ const AttendanceSchema = new mongoose.Schema(
     status: {
       type: String,
       enum: ["present", "late", "absent", "excused"],
-      required: true,
       default: "present",
+      required: true,
       index: true,
     },
 
@@ -62,6 +63,7 @@ const AttendanceSchema = new mongoose.Schema(
       type: String,
       trim: true,
       default: "",
+      maxlength: 1000,
     },
 
     markedBy: {
@@ -69,13 +71,36 @@ const AttendanceSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+
+    source: {
+      type: String,
+      enum: ["manual", "bulk", "schedule", "system"],
+      default: "manual",
+    },
   },
   { timestamps: true }
 );
 
 AttendanceSchema.index(
-  { schoolId: 1, classId: 1, studentId: 1, date: 1 },
+  {
+    schoolId: 1,
+    classId: 1,
+    studentId: 1,
+    date: 1,
+  },
   { unique: true }
 );
+
+AttendanceSchema.index({
+  schoolId: 1,
+  teacherId: 1,
+  date: -1,
+});
+
+AttendanceSchema.index({
+  schoolId: 1,
+  studentId: 1,
+  date: -1,
+});
 
 module.exports = mongoose.model("Attendance", AttendanceSchema);
