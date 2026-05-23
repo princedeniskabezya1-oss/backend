@@ -26,6 +26,7 @@ const assignmentRoutes = require("./routes/assignments");
 const submissionRoutes = require("./routes/submissions");
 const opportunityRoutes = require("./routes/opportunities");
 const schoolUpdateRoutes = require("./routes/schoolUpdates");
+const attendanceRoutes = require("./routes/attendance");
 
 const app = express();
 
@@ -86,6 +87,7 @@ app.use("/api/assignments", assignmentRoutes);
 app.use("/api/submissions", submissionRoutes);
 app.use("/api/opportunities", opportunityRoutes);
 app.use("/api/school-updates", schoolUpdateRoutes);
+app.use("/api/attendance", attendanceRoutes);
 
 /* ============================================
    SOCKET.IO
