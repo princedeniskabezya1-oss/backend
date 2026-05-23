@@ -1,3 +1,10 @@
+const ClassModule = require("../models/ClassModule");
+const ClassLesson = require("../models/ClassLesson");
+const Quiz = require("../models/Quiz");
+const LessonProgress = require("../models/LessonProgress");
+const Attendance = require("../models/Attendance");
+const Assignment = require("../models/Assignment");
+const Submission = require("../models/Submission");
 const upload = require("../middleware/upload");
 const cloudinary = require("../config/cloudinary");
 const express = require("express");
@@ -310,4 +317,136 @@ router.delete("/:id", auth, async (req, res) => {
   }
 });
 
+/* =====================================================
+   CLASS BUILDER DASHBOARD
+   GET /api/classes/:id/builder
+===================================================== */
+
+router.get("/:id/builder", async (req, res) => {
+  try {
+    const classId = req.params.id;
+
+    const classDoc = await Class.findById(classId)
+      .populate("teacherId", "name email profileImage avatar role")
+      .lean();
+
+    if (!classDoc) {
+      return res.status(404).json({ message: "Class not found" });
+    }
+
+    const schoolId = classDoc.schoolId || classDoc.ownerId || classDoc.createdBy;
+
+    const [
+      modules,
+      lessons,
+      quizzes,
+      assignments,
+      submissions,
+      attendance,
+      progress
+    ] = await Promise.all([
+      ClassModule.find({ classId }).sort({ order: 1, createdAt: 1 }).lean(),
+      ClassLesson.find({ classId }).sort({ order: 1, createdAt: 1 }).lean(),
+      Quiz.find({ classId }).sort({ createdAt: -1 }).lean(),
+      Assignment.find({ classId }).sort({ createdAt: -1 }).lean(),
+      Submission.find({ classId }).sort({ createdAt: -1 }).lean(),
+      Attendance.find({ classId }).sort({ date: -1 }).limit(200).lean(),
+      LessonProgress.find({ classId }).sort({ updatedAt: -1 }).lean()
+    ]);
+
+    const completedLessons = progress.filter(
+      item => item.status === "completed" || Number(item.progressPercent || 0) >= 100
+    ).length;
+
+    const totalProgress = progress.length
+      ? Math.round(
+          progress.reduce((sum, item) => sum + Number(item.progressPercent || 0), 0) /
+          progress.length
+        )
+      : 0;
+
+    const attendanceTotal = attendance.length;
+    const attendancePresent = attendance.filter(item => item.status === "present").length;
+
+    const attendanceRate = attendanceTotal
+      ? Math.round((attendancePresent / attendanceTotal) * 100)
+      : 0;
+
+    res.json({
+      class: classDoc,
+      schoolId,
+      modules,
+      lessons,
+      quizzes,
+      assignments,
+      submissions,
+      attendance,
+      progress,
+      analytics: {
+        moduleCount: modules.length,
+        lessonCount: lessons.length,
+        quizCount: quizzes.length,
+        assignmentCount: assignments.length,
+        submissionCount: submissions.length,
+        completedLessons,
+        averageProgress: totalProgress,
+        attendanceRate
+      }
+    });
+  } catch (err) {
+    console.error("GET class builder error:", err);
+    res.status(500).json({ message: "Failed to load class builder" });
+  }
+});
+
+
+/* =====================================================
+   UPDATE CLASS BUILDER PROFILE
+   PATCH /api/classes/:id/builder
+===================================================== */
+
+router.patch("/:id/builder", async (req, res) => {
+  try {
+    const updates = {};
+
+    const allowedFields = [
+      "title",
+      "name",
+      "subject",
+      "description",
+      "classCode",
+      "code",
+      "meetingLink",
+      "schedule",
+      "teacherId",
+      "coverImage",
+      "bannerImage",
+      "welcomeContent",
+      "learningOutcomes",
+      "status",
+      "published"
+    ];
+
+    allowedFields.forEach(field => {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    });
+
+    const updatedClass = await Class.findByIdAndUpdate(
+      req.params.id,
+      updates,
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedClass) {
+      return res.status(404).json({ message: "Class not found" });
+    }
+
+    res.json(updatedClass);
+  } catch (err) {
+    console.error("PATCH class builder error:", err);
+    res.status(500).json({ message: "Failed to update class builder" });
+  }
+});
 module.exports = router;
