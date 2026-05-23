@@ -39,7 +39,6 @@ function normalizeDate(value) {
   if (Number.isNaN(date.getTime())) return null;
 
   date.setHours(0, 0, 0, 0);
-
   return date;
 }
 
@@ -68,7 +67,6 @@ function buildDateFilter(query) {
 
   if (query.date) {
     const date = normalizeDate(query.date);
-
     if (!date) return null;
 
     const next = new Date(date);
@@ -109,9 +107,7 @@ async function populateAttendance(query) {
     .populate("markedBy", "name email role");
 }
 
-/**
- * GET /api/attendance
- */
+/* GET /api/attendance */
 router.get("/", auth, async (req, res) => {
   try {
     const schoolId = await resolveSchoolId(req);
@@ -151,6 +147,7 @@ router.get("/", auth, async (req, res) => {
     return res.json(records);
   } catch (err) {
     console.error("GET /api/attendance failed:", err);
+
     return res.status(500).json({
       message: "Unable to load attendance.",
       error: err.message,
@@ -158,9 +155,7 @@ router.get("/", auth, async (req, res) => {
   }
 });
 
-/**
- * POST /api/attendance
- */
+/* POST /api/attendance */
 router.post("/", auth, async (req, res) => {
   try {
     const schoolId = await resolveSchoolId(req);
@@ -173,14 +168,32 @@ router.post("/", auth, async (req, res) => {
 
     const date = normalizeDate(req.body.date);
 
-    if (!schoolId) return res.status(400).json({ message: "schoolId is required." });
-    if (!classId) return res.status(400).json({ message: "classId is required." });
-    if (!teacherId) return res.status(400).json({ message: "teacherId is required." });
-    if (!studentId) return res.status(400).json({ message: "studentId is required." });
-    if (!date) return res.status(400).json({ message: "Valid date is required." });
-    if (!markedBy) return res.status(401).json({ message: "Unauthorized." });
+    if (!schoolId) {
+      return res.status(400).json({ message: "schoolId is required." });
+    }
+
+    if (!classId) {
+      return res.status(400).json({ message: "classId is required." });
+    }
+
+    if (!teacherId) {
+      return res.status(400).json({ message: "teacherId is required." });
+    }
+
+    if (!studentId) {
+      return res.status(400).json({ message: "studentId is required." });
+    }
+
+    if (!date) {
+      return res.status(400).json({ message: "Valid date is required." });
+    }
+
+    if (!markedBy) {
+      return res.status(401).json({ message: "Unauthorized." });
+    }
 
     const allowed = ["present", "late", "absent", "excused"];
+
     const status = allowed.includes(req.body.status)
       ? req.body.status
       : "present";
@@ -232,10 +245,7 @@ router.post("/", auth, async (req, res) => {
     });
   }
 });
-
-/**
- * PATCH /api/attendance/:id
- */
+/* PATCH /api/attendance/:id */
 router.patch("/:id", auth, async (req, res) => {
   try {
     if (!isValidId(req.params.id)) {
@@ -276,7 +286,9 @@ router.patch("/:id", auth, async (req, res) => {
 
     const scheduleId = cleanId(req.body.scheduleId);
 
-    if (scheduleId) update.scheduleId = scheduleId;
+    if (scheduleId) {
+      update.scheduleId = scheduleId;
+    }
 
     update.markedBy = getUserId(req);
 
@@ -297,6 +309,7 @@ router.patch("/:id", auth, async (req, res) => {
     return res.json(populated);
   } catch (err) {
     console.error("PATCH /api/attendance/:id failed:", err);
+
     return res.status(500).json({
       message: "Unable to update attendance.",
       error: err.message,
@@ -304,9 +317,7 @@ router.patch("/:id", auth, async (req, res) => {
   }
 });
 
-/**
- * DELETE /api/attendance/:id
- */
+/* DELETE /api/attendance/:id */
 router.delete("/:id", auth, async (req, res) => {
   try {
     if (!isValidId(req.params.id)) {
@@ -325,9 +336,180 @@ router.delete("/:id", auth, async (req, res) => {
     });
   } catch (err) {
     console.error("DELETE /api/attendance/:id failed:", err);
+
     return res.status(500).json({
       message: "Unable to delete attendance.",
       error: err.message,
     });
   }
 });
+
+/* POST /api/attendance/bulk */
+router.post("/bulk", auth, async (req, res) => {
+  try {
+    const schoolId = await resolveSchoolId(req);
+    const markedBy = getUserId(req);
+
+    const classId = cleanId(req.body.classId);
+    const teacherId = cleanId(req.body.teacherId);
+    const scheduleId = cleanId(req.body.scheduleId);
+    const date = normalizeDate(req.body.date);
+
+    const records = Array.isArray(req.body.records) ? req.body.records : [];
+
+    if (!schoolId) {
+      return res.status(400).json({ message: "schoolId is required." });
+    }
+
+    if (!classId) {
+      return res.status(400).json({ message: "classId is required." });
+    }
+
+    if (!teacherId) {
+      return res.status(400).json({ message: "teacherId is required." });
+    }
+
+    if (!date) {
+      return res.status(400).json({ message: "Valid date is required." });
+    }
+
+    if (!markedBy) {
+      return res.status(401).json({ message: "Unauthorized." });
+    }
+
+    if (!records.length) {
+      return res.status(400).json({
+        message: "No attendance records provided.",
+      });
+    }
+
+    const allowed = ["present", "late", "absent", "excused"];
+
+    const operations = records
+      .filter((item) => cleanId(item.studentId))
+      .map((item) => {
+        const studentId = cleanId(item.studentId);
+
+        const status = allowed.includes(item.status)
+          ? item.status
+          : "present";
+
+        const participationScore = Math.max(
+          0,
+          Math.min(100, Number(item.participationScore || 0))
+        );
+
+        return {
+          updateOne: {
+            filter: {
+              schoolId,
+              classId,
+              studentId,
+              date,
+            },
+            update: {
+              $set: {
+                schoolId,
+                classId,
+                teacherId,
+                studentId,
+                scheduleId,
+                date,
+                status,
+                participationScore,
+                notes: item.notes || "",
+                markedBy,
+                source: "bulk",
+              },
+            },
+            upsert: true,
+          },
+        };
+      });
+
+    if (!operations.length) {
+      return res.status(400).json({
+        message: "No valid student records provided.",
+      });
+    }
+
+    await Attendance.bulkWrite(operations, { ordered: false });
+
+    const saved = await populateAttendance(
+      Attendance.find({
+        schoolId,
+        classId,
+        date,
+      }).sort({ createdAt: -1 })
+    ).lean();
+
+    return res.status(201).json({
+      message: "Attendance saved successfully.",
+      count: saved.length,
+      records: saved,
+    });
+  } catch (err) {
+    console.error("POST /api/attendance/bulk failed:", err);
+
+    return res.status(500).json({
+      message: "Unable to save bulk attendance.",
+      error: err.message,
+    });
+  }
+});
+
+/* GET /api/attendance/summary */
+router.get("/summary", auth, async (req, res) => {
+  try {
+    const schoolId = await resolveSchoolId(req);
+
+    if (!schoolId) {
+      return res.status(400).json({ message: "schoolId is required." });
+    }
+
+    const filter = { schoolId };
+
+    const studentId = cleanId(req.query.studentId);
+    const teacherId = cleanId(req.query.teacherId);
+    const classId = cleanId(req.query.classId);
+
+    if (studentId) filter.studentId = studentId;
+    if (teacherId) filter.teacherId = teacherId;
+    if (classId) filter.classId = classId;
+
+    const dateFilter = buildDateFilter(req.query);
+
+    if (dateFilter === null) {
+      return res.status(400).json({ message: "Invalid date filter." });
+    }
+
+    if (dateFilter) {
+      filter.date = dateFilter;
+    }
+
+    const records = await Attendance.find(filter).lean();
+
+    const summary = summarizeAttendance(records);
+
+    return res.json({
+      schoolId,
+      filters: {
+        studentId,
+        teacherId,
+        classId,
+        from: req.query.from || null,
+        to: req.query.to || null,
+      },
+      ...summary,
+    });
+  } catch (err) {
+    console.error("GET /api/attendance/summary failed:", err);
+
+    return res.status(500).json({
+      message: "Unable to load attendance summary.",
+      error: err.message,
+    });
+  }
+});
+
+module.exports = router;
