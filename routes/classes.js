@@ -424,6 +424,8 @@ router.patch("/:id/builder", async (req, res) => {
       "welcomeContent",
       "learningOutcomes",
       "status",
+      "projectCanvas",
+"projectCanvasUpdatedAt",
       "published"
     ];
 
