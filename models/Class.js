@@ -115,6 +115,78 @@ const classSchema = new mongoose.Schema(
       default: false,
       index: true
     },
+        projectCanvas: {
+      type: [
+        {
+          blockId: {
+            type: String,
+            required: true
+          },
+
+          type: {
+            type: String,
+            enum: [
+              "heading",
+              "text",
+              "image",
+              "note",
+              "checklist",
+              "resource",
+              "divider",
+              "callout"
+            ],
+            default: "text"
+          },
+
+          content: {
+            type: String,
+            default: ""
+          },
+
+          imageUrl: {
+            type: String,
+            default: ""
+          },
+
+          resourceUrl: {
+            type: String,
+            default: ""
+          },
+
+          checklistItems: {
+            type: [String],
+            default: []
+          },
+
+          textColor: {
+            type: String,
+            default: "#111827"
+          },
+
+          backgroundColor: {
+            type: String,
+            default: "#ffffff"
+          },
+
+          align: {
+            type: String,
+            enum: ["left", "center", "right"],
+            default: "left"
+          },
+
+          order: {
+            type: Number,
+            default: 0
+          }
+        }
+      ],
+      default: []
+    },
+
+    projectCanvasUpdatedAt: {
+      type: Date,
+      default: null
+    },
 
     status: {
       type: String,
