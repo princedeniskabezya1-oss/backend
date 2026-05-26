@@ -1,3 +1,6 @@
+const express = require("express");
+const router = express.Router();
+
 const ClassModule = require("../models/ClassModule");
 const ClassLesson = require("../models/ClassLesson");
 const Quiz = require("../models/Quiz");
@@ -5,10 +8,9 @@ const LessonProgress = require("../models/LessonProgress");
 const Attendance = require("../models/Attendance");
 const Assignment = require("../models/Assignment");
 const Submission = require("../models/Submission");
+
 const upload = require("../middleware/upload");
 const cloudinary = require("../config/cloudinary");
-const express = require("express");
-const router = express.Router();
 
 const auth = require("../middleware/auth");
 const Class = require("../models/Class");
@@ -16,28 +18,71 @@ const User = require("../models/User");
 
 function canManageSchool(user, schoolId) {
   if (!user) return false;
+
   if (user.role === "admin") return true;
-  if (user.role === "school" && String(user._id) === String(schoolId)) return true;
-  if (user.role === "teacher" && String(user.schoolId || user.linkedSchoolId) === String(schoolId)) return true;
+
+  if (user.role === "school" && String(user._id) === String(schoolId)) {
+    return true;
+  }
+
+  if (
+    user.role === "teacher" &&
+    String(user.schoolId || user.linkedSchoolId) === String(schoolId)
+  ) {
+    return true;
+  }
+
   return false;
 }
+
+function getUserSchoolId(user) {
+  if (!user) return null;
+
+  if (user.role === "school") {
+    return user._id;
+  }
+
+  return user.schoolId || user.linkedSchoolId || user.companyId || null;
+}
+
+function normalizeArray(value) {
+  if (Array.isArray(value)) return value.filter(Boolean);
+
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) return parsed.filter(Boolean);
+    } catch (err) {
+      return value
+        .split("\n")
+        .map(item => item.trim())
+        .filter(Boolean);
+    }
+  }
+
+  return [];
+}
+
 function uploadClassCover(file) {
   return new Promise((resolve, reject) => {
-    cloudinary.uploader.upload_stream(
-      {
-        folder: "aift_classes",
-        resource_type: "auto"
-      },
-      (error, result) => {
-        if (error) return reject(error);
-        resolve(result.secure_url);
-      }
-    ).end(file.buffer);
+    cloudinary.uploader
+      .upload_stream(
+        {
+          folder: "aift_classes",
+          resource_type: "auto"
+        },
+        (error, result) => {
+          if (error) return reject(error);
+          resolve(result.secure_url);
+        }
+      )
+      .end(file.buffer);
   });
 }
 
 /* ============================================
    GET CLASSES
+   GET /api/classes
 ============================================ */
 router.get("/", auth, async (req, res) => {
   try {
@@ -72,15 +117,18 @@ router.get("/", auth, async (req, res) => {
       .populate("studentIds", "name email profileImage course")
       .sort({ createdAt: -1 });
 
-    res.json(classes);
+    return res.json(classes);
   } catch (err) {
     console.error("GET /api/classes error:", err);
-    res.status(500).json({ message: "Failed to load classes" });
+    return res.status(500).json({
+      message: "Failed to load classes"
+    });
   }
 });
 
 /* ============================================
    GET CLASS BY ID
+   GET /api/classes/:id
 ============================================ */
 router.get("/:id", auth, async (req, res) => {
   try {
@@ -90,18 +138,23 @@ router.get("/:id", auth, async (req, res) => {
       .populate("studentIds", "name email profileImage course");
 
     if (!item) {
-      return res.status(404).json({ message: "Class not found" });
+      return res.status(404).json({
+        message: "Class not found"
+      });
     }
 
-    res.json(item);
+    return res.json(item);
   } catch (err) {
     console.error("GET /api/classes/:id error:", err);
-    res.status(500).json({ message: "Failed to load class" });
+    return res.status(500).json({
+      message: "Failed to load class"
+    });
   }
 });
 
 /* ============================================
    CREATE CLASS
+   POST /api/classes
 ============================================ */
 router.post("/", auth, upload.single("coverImage"), async (req, res) => {
   try {
@@ -111,71 +164,93 @@ router.post("/", auth, upload.single("coverImage"), async (req, res) => {
       title,
       subject,
       teacherId,
-      studentIds,
       classCode,
       code,
       meetingLink,
       schedule,
       description,
-      materials
+      welcomeContent,
+      level,
+      language
     } = req.body;
 
     const finalSchoolId =
       req.user.role === "school"
         ? req.user._id
-        : schoolId || req.user.schoolId || req.user.linkedSchoolId;
+        : schoolId || getUserSchoolId(req.user);
 
     if (!finalSchoolId) {
-      return res.status(400).json({ message: "School ID is required" });
+      return res.status(400).json({
+        message: "School ID is required"
+      });
     }
 
     if (!canManageSchool(req.user, finalSchoolId)) {
-      return res.status(403).json({ message: "Not allowed to create class" });
+      return res.status(403).json({
+        message: "Not allowed to create class"
+      });
     }
 
-    if (!title) {
-      return res.status(400).json({ message: "Class title is required" });
+    if (!title || !String(title).trim()) {
+      return res.status(400).json({
+        message: "Class title is required"
+      });
     }
 
     if (teacherId) {
       const teacher = await User.findById(teacherId);
 
       if (!teacher) {
-        return res.status(404).json({ message: "Teacher not found" });
+        return res.status(404).json({
+          message: "Teacher not found"
+        });
       }
 
-      if (
-        !["teacher", "instructor", "faculty"].includes(String(teacher.role).toLowerCase()) &&
-        String(teacher.role).toLowerCase() !== "school"
-      ) {
-        return res.status(400).json({ message: "Selected user is not a teacher" });
-      }
+      const teacherRole = String(teacher.role || "").toLowerCase();
 
       if (
-        String(teacher.schoolId || teacher.linkedSchoolId || teacher.companyId || finalSchoolId) !==
-        String(finalSchoolId)
+        !["teacher", "instructor", "faculty", "school"].includes(teacherRole)
       ) {
-        return res.status(403).json({ message: "Teacher is not linked to this school" });
+        return res.status(400).json({
+          message: "Selected user is not a teacher"
+        });
+      }
+
+      const teacherSchoolId =
+        teacher.schoolId ||
+        teacher.linkedSchoolId ||
+        teacher.companyId ||
+        finalSchoolId;
+
+      if (String(teacherSchoolId) !== String(finalSchoolId)) {
+        return res.status(403).json({
+          message: "Teacher is not linked to this school"
+        });
       }
     }
+
     let uploadedCover = null;
 
-if (req.file) {
-  uploadedCover = await uploadClassCover(req.file);
-}
+    if (req.file) {
+      uploadedCover = await uploadClassCover(req.file);
+    }
 
     const item = await Class.create({
       schoolId: finalSchoolId,
-      title,
+      title: String(title).trim(),
       subject: subject || null,
       teacherId: teacherId || null,
-      studentIds: Array.isArray(studentIds) ? studentIds : [],
+      studentIds: normalizeArray(req.body.studentIds),
       classCode: classCode || code || null,
       meetingLink: meetingLink || null,
       schedule: schedule || null,
       description: description || null,
+      welcomeContent: welcomeContent || null,
+      level: level || null,
+      language: language || null,
       coverImage: uploadedCover || coverImage || null,
-      materials: Array.isArray(materials) ? materials : []
+      materials: normalizeArray(req.body.materials),
+      learningOutcomes: normalizeArray(req.body.learningOutcomes)
     });
 
     if (teacherId) {
@@ -190,6 +265,7 @@ if (req.file) {
       .populate("studentIds", "name email profileImage course");
 
     const io = req.app.get("io");
+
     if (io) {
       io.to(String(finalSchoolId)).emit("class:new", populated);
 
@@ -198,26 +274,33 @@ if (req.file) {
       }
     }
 
-    res.status(201).json(populated);
+    return res.status(201).json(populated);
   } catch (err) {
     console.error("POST /api/classes error:", err);
-    res.status(500).json({ message: "Failed to create class" });
+    return res.status(500).json({
+      message: "Failed to create class"
+    });
   }
 });
 
 /* ============================================
    UPDATE CLASS
+   PATCH /api/classes/:id
 ============================================ */
 router.patch("/:id", auth, upload.single("coverImage"), async (req, res) => {
   try {
     const item = await Class.findById(req.params.id);
 
     if (!item) {
-      return res.status(404).json({ message: "Class not found" });
+      return res.status(404).json({
+        message: "Class not found"
+      });
     }
 
     if (!canManageSchool(req.user, item.schoolId)) {
-      return res.status(403).json({ message: "Not allowed to update class" });
+      return res.status(403).json({
+        message: "Not allowed to update class"
+      });
     }
 
     const oldTeacherId = item.teacherId ? String(item.teacherId) : null;
@@ -229,6 +312,9 @@ router.patch("/:id", auth, upload.single("coverImage"), async (req, res) => {
       "meetingLink",
       "schedule",
       "description",
+      "welcomeContent",
+      "level",
+      "language",
       "status"
     ];
 
@@ -242,23 +328,35 @@ router.patch("/:id", auth, upload.single("coverImage"), async (req, res) => {
       item.classCode = req.body.classCode || req.body.code || null;
     }
 
-    if (Array.isArray(req.body.studentIds)) {
-      item.studentIds = req.body.studentIds;
+    if (req.body.studentIds !== undefined) {
+      item.studentIds = normalizeArray(req.body.studentIds);
     }
 
-if (Array.isArray(req.body.materials)) {
-  item.materials = req.body.materials;
-}
+    if (req.body.materials !== undefined) {
+      item.materials = normalizeArray(req.body.materials);
+    }
 
-if (req.file) {
-  item.coverImage = await uploadClassCover(req.file);
-}
+    if (req.body.learningOutcomes !== undefined) {
+      item.learningOutcomes = normalizeArray(req.body.learningOutcomes);
+    }
 
-if (req.body.coverImage !== undefined && !req.file) {
-  item.coverImage = req.body.coverImage || null;
-}
+    if (req.body.published !== undefined) {
+      item.published = Boolean(req.body.published);
+    }
 
-await item.save();
+    if (req.file) {
+      item.coverImage = await uploadClassCover(req.file);
+    }
+
+    if (req.body.coverImage !== undefined && !req.file) {
+      item.coverImage = req.body.coverImage || null;
+    }
+
+    if (req.body.bannerImage !== undefined) {
+      item.bannerImage = req.body.bannerImage || null;
+    }
+
+    await item.save();
 
     const newTeacherId = item.teacherId ? String(item.teacherId) : null;
 
@@ -279,26 +377,32 @@ await item.save();
       .populate("teacherId", "name email profileImage subject department")
       .populate("studentIds", "name email profileImage course");
 
-    res.json(populated);
+    return res.json(populated);
   } catch (err) {
     console.error("PATCH /api/classes/:id error:", err);
-    res.status(500).json({ message: "Failed to update class" });
+    return res.status(500).json({
+      message: "Failed to update class"
+    });
   }
 });
-
 /* ============================================
    DELETE / ARCHIVE CLASS
+   DELETE /api/classes/:id
 ============================================ */
 router.delete("/:id", auth, async (req, res) => {
   try {
     const item = await Class.findById(req.params.id);
 
     if (!item) {
-      return res.status(404).json({ message: "Class not found" });
+      return res.status(404).json({
+        message: "Class not found"
+      });
     }
 
     if (!canManageSchool(req.user, item.schoolId)) {
-      return res.status(403).json({ message: "Not allowed to delete class" });
+      return res.status(403).json({
+        message: "Not allowed to delete class"
+      });
     }
 
     item.status = "archived";
@@ -310,10 +414,14 @@ router.delete("/:id", auth, async (req, res) => {
       });
     }
 
-    res.json({ message: "Class archived" });
+    return res.json({
+      message: "Class archived"
+    });
   } catch (err) {
     console.error("DELETE /api/classes/:id error:", err);
-    res.status(500).json({ message: "Failed to archive class" });
+    return res.status(500).json({
+      message: "Failed to archive class"
+    });
   }
 });
 
@@ -321,20 +429,38 @@ router.delete("/:id", auth, async (req, res) => {
    CLASS BUILDER DASHBOARD
    GET /api/classes/:id/builder
 ===================================================== */
-
-router.get("/:id/builder", async (req, res) => {
+router.get("/:id/builder", auth, async (req, res) => {
   try {
     const classId = req.params.id;
 
     const classDoc = await Class.findById(classId)
-      .populate("teacherId", "name email profileImage avatar role")
+      .populate("schoolId", "name schoolName profileImage schoolLogo")
+      .populate("teacherId", "name email profileImage avatar role subject department")
+      .populate("studentIds", "name email profileImage avatar course")
       .lean();
 
     if (!classDoc) {
-      return res.status(404).json({ message: "Class not found" });
+      return res.status(404).json({
+        message: "Class not found"
+      });
     }
 
-    const schoolId = classDoc.schoolId || classDoc.ownerId || classDoc.createdBy;
+    const user = req.user;
+
+    const canAccess =
+      user.role === "admin" ||
+      String(classDoc.schoolId?._id || classDoc.schoolId) === String(getUserSchoolId(user)) ||
+      String(classDoc.teacherId?._id || classDoc.teacherId) === String(user._id) ||
+      (Array.isArray(classDoc.studentIds) &&
+        classDoc.studentIds.some(student => String(student._id || student) === String(user._id)));
+
+    if (!canAccess) {
+      return res.status(403).json({
+        message: "Not allowed to view this class builder"
+      });
+    }
+
+    const schoolId = classDoc.schoolId?._id || classDoc.schoolId;
 
     const [
       modules,
@@ -355,24 +481,31 @@ router.get("/:id/builder", async (req, res) => {
     ]);
 
     const completedLessons = progress.filter(
-      item => item.status === "completed" || Number(item.progressPercent || 0) >= 100
+      item =>
+        item.status === "completed" ||
+        Number(item.progressPercent || 0) >= 100
     ).length;
 
     const totalProgress = progress.length
       ? Math.round(
-          progress.reduce((sum, item) => sum + Number(item.progressPercent || 0), 0) /
-          progress.length
+          progress.reduce(
+            (sum, item) => sum + Number(item.progressPercent || 0),
+            0
+          ) / progress.length
         )
       : 0;
 
     const attendanceTotal = attendance.length;
-    const attendancePresent = attendance.filter(item => item.status === "present").length;
+
+    const attendancePresent = attendance.filter(
+      item => item.status === "present"
+    ).length;
 
     const attendanceRate = attendanceTotal
       ? Math.round((attendancePresent / attendanceTotal) * 100)
       : 0;
 
-    res.json({
+    return res.json({
       class: classDoc,
       schoolId,
       modules,
@@ -395,19 +528,31 @@ router.get("/:id/builder", async (req, res) => {
     });
   } catch (err) {
     console.error("GET class builder error:", err);
-    res.status(500).json({ message: "Failed to load class builder" });
+    return res.status(500).json({
+      message: "Failed to load class builder"
+    });
   }
 });
 
-
 /* =====================================================
-   UPDATE CLASS BUILDER PROFILE
+   UPDATE CLASS BUILDER PROFILE + VISUAL CONTENT
    PATCH /api/classes/:id/builder
 ===================================================== */
-
-router.patch("/:id/builder", async (req, res) => {
+router.patch("/:id/builder", auth, async (req, res) => {
   try {
-    const updates = {};
+    const classDoc = await Class.findById(req.params.id);
+
+    if (!classDoc) {
+      return res.status(404).json({
+        message: "Class not found"
+      });
+    }
+
+    if (!canManageSchool(req.user, classDoc.schoolId)) {
+      return res.status(403).json({
+        message: "Not allowed to update class builder"
+      });
+    }
 
     const allowedFields = [
       "title",
@@ -423,32 +568,194 @@ router.patch("/:id/builder", async (req, res) => {
       "bannerImage",
       "welcomeContent",
       "learningOutcomes",
+      "level",
+      "language",
+      "materials",
       "status",
       "projectCanvas",
-"projectCanvasUpdatedAt",
+      "projectCanvasUpdatedAt",
+      "contentBlocks",
+      "contentBlocksUpdatedAt",
       "published"
     ];
 
     allowedFields.forEach(field => {
       if (req.body[field] !== undefined) {
-        updates[field] = req.body[field];
+        if (
+          ["learningOutcomes", "materials"].includes(field)
+        ) {
+          classDoc[field] = normalizeArray(req.body[field]);
+        } else if (field === "name") {
+          classDoc.title = req.body[field] || classDoc.title;
+        } else if (field === "code") {
+          classDoc.classCode = req.body[field] || null;
+        } else {
+          classDoc[field] = req.body[field];
+        }
       }
     });
 
-    const updatedClass = await Class.findByIdAndUpdate(
-      req.params.id,
-      updates,
-      { new: true, runValidators: true }
-    );
-
-    if (!updatedClass) {
-      return res.status(404).json({ message: "Class not found" });
+    if (req.body.contentBlocks !== undefined) {
+      classDoc.contentBlocksUpdatedAt = new Date();
     }
 
-    res.json(updatedClass);
+    if (req.body.projectCanvas !== undefined) {
+      classDoc.projectCanvasUpdatedAt = new Date();
+    }
+
+    await classDoc.save();
+
+    const updatedClass = await Class.findById(classDoc._id)
+      .populate("schoolId", "name schoolName profileImage schoolLogo")
+      .populate("teacherId", "name email profileImage avatar role subject department")
+      .populate("studentIds", "name email profileImage avatar course");
+
+    const io = req.app.get("io");
+
+    if (io) {
+      io.to(String(classDoc.schoolId)).emit("class:builder:updated", {
+        classId: classDoc._id,
+        class: updatedClass
+      });
+    }
+
+    return res.json({
+      success: true,
+      class: updatedClass
+    });
   } catch (err) {
     console.error("PATCH class builder error:", err);
-    res.status(500).json({ message: "Failed to update class builder" });
+    return res.status(500).json({
+      message: "Failed to update class builder"
+    });
   }
 });
+
+/* =====================================================
+   UPDATE LESSON FROM VISUAL STUDIO NORMAL MODE
+   PATCH /api/classes/:id/builder/lesson/:lessonId
+===================================================== */
+router.patch("/:id/builder/lesson/:lessonId", auth, async (req, res) => {
+  try {
+    const classDoc = await Class.findById(req.params.id);
+
+    if (!classDoc) {
+      return res.status(404).json({
+        message: "Class not found"
+      });
+    }
+
+    if (!canManageSchool(req.user, classDoc.schoolId)) {
+      return res.status(403).json({
+        message: "Not allowed to update lesson"
+      });
+    }
+
+    const lesson = await ClassLesson.findOne({
+      _id: req.params.lessonId,
+      classId: req.params.id
+    });
+
+    if (!lesson) {
+      return res.status(404).json({
+        message: "Lesson not found"
+      });
+    }
+
+    const allowedLessonFields = [
+      "title",
+      "description",
+      "content",
+      "videoUrl",
+      "resourceUrl",
+      "duration",
+      "order",
+      "moduleId",
+      "published"
+    ];
+
+    allowedLessonFields.forEach(field => {
+      if (req.body[field] !== undefined) {
+        lesson[field] = req.body[field];
+      }
+    });
+
+    await lesson.save();
+
+    return res.json({
+      success: true,
+      lesson
+    });
+  } catch (err) {
+    console.error("PATCH builder lesson error:", err);
+    return res.status(500).json({
+      message: "Failed to update lesson"
+    });
+  }
+});
+
+/* =====================================================
+   UPDATE QUIZ FROM VISUAL STUDIO NORMAL MODE
+   PATCH /api/classes/:id/builder/quiz/:quizId
+===================================================== */
+router.patch("/:id/builder/quiz/:quizId", auth, async (req, res) => {
+  try {
+    const classDoc = await Class.findById(req.params.id);
+
+    if (!classDoc) {
+      return res.status(404).json({
+        message: "Class not found"
+      });
+    }
+
+    if (!canManageSchool(req.user, classDoc.schoolId)) {
+      return res.status(403).json({
+        message: "Not allowed to update quiz"
+      });
+    }
+
+    const quiz = await Quiz.findOne({
+      _id: req.params.quizId,
+      classId: req.params.id
+    });
+
+    if (!quiz) {
+      return res.status(404).json({
+        message: "Quiz not found"
+      });
+    }
+
+    const allowedQuizFields = [
+      "title",
+      "description",
+      "instructions",
+      "questions",
+      "passingScore",
+      "timeLimit",
+      "published",
+      "order",
+      "lessonId",
+      "moduleId"
+    ];
+
+    allowedQuizFields.forEach(field => {
+      if (req.body[field] !== undefined) {
+        quiz[field] = req.body[field];
+      }
+    });
+
+    await quiz.save();
+
+    return res.json({
+      success: true,
+      quiz
+    });
+  } catch (err) {
+    console.error("PATCH builder quiz error:", err);
+    return res.status(500).json({
+      message: "Failed to update quiz"
+    });
+  }
+});
+
 module.exports = router;
