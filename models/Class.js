@@ -1,5 +1,117 @@
 const mongoose = require("mongoose");
 
+const contentBlockSchema = new mongoose.Schema(
+  {
+    blockId: {
+      type: String,
+      required: true,
+      trim: true
+    },
+
+    scope: {
+      type: String,
+      enum: ["welcome", "outcomes", "curriculum", "lesson", "quiz"],
+      required: true,
+      index: true
+    },
+
+    ownerId: {
+      type: String,
+      default: "main",
+      index: true
+    },
+
+    type: {
+      type: String,
+      enum: ["visual", "text"],
+      default: "visual"
+    },
+
+    content: {
+      type: String,
+      default: ""
+    },
+
+    order: {
+      type: Number,
+      default: 0
+    },
+
+    updatedAt: {
+      type: Date,
+      default: Date.now
+    }
+  },
+  { _id: false }
+);
+
+const projectCanvasBlockSchema = new mongoose.Schema(
+  {
+    blockId: {
+      type: String,
+      required: true,
+      trim: true
+    },
+
+    type: {
+      type: String,
+      enum: [
+        "heading",
+        "text",
+        "image",
+        "note",
+        "checklist",
+        "resource",
+        "divider",
+        "callout"
+      ],
+      default: "text"
+    },
+
+    content: {
+      type: String,
+      default: ""
+    },
+
+    imageUrl: {
+      type: String,
+      default: ""
+    },
+
+    resourceUrl: {
+      type: String,
+      default: ""
+    },
+
+    checklistItems: {
+      type: [String],
+      default: []
+    },
+
+    textColor: {
+      type: String,
+      default: "#111827"
+    },
+
+    backgroundColor: {
+      type: String,
+      default: "#ffffff"
+    },
+
+    align: {
+      type: String,
+      enum: ["left", "center", "right"],
+      default: "left"
+    },
+
+    order: {
+      type: Number,
+      default: 0
+    }
+  },
+  { _id: false }
+);
+
 const classSchema = new mongoose.Schema(
   {
     schoolId: {
@@ -115,75 +227,23 @@ const classSchema = new mongoose.Schema(
       default: false,
       index: true
     },
-        projectCanvas: {
-      type: [
-        {
-          blockId: {
-            type: String,
-            required: true
-          },
 
-          type: {
-            type: String,
-            enum: [
-              "heading",
-              "text",
-              "image",
-              "note",
-              "checklist",
-              "resource",
-              "divider",
-              "callout"
-            ],
-            default: "text"
-          },
-
-          content: {
-            type: String,
-            default: ""
-          },
-
-          imageUrl: {
-            type: String,
-            default: ""
-          },
-
-          resourceUrl: {
-            type: String,
-            default: ""
-          },
-
-          checklistItems: {
-            type: [String],
-            default: []
-          },
-
-          textColor: {
-            type: String,
-            default: "#111827"
-          },
-
-          backgroundColor: {
-            type: String,
-            default: "#ffffff"
-          },
-
-          align: {
-            type: String,
-            enum: ["left", "center", "right"],
-            default: "left"
-          },
-
-          order: {
-            type: Number,
-            default: 0
-          }
-        }
-      ],
+    projectCanvas: {
+      type: [projectCanvasBlockSchema],
       default: []
     },
 
     projectCanvasUpdatedAt: {
+      type: Date,
+      default: null
+    },
+
+    contentBlocks: {
+      type: [contentBlockSchema],
+      default: []
+    },
+
+    contentBlocksUpdatedAt: {
       type: Date,
       default: null
     },
@@ -203,6 +263,7 @@ const classSchema = new mongoose.Schema(
 classSchema.index({ schoolId: 1, title: 1 });
 classSchema.index({ schoolId: 1, status: 1, createdAt: -1 });
 classSchema.index({ schoolId: 1, published: 1, createdAt: -1 });
+classSchema.index({ "contentBlocks.scope": 1, "contentBlocks.ownerId": 1 });
 
 classSchema.pre("save", function (next) {
   if (Array.isArray(this.studentIds)) {
@@ -215,6 +276,18 @@ classSchema.pre("save", function (next) {
 
   if (Array.isArray(this.learningOutcomes)) {
     this.learningOutcomes = this.learningOutcomes.filter(Boolean);
+  }
+
+  if (Array.isArray(this.contentBlocks)) {
+    this.contentBlocks = this.contentBlocks.map((block, index) => ({
+      blockId: block.blockId,
+      scope: block.scope,
+      ownerId: block.ownerId || "main",
+      type: block.type || "visual",
+      content: block.content || "",
+      order: Number.isFinite(Number(block.order)) ? Number(block.order) : index,
+      updatedAt: block.updatedAt || new Date()
+    }));
   }
 
   next();
