@@ -25,6 +25,8 @@ const projectRoutes = require("./routes/projects");
 const assignmentRoutes = require("./routes/assignments");
 const submissionRoutes = require("./routes/submissions");
 const opportunityRoutes = require("./routes/opportunities");
+const schoolCompanyPartnershipRoutes = require("./routes/schoolCompanyPartnerships");
+const internshipApplicationRoutes = require("./routes/internshipApplications");
 const schoolUpdateRoutes = require("./routes/schoolUpdates");
 const attendanceRoutes = require("./routes/attendance");
 
@@ -91,6 +93,8 @@ app.use("/api/projects", projectRoutes);
 app.use("/api/assignments", assignmentRoutes);
 app.use("/api/submissions", submissionRoutes);
 app.use("/api/opportunities", opportunityRoutes);
+app.use("/api/school-company-partnerships", schoolCompanyPartnershipRoutes);
+app.use("/api/internship-applications", internshipApplicationRoutes);
 app.use("/api/school-updates", schoolUpdateRoutes);
 app.use("/api/attendance", attendanceRoutes);
 
