@@ -7,6 +7,7 @@ const cloudinary = require("../config/cloudinary");
 
 const Post = require("../models/Post");
 const User = require("../models/User");
+const Group = require("../models/Group");
 const Notification = require("../models/Notification");
 
 const USER_POPULATE =
@@ -224,6 +225,11 @@ const post = await Post.create({
 });
 
     const populated = await populatePost(post._id);
+    if (post.groupId) {
+  await Group.findByIdAndUpdate(post.groupId, {
+    $inc: { postsCount: 1 }
+  });
+}
 
     getIo(req)?.emit("post_created", populated);
 
@@ -463,6 +469,12 @@ router.delete("/:id", auth, async (req, res) => {
     }
 
     await Post.findByIdAndDelete(req.params.id);
+
+if (post.groupId) {
+  await Group.findByIdAndUpdate(post.groupId, {
+    $inc: { postsCount: -1 }
+  });
+}
 
     getIo(req)?.emit("post_deleted", { postId: req.params.id });
 
