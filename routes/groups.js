@@ -3,6 +3,7 @@ const router = express.Router();
 
 const auth = require("../middleware/auth");
 const Group = require("../models/Group");
+const Post = require("../models/Post");
 
 const USER_SELECT =
   "name companyName schoolName profileImage avatar headline profession role location aiftVerified";
@@ -444,6 +445,110 @@ router.delete("/:id", auth, async (req, res) => {
     console.error("DELETE /api/groups/:id error:", err);
     res.status(500).json({
       message: "Failed to delete group"
+    });
+  }
+});
+/* ==========================================
+   GET GROUP POSTS
+   GET /api/groups/:id/posts
+========================================== */
+router.get("/:id/posts", auth, async (req, res) => {
+  try {
+
+    const group = await Group.findOne({
+      _id: req.params.id,
+      isActive: true
+    });
+
+    if (!group) {
+      return res.status(404).json({
+        message: "Group not found"
+      });
+    }
+
+    const posts = await Post.find({
+      groupId: req.params.id,
+      isHiddenByAdmin: false
+    })
+      .populate(
+        "author",
+        "name profileImage role headline companyName schoolName aiftVerified"
+      )
+      .populate({
+        path: "repostOf",
+        populate: {
+          path: "author",
+          select:
+            "name profileImage role headline companyName schoolName aiftVerified"
+        }
+      })
+      .sort({ createdAt: -1 });
+
+    res.json({
+      posts
+    });
+
+  } catch (err) {
+
+    console.error("GET GROUP POSTS ERROR:", err);
+
+    res.status(500).json({
+      message: "Failed to load group posts"
+    });
+  }
+});
+/* ==========================================
+   CREATE GROUP POST
+   POST /api/groups/:id/posts
+========================================== */
+router.post("/:id/posts", auth, async (req, res) => {
+  try {
+
+    const group = await Group.findOne({
+      _id: req.params.id,
+      isActive: true
+    });
+
+    if (!group) {
+      return res.status(404).json({
+        message: "Group not found"
+      });
+    }
+
+    const isMember =
+      group.members.some(
+        member =>
+          String(member) === String(req.user._id)
+      );
+
+    if (!isMember) {
+      return res.status(403).json({
+        message: "Join this group before posting"
+      });
+    }
+
+    const post = await Post.create({
+      author: req.user._id,
+      groupId: group._id,
+      text: req.body.text || "",
+      media: req.body.media || []
+    });
+
+    await post.populate(
+      "author",
+      "name profileImage role headline companyName schoolName aiftVerified"
+    );
+
+    res.status(201).json({
+      post
+    });
+
+  } catch (err) {
+
+    console.error("CREATE GROUP POST ERROR:", err);
+
+    res.status(500).json({
+      message: "Failed to create group post"
     });
   }
 });
