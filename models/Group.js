@@ -49,6 +49,20 @@ const GroupSchema = new mongoose.Schema(
         ref: "User"
       }
     ],
+        postsCount: {
+      type: Number,
+      default: 0
+    },
+
+    membersCount: {
+      type: Number,
+      default: 0
+    },
+
+    followersCount: {
+      type: Number,
+      default: 0
+    },
 
     coverImage: {
       type: String,
