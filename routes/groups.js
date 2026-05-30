@@ -544,14 +544,18 @@ router.post("/:id/posts", auth, async (req, res) => {
       media: req.body.media || []
     });
 
-    await post.populate(
-      "author",
-      "name profileImage role headline companyName schoolName aiftVerified"
-    );
+await post.populate(
+  "author",
+  "name profileImage role headline companyName schoolName aiftVerified"
+);
 
-    res.status(201).json({
-      post
-    });
+group.postsCount = Number(group.postsCount || 0) + 1;
+await group.save();
+
+res.status(201).json({
+  post,
+  postsCount: group.postsCount
+});
 
   } catch (err) {
 
@@ -559,6 +563,81 @@ router.post("/:id/posts", auth, async (req, res) => {
 
     res.status(500).json({
       message: "Failed to create group post"
+    });
+  }
+});
+/* ==========================================
+   GET GROUP MEMBERS
+   GET /api/groups/:id/members
+========================================== */
+router.get("/:id/members", auth, async (req, res) => {
+  try {
+
+    const group = await Group.findOne({
+      _id: req.params.id,
+      isActive: true
+    })
+    .populate(
+      "members",
+      USER_SELECT
+    );
+
+    if (!group) {
+      return res.status(404).json({
+        message: "Group not found"
+      });
+    }
+
+    res.json({
+      members: group.members || []
+    });
+
+  } catch (err) {
+
+    console.error(
+      "GET GROUP MEMBERS ERROR:",
+      err
+    );
+
+    res.status(500).json({
+      message: "Failed to load group members"
+    });
+  }
+});
+/* ==========================================
+   GET GROUP STATS
+   GET /api/groups/:id/stats
+========================================== */
+router.get("/:id/stats", auth, async (req, res) => {
+  try {
+
+    const group = await Group.findOne({
+      _id: req.params.id,
+      isActive: true
+    });
+
+    if (!group) {
+      return res.status(404).json({
+        message: "Group not found"
+      });
+    }
+
+    res.json({
+      membersCount: group.membersCount || 0,
+      followersCount: group.followersCount || 0,
+      postsCount: group.postsCount || 0,
+      createdAt: group.createdAt
+    });
+
+  } catch (err) {
+
+    console.error(
+      "GET GROUP STATS ERROR:",
+      err
+    );
+
+    res.status(500).json({
+      message: "Failed to load group statistics"
     });
   }
 });
