@@ -104,11 +104,21 @@ router.get("/", auth, async (req, res) => {
     const skip = Math.max(Number(req.query.skip || 0), 0);
     const limit = Math.min(Math.max(Number(req.query.limit || 20), 1), 50);
 
-    const query = { isHiddenByAdmin: { $ne: true } };
+   const query = {
+  isHiddenByAdmin: { $ne: true }
+};
 
-    if (followingIds.length > 0) {
-      query.author = { $in: [...followingIds, currentUser._id] };
-    }
+const groupId = req.query.groupId;
+
+if (groupId) {
+  query.groupId = groupId;
+}
+
+if (!groupId && followingIds.length > 0) {
+  query.author = {
+    $in: [...followingIds, currentUser._id]
+  };
+}
 
     const posts = await Post.find(query)
       .sort({ createdAt: -1 })
@@ -189,21 +199,29 @@ if (media.length) {
   mediaType = media[0].type;
 }
 
-    const post = await Post.create({
-      media,
-repostOf: null,
-      author: req.user.id,
-      text: text || "",
-      mediaUrl,
-      mediaType,
-      likes: [],
-      comments: [],
-      uniqueViewers: [],
-      sharesCount: 0,
-      viewsCount: 0,
-      engagementScore: 0
-    
-    });
+const post = await Post.create({
+  author: req.user.id,
+
+  groupId: req.body.groupId || null,
+
+  text: text || "",
+
+  media,
+  mediaUrl,
+  mediaType,
+
+  repostOf: null,
+
+  likes: [],
+  comments: [],
+
+  uniqueViewers: [],
+
+  sharesCount: 0,
+  viewsCount: 0,
+
+  engagementScore: 0
+});
 
     const populated = await populatePost(post._id);
 
