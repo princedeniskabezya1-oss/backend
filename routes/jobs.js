@@ -4,6 +4,7 @@ const router = express.Router();
 const Job = require("../models/Job");
 const Application = require("../models/Application");
 const User = require("../models/User");
+const SavedItem = require("../models/SavedItem");
 const auth = require("../middleware/auth");
 const adminOnly = require("../middleware/adminOnly");
 
@@ -175,41 +176,93 @@ router.patch("/:id/click-apply", auth, async (req, res) => {
 });
 
 /* ============================================
-   SAVE / UNSAVE
+   SAVE / UNSAVE JOB
+   Compatibility route for old frontend:
+   PATCH /api/jobs/:id/save
 ============================================ */
 router.patch("/:id/save", auth, async (req, res) => {
   try {
-    if (req.user.role !== "talent" && req.user.role !== "agent") {
-      return res.status(403).json({ message: "Only talents or agents can save jobs" });
+    const allowedRoles = [
+      "talent",
+      "agent",
+      "student",
+      "teacher",
+      "school",
+      "employer",
+      "admin"
+    ];
+
+    if (!allowedRoles.includes(req.user.role)) {
+      return res.status(403).json({
+        message: "You are not allowed to save jobs"
+      });
     }
 
-    const user = await User.findById(req.user.id);
+    const user = await User.findById(req.user._id);
     const job = await Job.findById(req.params.id);
 
     if (!job) {
-      return res.status(404).json({ message: "Job not found" });
+      return res.status(404).json({
+        message: "Job not found"
+      });
     }
 
-    const alreadySaved = user.savedJobs.some(id => String(id) === String(req.params.id));
+    const existing = await SavedItem.findOne({
+      userId: req.user._id,
+      itemType: "job",
+      itemId: job._id
+    });
 
-    if (alreadySaved) {
-      user.savedJobs.pull(req.params.id);
-      job.saveCount = Math.max(0, (job.saveCount || 0) - 1);
+    let saved = false;
+
+    if (existing) {
+      await SavedItem.findByIdAndDelete(existing._id);
+
+      user.savedJobs = (user.savedJobs || []).filter(
+        id => String(id) !== String(job._id)
+      );
+
+      job.saveCount = Math.max(0, Number(job.saveCount || 0) - 1);
+      saved = false;
     } else {
-      user.savedJobs.push(req.params.id);
-      job.saveCount += 1;
+      await SavedItem.create({
+        userId: req.user._id,
+        itemType: "job",
+        itemId: job._id
+      });
+
+      if (!user.savedJobs.some(id => String(id) === String(job._id))) {
+        user.savedJobs.push(job._id);
+      }
+
+      job.saveCount = Number(job.saveCount || 0) + 1;
+      saved = true;
     }
 
-    await user.save();
-    await job.save();
+    await user.save({ validateModifiedOnly: true });
+    await job.save({ validateModifiedOnly: true });
+
+    const io = req.app.get("io");
+
+    if (io) {
+      io.to(String(req.user._id)).emit("saved:job:toggled", {
+        jobId: job._id,
+        saved,
+        saveCount: job.saveCount
+      });
+    }
 
     res.json({
-      saved: !alreadySaved,
+      saved,
+      jobId: job._id,
       totalSaved: user.savedJobs.length,
       saveCount: job.saveCount
     });
   } catch (err) {
-    res.status(500).json({ message: "Failed to save job" });
+    console.error("PATCH /api/jobs/:id/save error:", err);
+    res.status(500).json({
+      message: "Failed to save job"
+    });
   }
 });
 
