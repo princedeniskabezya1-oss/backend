@@ -6,175 +6,94 @@ const auth = require("../middleware/auth");
 const SavedItem = require("../models/SavedItem");
 const Post = require("../models/Post");
 const Job = require("../models/Job");
-const User = require("../models/User");
-const Class = require("../models/Class");
 
-const VALID_TYPES = [
-  "post",
-  "job",
-  "profile",
-  "class",
-  "school",
-  "opportunity",
-  "group",
-  "event"
-];
+const VALID_TYPES = ["post", "job"];
 
 const USER_POPULATE =
-  "name companyName schoolName profileImage schoolLogo headline role profession location aiftVerified";
-
-function isValidType(type) {
-  return VALID_TYPES.includes(String(type || "").toLowerCase());
-}
+  "name companyName schoolName profileImage headline role profession location aiftVerified";
 
 function normalizeType(type) {
-  const clean = String(type || "").toLowerCase();
-
-  if (clean === "user") return "profile";
-  if (clean === "course") return "class";
-
-  return clean;
+  return String(type || "").toLowerCase().trim();
 }
 
-function getModelByType(type) {
-  if (type === "post") return Post;
-  if (type === "job") return Job;
-  if (type === "profile") return User;
-  if (type === "school") return User;
-  if (type === "class") return Class;
-
-  return null;
+function isValidType(type) {
+  return VALID_TYPES.includes(normalizeType(type));
 }
 
-function getPopulateByType(type) {
-  if (type === "post") {
-    return [
-      {
-        path: "author",
-        select: USER_POPULATE
-      },
-      {
+async function loadTargetItem(itemType, itemId) {
+  if (itemType === "post") {
+    const post = await Post.findById(itemId)
+      .populate("author", USER_POPULATE)
+      .populate({
         path: "repostOf",
         populate: {
           path: "author",
           select: USER_POPULATE
         }
-      }
-    ];
+      })
+      .lean();
+
+    if (!post || post.isHiddenByAdmin) return null;
+
+    return post;
   }
 
-  if (type === "job") {
-    return [
-      {
-        path: "employerId",
-        select: USER_POPULATE
-      }
-    ];
+  if (itemType === "job") {
+    const job = await Job.findById(itemId)
+      .populate("employerId", USER_POPULATE)
+      .lean();
+
+    if (!job || job.status !== "active") return null;
+
+    return job;
   }
 
-  if (type === "class") {
-    return [
-      {
-        path: "schoolId",
-        select: USER_POPULATE
-      },
-      {
-        path: "teacherId",
-        select: USER_POPULATE
-      }
-    ];
-  }
-
-  return [];
+  return null;
 }
 
-async function loadTargetItem(type, itemId) {
-  const Model = getModelByType(type);
-
-  if (!Model) {
-    return null;
-  }
-
-  let query = Model.findById(itemId);
-
-  const populateList = getPopulateByType(type);
-
-  populateList.forEach(populateRule => {
-    query = query.populate(populateRule);
-  });
-
-  const item = await query.lean();
-
-  if (!item) {
-    return null;
-  }
-
-  if (type === "post" && item.isHiddenByAdmin === true) {
-    return null;
-  }
-
-  if (type === "job" && item.status && !["active", "pending"].includes(item.status)) {
-    return null;
-  }
-
-  if (type === "school" && item.role !== "school") {
-    return null;
-  }
-
-  return item;
-}
-
-function getItemPayload(saved, item) {
+function buildPayload(saved, item) {
   return {
     _id: saved._id,
     saveId: saved._id,
-    type: saved.itemType,
     itemType: saved.itemType,
+    type: saved.itemType,
     itemId: saved.itemId,
     savedAt: saved.createdAt,
     createdAt: saved.createdAt,
     updatedAt: saved.updatedAt,
-    note: saved.note || "",
     item
   };
 }
 
-/* ============================================
-   GET ALL SAVED ITEMS
-   GET /api/saved?type=job&search=abc
-============================================ */
+/* GET /api/saved */
 router.get("/", auth, async (req, res) => {
   try {
     const query = {
       userId: req.user._id
     };
 
-    const type = normalizeType(req.query.type);
+    const itemType = normalizeType(req.query.type);
 
-    if (type && type !== "all") {
-      if (!isValidType(type)) {
-        return res.status(400).json({
-          message: "Invalid saved item type"
-        });
+    if (itemType && itemType !== "all") {
+      if (!isValidType(itemType)) {
+        return res.status(400).json({ message: "Invalid saved item type" });
       }
 
-      query.itemType = type;
+      query.itemType = itemType;
     }
 
-    const saved = await SavedItem.find(query)
+    const savedItems = await SavedItem.find(query)
       .sort({ createdAt: -1 })
       .lean();
 
     const results = [];
 
-    for (const entry of saved) {
-      const item = await loadTargetItem(entry.itemType, entry.itemId);
+    for (const saved of savedItems) {
+      const item = await loadTargetItem(saved.itemType, saved.itemId);
 
-      if (!item) {
-        continue;
+      if (item) {
+        results.push(buildPayload(saved, item));
       }
-
-      results.push(getItemPayload(entry, item));
     }
 
     res.json({
@@ -183,24 +102,17 @@ router.get("/", auth, async (req, res) => {
     });
   } catch (err) {
     console.error("GET /api/saved error:", err);
-    res.status(500).json({
-      message: "Failed to load saved items"
-    });
+    res.status(500).json({ message: "Failed to load saved items" });
   }
 });
 
-/* ============================================
-   CHECK IF ITEM IS SAVED
-   GET /api/saved/check/:itemType/:itemId
-============================================ */
+/* GET /api/saved/check/:itemType/:itemId */
 router.get("/check/:itemType/:itemId", auth, async (req, res) => {
   try {
     const itemType = normalizeType(req.params.itemType);
 
     if (!isValidType(itemType)) {
-      return res.status(400).json({
-        message: "Invalid saved item type"
-      });
+      return res.status(400).json({ message: "Invalid saved item type" });
     }
 
     const saved = await SavedItem.findOne({
@@ -215,24 +127,15 @@ router.get("/check/:itemType/:itemId", auth, async (req, res) => {
     });
   } catch (err) {
     console.error("GET /api/saved/check error:", err);
-    res.status(500).json({
-      message: "Failed to check saved item"
-    });
+    res.status(500).json({ message: "Failed to check saved item" });
   }
 });
 
-/* ============================================
-   SAVED STATS
-   GET /api/saved/stats
-============================================ */
+/* GET /api/saved/stats */
 router.get("/stats", auth, async (req, res) => {
   try {
     const rows = await SavedItem.aggregate([
-      {
-        $match: {
-          userId: req.user._id
-        }
-      },
+      { $match: { userId: req.user._id } },
       {
         $group: {
           _id: "$itemType",
@@ -244,13 +147,7 @@ router.get("/stats", auth, async (req, res) => {
     const stats = {
       all: 0,
       post: 0,
-      job: 0,
-      profile: 0,
-      class: 0,
-      school: 0,
-      opportunity: 0,
-      group: 0,
-      event: 0
+      job: 0
     };
 
     rows.forEach(row => {
@@ -261,38 +158,27 @@ router.get("/stats", auth, async (req, res) => {
     res.json(stats);
   } catch (err) {
     console.error("GET /api/saved/stats error:", err);
-    res.status(500).json({
-      message: "Failed to load saved stats"
-    });
+    res.status(500).json({ message: "Failed to load saved stats" });
   }
 });
 
-/* ============================================
-   SAVE ITEM
-   POST /api/saved
-   Body: { itemType, itemId, note }
-============================================ */
+/* POST /api/saved */
 router.post("/", auth, async (req, res) => {
   try {
     const itemType = normalizeType(req.body.itemType || req.body.type);
     const itemId = req.body.itemId || req.body.id;
-    const note = req.body.note || "";
 
     if (!isValidType(itemType)) {
-      return res.status(400).json({
-        message: "Invalid saved item type"
-      });
+      return res.status(400).json({ message: "Invalid saved item type" });
     }
 
     if (!itemId) {
-      return res.status(400).json({
-        message: "Item ID is required"
-      });
+      return res.status(400).json({ message: "Item ID is required" });
     }
 
-    const target = await loadTargetItem(itemType, itemId);
+    const item = await loadTargetItem(itemType, itemId);
 
-    if (!target) {
+    if (!item) {
       return res.status(404).json({
         message: "Item not found or cannot be saved"
       });
@@ -309,15 +195,14 @@ router.post("/", auth, async (req, res) => {
         saved: true,
         alreadySaved: true,
         saveId: existing._id,
-        item: getItemPayload(existing, target)
+        item: buildPayload(existing, item)
       });
     }
 
     const saved = await SavedItem.create({
       userId: req.user._id,
       itemType,
-      itemId,
-      note
+      itemId
     });
 
     if (itemType === "job") {
@@ -326,21 +211,11 @@ router.post("/", auth, async (req, res) => {
       });
     }
 
-    const io = req.app.get("io");
-
-    if (io) {
-      io.to(String(req.user._id)).emit("saved:item:created", {
-        itemType,
-        itemId,
-        saveId: saved._id
-      });
-    }
-
     res.status(201).json({
       saved: true,
       alreadySaved: false,
       saveId: saved._id,
-      item: getItemPayload(saved, target)
+      item: buildPayload(saved, item)
     });
   } catch (err) {
     if (err.code === 11000) {
@@ -351,71 +226,17 @@ router.post("/", auth, async (req, res) => {
     }
 
     console.error("POST /api/saved error:", err);
-    res.status(500).json({
-      message: "Failed to save item"
-    });
+    res.status(500).json({ message: "Failed to save item" });
   }
 });
 
-/* ============================================
-   DELETE SAVED ITEM BY SAVE ID
-   DELETE /api/saved/:id
-============================================ */
-router.delete("/:id", auth, async (req, res) => {
-  try {
-    const saved = await SavedItem.findOneAndDelete({
-      _id: req.params.id,
-      userId: req.user._id
-    });
-
-    if (!saved) {
-      return res.status(404).json({
-        message: "Saved item not found"
-      });
-    }
-
-    if (saved.itemType === "job") {
-      await Job.findByIdAndUpdate(saved.itemId, {
-        $inc: { saveCount: -1 }
-      });
-    }
-
-    const io = req.app.get("io");
-
-    if (io) {
-      io.to(String(req.user._id)).emit("saved:item:removed", {
-        itemType: saved.itemType,
-        itemId: saved.itemId,
-        saveId: saved._id
-      });
-    }
-
-    res.json({
-      removed: true,
-      saveId: saved._id,
-      itemType: saved.itemType,
-      itemId: saved.itemId
-    });
-  } catch (err) {
-    console.error("DELETE /api/saved/:id error:", err);
-    res.status(500).json({
-      message: "Failed to remove saved item"
-    });
-  }
-});
-
-/* ============================================
-   DELETE SAVED ITEM BY TYPE + ITEM ID
-   DELETE /api/saved/by-item/:itemType/:itemId
-============================================ */
+/* IMPORTANT: keep this ABOVE router.delete("/:id") */
 router.delete("/by-item/:itemType/:itemId", auth, async (req, res) => {
   try {
     const itemType = normalizeType(req.params.itemType);
 
     if (!isValidType(itemType)) {
-      return res.status(400).json({
-        message: "Invalid saved item type"
-      });
+      return res.status(400).json({ message: "Invalid saved item type" });
     }
 
     const saved = await SavedItem.findOneAndDelete({
@@ -425,24 +246,12 @@ router.delete("/by-item/:itemType/:itemId", auth, async (req, res) => {
     });
 
     if (!saved) {
-      return res.status(404).json({
-        message: "Saved item not found"
-      });
+      return res.status(404).json({ message: "Saved item not found" });
     }
 
     if (itemType === "job") {
       await Job.findByIdAndUpdate(req.params.itemId, {
         $inc: { saveCount: -1 }
-      });
-    }
-
-    const io = req.app.get("io");
-
-    if (io) {
-      io.to(String(req.user._id)).emit("saved:item:removed", {
-        itemType,
-        itemId: req.params.itemId,
-        saveId: saved._id
       });
     }
 
@@ -454,9 +263,37 @@ router.delete("/by-item/:itemType/:itemId", auth, async (req, res) => {
     });
   } catch (err) {
     console.error("DELETE /api/saved/by-item error:", err);
-    res.status(500).json({
-      message: "Failed to remove saved item"
+    res.status(500).json({ message: "Failed to remove saved item" });
+  }
+});
+
+/* DELETE /api/saved/:id */
+router.delete("/:id", auth, async (req, res) => {
+  try {
+    const saved = await SavedItem.findOneAndDelete({
+      _id: req.params.id,
+      userId: req.user._id
     });
+
+    if (!saved) {
+      return res.status(404).json({ message: "Saved item not found" });
+    }
+
+    if (saved.itemType === "job") {
+      await Job.findByIdAndUpdate(saved.itemId, {
+        $inc: { saveCount: -1 }
+      });
+    }
+
+    res.json({
+      removed: true,
+      saveId: saved._id,
+      itemType: saved.itemType,
+      itemId: saved.itemId
+    });
+  } catch (err) {
+    console.error("DELETE /api/saved/:id error:", err);
+    res.status(500).json({ message: "Failed to remove saved item" });
   }
 });
 
