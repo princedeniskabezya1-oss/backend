@@ -29,6 +29,7 @@ const schoolCompanyPartnershipRoutes = require("./routes/schoolCompanyPartnershi
 const internshipApplicationRoutes = require("./routes/internshipApplications");
 const schoolUpdateRoutes = require("./routes/schoolUpdates");
 const attendanceRoutes = require("./routes/attendance");
+const savedRoutes = require("./routes/saved");
 
 const classModuleRoutes = require("./routes/classModules");
 const classLessonRoutes = require("./routes/classLessons");
@@ -97,6 +98,7 @@ app.use("/api/school-company-partnerships", schoolCompanyPartnershipRoutes);
 app.use("/api/internship-applications", internshipApplicationRoutes);
 app.use("/api/school-updates", schoolUpdateRoutes);
 app.use("/api/attendance", attendanceRoutes);
+app.use("/api/saved", savedRoutes);
 
 app.use("/api/class-modules", classModuleRoutes);
 app.use("/api/class-lessons", classLessonRoutes);
