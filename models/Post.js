@@ -69,6 +69,13 @@ const PostSchema = new mongoose.Schema(
       required: true
     },
 
+    groupId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Group",
+      default: null,
+      index: true
+    },
+
 text: {
   type: String,
   default: "",
@@ -142,6 +149,7 @@ repostOf: {
 );
 
 PostSchema.index({ author: 1, createdAt: -1 });
+PostSchema.index({ groupId: 1, createdAt: -1 });
 PostSchema.index({ createdAt: -1 });
 PostSchema.index({ engagementScore: -1 });
 PostSchema.index({ isHiddenByAdmin: 1 });
