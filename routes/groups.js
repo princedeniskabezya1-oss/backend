@@ -43,8 +43,9 @@ function buildGroupPayload(group, userId = null) {
 
   return {
     ...plain,
-    membersCount: plain.members?.length || 0,
-    followersCount: plain.followers?.length || 0,
+    membersCount: Number(plain.membersCount ?? plain.members?.length ?? 0),
+followersCount: Number(plain.followersCount ?? plain.followers?.length ?? 0),
+postsCount: Number(plain.postsCount ?? 0),
     isJoined: userId ? isMember(plain, userId) : false
   };
 }
@@ -208,7 +209,10 @@ router.post("/", auth, async (req, res) => {
       visibility,
       owner: req.user._id,
       members: [req.user._id],
-      followers: [],
+followers: [],
+membersCount: 1,
+followersCount: 0,
+postsCount: 0,
       coverImage: req.body.coverImage || "",
       logo: req.body.logo || ""
     });
@@ -315,11 +319,13 @@ router.post("/:id/join", auth, async (req, res) => {
       });
     }
 
-    if (!group.members.some(id => String(id) === String(req.user._id))) {
-      group.members.push(req.user._id);
-    }
+if (!group.members.some(id => String(id) === String(req.user._id))) {
+  group.members.push(req.user._id);
+}
 
-    await group.save();
+group.membersCount = group.members.length;
+
+await group.save();
 
     res.json({
       joined: true,
@@ -353,11 +359,13 @@ router.post("/:id/leave", auth, async (req, res) => {
       });
     }
 
-    group.members = group.members.filter(id => {
-      return String(id) !== String(req.user._id);
-    });
+group.members = group.members.filter(id => {
+  return String(id) !== String(req.user._id);
+});
 
-    await group.save();
+group.membersCount = group.members.length;
+
+await group.save();
 
     res.json({
       joined: false,
@@ -397,7 +405,9 @@ router.post("/:id/follow", auth, async (req, res) => {
       group.followers.push(req.user._id);
     }
 
-    await group.save();
+    group.followersCount = group.followers.length;
+
+await group.save();
 
     res.json({
       following: !alreadyFollowing,
