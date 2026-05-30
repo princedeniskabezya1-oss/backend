@@ -11,16 +11,7 @@ const SavedItemSchema = new mongoose.Schema(
 
     itemType: {
       type: String,
-      enum: [
-        "post",
-        "job",
-        "profile",
-        "class",
-        "school",
-        "opportunity",
-        "group",
-        "event"
-      ],
+      enum: ["post", "job"],
       required: true,
       index: true
     },
@@ -29,18 +20,9 @@ const SavedItemSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       required: true,
       index: true
-    },
-
-    note: {
-      type: String,
-      default: "",
-      trim: true,
-      maxlength: 500
     }
   },
-  {
-    timestamps: true
-  }
+  { timestamps: true }
 );
 
 SavedItemSchema.index(
