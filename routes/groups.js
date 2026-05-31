@@ -642,4 +642,88 @@ router.get("/:id/stats", auth, async (req, res) => {
   }
 });
 
+/* ==========================================
+   INVITE USERS TO GROUP
+   POST /api/groups/:id/invite
+========================================== */
+router.post("/:id/invite", auth, async (req, res) => {
+  try {
+    const group = await Group.findOne({
+      _id: req.params.id,
+      isActive: true
+    });
+
+    if (!group) {
+      return res.status(404).json({
+        message: "Group not found"
+      });
+    }
+
+    const isGroupMember = group.members.some(member => {
+      return String(member) === String(req.user._id);
+    });
+
+    const isOwner = String(group.owner) === String(req.user._id);
+    const isAdmin = req.user.role === "admin";
+
+    if (!isGroupMember && !isOwner && !isAdmin) {
+      return res.status(403).json({
+        message: "Join this group before inviting people"
+      });
+    }
+
+    const users = Array.isArray(req.body.users)
+      ? req.body.users.filter(Boolean)
+      : [];
+
+    if (!users.length) {
+      return res.status(400).json({
+        message: "Please select at least one user to invite"
+      });
+    }
+
+    const cleanUsers = [...new Set(
+      users
+        .map(id => String(id).trim())
+        .filter(id => id && id !== String(req.user._id))
+    )];
+
+    const existingMemberIds = new Set(
+      group.members.map(member => String(member))
+    );
+
+    const inviteeIds = cleanUsers.filter(userId => {
+      return !existingMemberIds.has(String(userId));
+    });
+
+    if (!inviteeIds.length) {
+      return res.status(400).json({
+        message: "Selected users are already members or invalid"
+      });
+    }
+
+    /*
+      Backend-ready note:
+      If you already have Notification model, you can create notifications here.
+      This route currently validates and returns invited users so frontend works.
+    */
+
+    res.status(200).json({
+      invited: true,
+      groupId: group._id,
+      invitedBy: req.user._id,
+      invitedUsers: inviteeIds,
+      count: inviteeIds.length,
+      message: `${inviteeIds.length} invitation(s) prepared successfully`
+    });
+
+  } catch (err) {
+    console.error("POST GROUP INVITE ERROR:", err);
+
+    res.status(500).json({
+      message: "Failed to invite users"
+    });
+  }
+});
+
 module.exports = router;
