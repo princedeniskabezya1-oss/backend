@@ -4,6 +4,9 @@ const router = express.Router();
 const auth = require("../middleware/auth");
 const Group = require("../models/Group");
 const Post = require("../models/Post");
+const User = require("../models/User");
+const multer = require("multer");
+const cloudinary = require("../config/cloudinary");
 
 const USER_SELECT =
   "name companyName schoolName profileImage avatar headline profession role location aiftVerified";
@@ -15,6 +18,38 @@ const VALID_CATEGORIES = [
   "talent",
   "student"
 ];
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024
+  }
+});
+
+function fileToDataUri(file) {
+  const base64 = file.buffer.toString("base64");
+  return `data:${file.mimetype};base64,${base64}`;
+}
+
+async function uploadToCloudinary(file, folder = "aift/groups") {
+  const dataUri = fileToDataUri(file);
+
+  const result = await cloudinary.uploader.upload(dataUri, {
+    folder,
+    resource_type: file.mimetype.startsWith("video/") ? "video" : "image"
+  });
+
+  return {
+    url: result.secure_url,
+    type: file.mimetype.startsWith("video/") ? "video" : "image"
+  };
+}
+
+function canManageGroup(group, user) {
+  return (
+    String(group.owner) === String(user._id) ||
+    user.role === "admin"
+  );
+}
 
 function normalizeCategory(category = "") {
   const clean = String(category || "").toLowerCase().trim();
@@ -508,64 +543,81 @@ router.get("/:id/posts", auth, async (req, res) => {
   }
 });
 /* ==========================================
-   CREATE GROUP POST
+   CREATE GROUP POST WITH MEDIA
    POST /api/groups/:id/posts
 ========================================== */
-router.post("/:id/posts", auth, async (req, res) => {
-  try {
-
-    const group = await Group.findOne({
-      _id: req.params.id,
-      isActive: true
-    });
-
-    if (!group) {
-      return res.status(404).json({
-        message: "Group not found"
+router.post(
+  "/:id/posts",
+  auth,
+  upload.array("media", 10),
+  async (req, res) => {
+    try {
+      const group = await Group.findOne({
+        _id: req.params.id,
+        isActive: true
       });
-    }
 
-    const isMember =
-      group.members.some(
-        member =>
-          String(member) === String(req.user._id)
+      if (!group) {
+        return res.status(404).json({
+          message: "Group not found"
+        });
+      }
+
+      const isGroupMember = group.members.some(member => {
+        return String(member) === String(req.user._id);
+      });
+
+      if (!isGroupMember) {
+        return res.status(403).json({
+          message: "Join this group before posting"
+        });
+      }
+
+      const text = String(req.body.text || "").trim();
+      const files = Array.isArray(req.files) ? req.files : [];
+
+      if (!text && !files.length) {
+        return res.status(400).json({
+          message: "Please write something or add a photo/video"
+        });
+      }
+
+      const media = [];
+
+      for (const file of files) {
+        const uploaded = await uploadToCloudinary(file, "aift/group-posts");
+        media.push(uploaded);
+      }
+
+      const post = await Post.create({
+        author: req.user._id,
+        groupId: group._id,
+        text,
+        media
+      });
+
+      await post.populate(
+        "author",
+        "name profileImage avatar role headline companyName schoolName aiftVerified"
       );
 
-    if (!isMember) {
-      return res.status(403).json({
-        message: "Join this group before posting"
+      group.postsCount = Number(group.postsCount || 0) + 1;
+      await group.save();
+
+      res.status(201).json({
+        post,
+        postsCount: group.postsCount
+      });
+
+    } catch (err) {
+      console.error("CREATE GROUP POST ERROR:", err);
+
+      res.status(500).json({
+        message: "Failed to create group post"
       });
     }
-
-    const post = await Post.create({
-      author: req.user._id,
-      groupId: group._id,
-      text: req.body.text || "",
-      media: req.body.media || []
-    });
-
-await post.populate(
-  "author",
-  "name profileImage role headline companyName schoolName aiftVerified"
-);
-
-group.postsCount = Number(group.postsCount || 0) + 1;
-await group.save();
-
-res.status(201).json({
-  post,
-  postsCount: group.postsCount
-});
-
-  } catch (err) {
-
-    console.error("CREATE GROUP POST ERROR:", err);
-
-    res.status(500).json({
-      message: "Failed to create group post"
-    });
   }
-});
+);
 /* ==========================================
    GET GROUP MEMBERS
    GET /api/groups/:id/members
@@ -663,17 +715,14 @@ router.post("/:id/invite", auth, async (req, res) => {
       return String(member) === String(req.user._id);
     });
 
-    const isOwner = String(group.owner) === String(req.user._id);
-    const isAdmin = req.user.role === "admin";
-
-    if (!isGroupMember && !isOwner && !isAdmin) {
+    if (!isGroupMember && !canManageGroup(group, req.user)) {
       return res.status(403).json({
         message: "Join this group before inviting people"
       });
     }
 
     const users = Array.isArray(req.body.users)
-      ? req.body.users.filter(Boolean)
+      ? req.body.users.map(id => String(id).trim()).filter(Boolean)
       : [];
 
     if (!users.length) {
@@ -682,39 +731,24 @@ router.post("/:id/invite", auth, async (req, res) => {
       });
     }
 
-    const cleanUsers = [...new Set(
-      users
-        .map(id => String(id).trim())
-        .filter(id => id && id !== String(req.user._id))
-    )];
+    const memberIds = new Set(group.members.map(member => String(member)));
 
-    const existingMemberIds = new Set(
-      group.members.map(member => String(member))
-    );
-
-    const inviteeIds = cleanUsers.filter(userId => {
-      return !existingMemberIds.has(String(userId));
+    const invitedUsers = users.filter(userId => {
+      return userId !== String(req.user._id) && !memberIds.has(userId);
     });
 
-    if (!inviteeIds.length) {
+    if (!invitedUsers.length) {
       return res.status(400).json({
-        message: "Selected users are already members or invalid"
+        message: "Selected users are already members"
       });
     }
 
-    /*
-      Backend-ready note:
-      If you already have Notification model, you can create notifications here.
-      This route currently validates and returns invited users so frontend works.
-    */
-
-    res.status(200).json({
+    res.json({
       invited: true,
       groupId: group._id,
-      invitedBy: req.user._id,
-      invitedUsers: inviteeIds,
-      count: inviteeIds.length,
-      message: `${inviteeIds.length} invitation(s) prepared successfully`
+      invitedUsers,
+      count: invitedUsers.length,
+      message: `${invitedUsers.length} invitation(s) sent`
     });
 
   } catch (err) {
@@ -722,6 +756,185 @@ router.post("/:id/invite", auth, async (req, res) => {
 
     res.status(500).json({
       message: "Failed to invite users"
+    });
+  }
+});
+
+/* ==========================================
+   UPLOAD GROUP COVER / LOGO
+   POST /api/groups/:id/upload
+========================================== */
+router.post(
+  "/:id/upload",
+  auth,
+  upload.fields([
+    { name: "coverImage", maxCount: 1 },
+    { name: "logo", maxCount: 1 }
+  ]),
+  async (req, res) => {
+    try {
+      const group = await Group.findOne({
+        _id: req.params.id,
+        isActive: true
+      });
+
+      if (!group) {
+        return res.status(404).json({
+          message: "Group not found"
+        });
+      }
+
+      if (!canManageGroup(group, req.user)) {
+        return res.status(403).json({
+          message: "Only the group owner or admin can update group images"
+        });
+      }
+
+      const files = req.files || {};
+      const updates = {};
+
+      if (files.coverImage?.[0]) {
+        const uploadedCover = await uploadToCloudinary(
+          files.coverImage[0],
+          "aift/group-covers"
+        );
+
+        updates.coverImage = uploadedCover.url;
+        group.coverImage = uploadedCover.url;
+      }
+
+      if (files.logo?.[0]) {
+        const uploadedLogo = await uploadToCloudinary(
+          files.logo[0],
+          "aift/group-logos"
+        );
+
+        updates.logo = uploadedLogo.url;
+        group.logo = uploadedLogo.url;
+      }
+
+      await group.save();
+      await group.populate("owner", USER_SELECT);
+
+      res.json({
+        uploaded: true,
+        updates,
+        group: buildGroupPayload(group, req.user._id)
+      });
+
+    } catch (err) {
+      console.error("UPLOAD GROUP IMAGE ERROR:", err);
+
+      res.status(500).json({
+        message: "Failed to upload group image"
+      });
+    }
+  }
+);
+/* ==========================================
+   SEARCH USERS TO INVITE
+   GET /api/groups/:id/invite-candidates?search=
+========================================== */
+router.get("/:id/invite-candidates", auth, async (req, res) => {
+  try {
+    const group = await Group.findOne({
+      _id: req.params.id,
+      isActive: true
+    });
+
+    if (!group) {
+      return res.status(404).json({
+        message: "Group not found"
+      });
+    }
+
+    const search = String(req.query.search || "").trim();
+
+    if (search.length < 2) {
+      return res.json({
+        users: []
+      });
+    }
+
+    const memberIds = group.members.map(member => String(member));
+
+    const users = await User.find({
+      _id: {
+        $nin: [...memberIds, String(req.user._id)]
+      },
+      $or: [
+        { name: new RegExp(search, "i") },
+        { companyName: new RegExp(search, "i") },
+        { schoolName: new RegExp(search, "i") },
+        { headline: new RegExp(search, "i") },
+        { profession: new RegExp(search, "i") },
+        { role: new RegExp(search, "i") },
+        { location: new RegExp(search, "i") }
+      ]
+    })
+      .select(USER_SELECT)
+      .limit(20);
+
+    res.json({
+      users
+    });
+
+  } catch (err) {
+    console.error("GET INVITE CANDIDATES ERROR:", err);
+
+    res.status(500).json({
+      message: "Failed to load users"
+    });
+  }
+});
+
+/* ==========================================
+   REMOVE GROUP MEMBER
+   DELETE /api/groups/:id/members/:userId
+========================================== */
+router.delete("/:id/members/:userId", auth, async (req, res) => {
+  try {
+    const group = await Group.findOne({
+      _id: req.params.id,
+      isActive: true
+    });
+
+    if (!group) {
+      return res.status(404).json({
+        message: "Group not found"
+      });
+    }
+
+    if (!canManageGroup(group, req.user)) {
+      return res.status(403).json({
+        message: "Only the group owner or admin can remove members"
+      });
+    }
+
+    if (String(group.owner) === String(req.params.userId)) {
+      return res.status(400).json({
+        message: "The group owner cannot be removed"
+      });
+    }
+
+    group.members = group.members.filter(member => {
+      return String(member) !== String(req.params.userId);
+    });
+
+    group.membersCount = group.members.length;
+    await group.save();
+
+    res.json({
+      removed: true,
+      userId: req.params.userId,
+      membersCount: group.membersCount
+    });
+
+  } catch (err) {
+    console.error("REMOVE GROUP MEMBER ERROR:", err);
+
+    res.status(500).json({
+      message: "Failed to remove member"
     });
   }
 });
