@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 
 const InternshipApplication = require("../models/InternshipApplication");
-const Opportunity = require("../models/Opportunity");
+const Opportunity = require("../models/SchoolOpportunity");
 
 let auth = null;
 
