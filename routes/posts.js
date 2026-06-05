@@ -110,12 +110,17 @@ router.get("/", auth, async (req, res) => {
 };
 
 const groupId = req.query.groupId;
+const authorId = req.query.author;
 
 if (groupId) {
   query.groupId = groupId;
 }
 
-if (!groupId && followingIds.length > 0) {
+if (authorId) {
+  query.author = authorId;
+}
+
+if (!groupId && !authorId && followingIds.length > 0) {
   query.author = {
     $in: [...followingIds, currentUser._id]
   };
