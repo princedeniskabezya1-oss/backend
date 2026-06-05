@@ -430,6 +430,37 @@ router.patch("/:id/follow", auth, async (req, res) => {
 });
 
 /* ============================================
+   PUBLIC NETWORK PREVIEW
+   GET /api/users/network/public
+============================================ */
+router.get("/network/public", async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 60, 100);
+
+    const users = await User.find({
+      role: { $in: ["talent", "agent", "employer", "school"] },
+      isBlockedByEmployer: { $ne: true },
+      status: { $ne: "suspended" },
+      isPublic: { $ne: false }
+    })
+      .select(
+        "_id name headline bio role profileImage bannerImage followers skills languages certifications profession availability workPreference yearsOfExperience aiftVerified aiftCertified department course companyId teamRole education experience expectedSalary companyName industry schoolName programs location"
+      )
+      .sort({
+        aiftVerified: -1,
+        aiftCertified: -1,
+        createdAt: -1
+      })
+      .limit(limit);
+
+    res.json(users);
+  } catch (err) {
+    console.error("PUBLIC NETWORK USERS ERROR:", err);
+    res.status(500).json({ message: "Failed to load public network" });
+  }
+});
+
+/* ============================================
    NETWORK
 ============================================ */
 router.get("/network", auth, async (req, res) => {
