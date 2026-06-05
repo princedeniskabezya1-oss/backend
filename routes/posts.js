@@ -386,6 +386,38 @@ router.get("/company/:companyId/public", async (req, res) => {
   }
 });
 /* ==========================
+   PUBLIC GUEST FEED
+   GET /api/posts/public?limit=10
+========================== */
+router.get("/public", async (req, res) => {
+  try {
+    const skip = Math.max(Number(req.query.skip || 0), 0);
+    const limit = Math.min(Math.max(Number(req.query.limit || 10), 1), 30);
+
+    const posts = await Post.find({
+      isHiddenByAdmin: { $ne: true },
+      groupId: null
+    })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .populate("author", USER_POPULATE)
+      .populate({
+        path: "repostOf",
+        populate: {
+          path: "author",
+          select: USER_POPULATE
+        }
+      });
+
+    res.json(posts);
+  } catch (err) {
+    console.error("PUBLIC GUEST FEED ERROR:", err.message);
+    res.status(500).json({ message: "Failed to load public feed" });
+  }
+});
+
+/* ==========================
    GET SINGLE POST — BELOW SPECIAL GET ROUTES
 ========================== */
 router.get("/:id", auth, async (req, res) => {
