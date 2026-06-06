@@ -122,6 +122,79 @@ async function addSystemMessage(conversationId,text,userId){
 
   return message;
 }
+function normalizeAccessMode(value){
+  const mode = String(value || "").toLowerCase();
+
+  if(["open","restricted","waiting_room","invite_only","domain_only"].includes(mode)){
+    return mode;
+  }
+
+  return "restricted";
+}
+
+function participantUserId(participant){
+  return (
+    participant?.user?._id ||
+    participant?.user?.id ||
+    participant?.user ||
+    ""
+  );
+}
+
+function isParticipantActive(meeting,userId){
+  return meeting.participants?.some(p =>
+    String(participantUserId(p)) === String(userId) &&
+    !p.leftAt &&
+    p.removedByHost !== true
+  );
+}
+
+function isInvited(meeting,userId){
+  return meeting.invitedUsers?.some(id =>
+    String(id?._id || id) === String(userId)
+  );
+}
+
+function canJoinMeeting(meeting,user){
+  if(!meeting || !user) return false;
+
+  const userId = user.id || user._id;
+
+  if(isHost(meeting,userId)) return true;
+
+  if(meeting.lockMeeting){
+    return false;
+  }
+
+  if(isParticipantActive(meeting,userId)){
+    return true;
+  }
+
+  if(meeting.accessMode === "open"){
+    return true;
+  }
+
+  if(meeting.accessMode === "invite_only"){
+    return isInvited(meeting,userId);
+  }
+
+  if(meeting.accessMode === "waiting_room"){
+    return true;
+  }
+
+  if(meeting.accessMode === "domain_only"){
+    if(!meeting.companyId && !meeting.schoolId){
+      return false;
+    }
+
+    return (
+      String(user.companyId || "") === String(meeting.companyId || "") ||
+      String(user.schoolId || user.linkedSchoolId || "") === String(meeting.schoolId || "")
+    );
+  }
+
+  return isInvited(meeting,userId);
+}
 
 /* =========================
    CREATE MEETING
@@ -159,9 +232,23 @@ router.post("/", authMiddleware, async (req,res)=>{
       maxParticipants:Number(req.body.maxParticipants || 100),
       passwordProtected:!!req.body.passwordProtected,
       password:req.body.passwordProtected ? hashPassword(req.body.password) : "",
-      waitingRoomEnabled:!!req.body.waitingRoomEnabled,
-      recordingEnabled:!!req.body.recordingEnabled,
-      allowScreenShare:req.body.allowScreenShare !== false,
+accessMode:normalizeAccessMode(req.body.accessMode || "restricted"),
+allowGuests:req.body.allowGuests === true,
+requireHostApproval:req.body.requireHostApproval === true,
+lockMeeting:false,
+allowJoinBeforeHost:req.body.allowJoinBeforeHost === true,
+
+hostControls:{
+  muteParticipantsOnEntry:req.body.hostControls?.muteParticipantsOnEntry === true,
+  allowParticipantsToUnmute:req.body.hostControls?.allowParticipantsToUnmute !== false,
+  allowParticipantsToShareScreen:req.body.hostControls?.allowParticipantsToShareScreen !== false,
+  allowParticipantsToChat:req.body.hostControls?.allowParticipantsToChat !== false,
+  allowParticipantsToInvite:req.body.hostControls?.allowParticipantsToInvite === true
+},
+
+waitingRoomEnabled:!!req.body.waitingRoomEnabled,
+recordingEnabled:!!req.body.recordingEnabled,
+allowScreenShare:req.body.allowScreenShare !== false,
       allowChat:req.body.allowChat !== false,
       allowFileSharing:req.body.allowFileSharing !== false,
       allowRaiseHand:req.body.allowRaiseHand !== false,
@@ -313,17 +400,27 @@ router.post("/:id/join", authMiddleware, async (req,res)=>{
       return res.status(400).json({ message:"This meeting is no longer available" });
     }
 
-    if(meeting.passwordProtected && !passwordMatches(req.body.password,meeting.password)){
-      return res.status(403).json({ message:"Incorrect meeting password" });
-    }
+if(meeting.passwordProtected && !passwordMatches(req.body.password,meeting.password)){
+  return res.status(403).json({ message:"Incorrect meeting password" });
+}
 
-    const participant = getParticipant(meeting,req.user.id);
+if(!canJoinMeeting(meeting,req.user)){
+  return res.status(403).json({
+    message:"You need an invitation or host approval to join this meeting"
+  });
+}
 
-    if(
-      meeting.waitingRoomEnabled &&
-      !participant &&
-      !isHost(meeting,req.user.id)
-    ){
+const participant = getParticipant(meeting,req.user.id);
+
+if(
+  (
+    meeting.waitingRoomEnabled ||
+    meeting.accessMode === "waiting_room" ||
+    meeting.requireHostApproval
+  ) &&
+  !participant &&
+  !isHost(meeting,req.user.id)
+){
       const alreadyWaiting = meeting.waitingRoomUsers.some(id =>
         String(id) === String(req.user.id)
       );
@@ -874,6 +971,143 @@ router.patch("/:id/settings", authMiddleware, async (req,res)=>{
   }catch(error){
     console.error("UPDATE SETTINGS ERROR:",error);
     res.status(500).json({ message:"Unable to update meeting settings" });
+  }
+});
+
+/* =========================
+   ADVANCED ACCESS SETTINGS
+========================= */
+
+router.patch("/:id/access", authMiddleware, async (req,res)=>{
+  try{
+    const meeting = await Meeting.findById(req.params.id);
+
+    if(!meeting){
+      return res.status(404).json({ message:"Meeting not found" });
+    }
+
+    if(!isHost(meeting,req.user.id)){
+      return res.status(403).json({ message:"Only host can update meeting access" });
+    }
+
+    if(req.body.accessMode !== undefined){
+      meeting.accessMode = normalizeAccessMode(req.body.accessMode);
+    }
+
+    if(typeof req.body.allowGuests === "boolean"){
+      meeting.allowGuests = req.body.allowGuests;
+    }
+
+    if(typeof req.body.requireHostApproval === "boolean"){
+      meeting.requireHostApproval = req.body.requireHostApproval;
+    }
+
+    if(typeof req.body.lockMeeting === "boolean"){
+      meeting.lockMeeting = req.body.lockMeeting;
+    }
+
+    if(typeof req.body.allowJoinBeforeHost === "boolean"){
+      meeting.allowJoinBeforeHost = req.body.allowJoinBeforeHost;
+    }
+
+    if(req.body.hostControls){
+      meeting.hostControls = {
+        ...(meeting.hostControls?.toObject?.() || meeting.hostControls || {}),
+        ...req.body.hostControls
+      };
+    }
+
+    await meeting.save();
+
+    emitMeeting(req,meeting,"meetingAccessUpdated",{
+      updatedBy:req.user.id,
+      accessMode:meeting.accessMode,
+      lockMeeting:meeting.lockMeeting,
+      hostControls:meeting.hostControls
+    });
+
+    res.json(meeting);
+
+  }catch(error){
+    console.error("UPDATE MEETING ACCESS ERROR:",error);
+    res.status(500).json({ message:"Unable to update meeting access" });
+  }
+});
+
+router.patch("/:id/mute-all", authMiddleware, async (req,res)=>{
+  try{
+    const meeting = await Meeting.findById(req.params.id);
+
+    if(!meeting){
+      return res.status(404).json({ message:"Meeting not found" });
+    }
+
+    if(!isHostOrCohost(meeting,req.user.id)){
+      return res.status(403).json({ message:"Only host or cohost can mute participants" });
+    }
+
+    meeting.participants.forEach(p=>{
+      if(String(participantUserId(p)) !== String(req.user.id)){
+        p.audioEnabled = false;
+      }
+    });
+
+    await meeting.save();
+
+    emitMeeting(req,meeting,"meetingMuteAll",{
+      mutedBy:req.user.id
+    });
+
+    res.json(meeting);
+
+  }catch(error){
+    console.error("MUTE ALL ERROR:",error);
+    res.status(500).json({ message:"Unable to mute participants" });
+  }
+});
+
+router.patch("/:id/end-for-everyone", authMiddleware, async (req,res)=>{
+  try{
+    const meeting = await Meeting.findById(req.params.id);
+
+    if(!meeting){
+      return res.status(404).json({ message:"Meeting not found" });
+    }
+
+    if(!isHost(meeting,req.user.id)){
+      return res.status(403).json({ message:"Only host can end meeting for everyone" });
+    }
+
+    meeting.status = "ended";
+    meeting.actualEndedAt = new Date();
+
+    meeting.participants.forEach(p=>{
+      p.leftAt = p.leftAt || new Date();
+      p.audioEnabled = false;
+      p.videoEnabled = false;
+      p.screenSharing = false;
+      p.handRaised = false;
+    });
+
+    if(meeting.actualStartedAt){
+      meeting.durationSeconds = Math.max(
+        0,
+        Math.floor((meeting.actualEndedAt - meeting.actualStartedAt) / 1000)
+      );
+    }
+
+    await meeting.save();
+
+    emitMeeting(req,meeting,"meetingEnded",{
+      endedBy:req.user.id,
+      forEveryone:true
+    });
+
+    res.json(meeting);
+
+  }catch(error){
+    console.error("END FOR EVERYONE ERROR:",error);
+    res.status(500).json({ message:"Unable to end meeting" });
   }
 });
 
