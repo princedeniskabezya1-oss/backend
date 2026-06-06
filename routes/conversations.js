@@ -26,9 +26,18 @@ function getUserImage(user = {}){
   return user.profileImage || user.logo || user.avatar || "";
 }
 
+function participantUserId(participant){
+  return (
+    participant?.user?._id ||
+    participant?.user?.id ||
+    participant?.user ||
+    ""
+  );
+}
+
 function isParticipant(conversation,userId){
   return conversation.participants.some(p =>
-    String(p.user) === String(userId) &&
+    String(participantUserId(p)) === String(userId) &&
     p.isActive !== false &&
     p.blocked !== true
   );
@@ -36,7 +45,7 @@ function isParticipant(conversation,userId){
 
 function getParticipant(conversation,userId){
   return conversation.participants.find(p =>
-    String(p.user) === String(userId)
+    String(participantUserId(p)) === String(userId)
   );
 }
 
