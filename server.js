@@ -1,5 +1,5 @@
 const messageRoutes = require("./routes/messages");
-const meetingRoutes = require("./routes/meetings");
+
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
