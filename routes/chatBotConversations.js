@@ -4,7 +4,7 @@ const ChatBotConversation =
 require("../models/ChatBotConversation");
 
 const authMiddleware =
-require("../middleware/authMiddleware");
+require("../middleware/auth");
 
 const router = express.Router();
 
