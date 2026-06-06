@@ -32,6 +32,14 @@ const schoolUpdateRoutes = require("./routes/schoolUpdates");
 const attendanceRoutes = require("./routes/attendance");
 const savedRoutes = require("./routes/saved");
 const groupRoutes = require("./routes/groups");
+const conversationRoutes = require("./routes/conversations");
+const meetingRoutes = require("./routes/meetings");
+const callLogRoutes = require("./routes/callLogs");
+const notificationPreferenceRoutes = require("./routes/notificationPreferences");
+const messageTemplateRoutes = require("./routes/messageTemplates");
+const conferenceRecordingRoutes = require("./routes/conferenceRecordings");
+const conferenceTranscriptRoutes = require("./routes/conferenceTranscripts");
+const chatBotConversationRoutes = require("./routes/chatBotConversations");
 
 const classModuleRoutes = require("./routes/classModules");
 const classLessonRoutes = require("./routes/classLessons");
@@ -79,6 +87,14 @@ app.use("/api/employer-team", employerTeamRoutes);
 app.use("/api/schedules", scheduleRoutes);
 app.use("/api/tasks", taskRoutes);
 app.use("/api/invites", inviteRoutes);
+app.use("/api/conversations", conversationRoutes);
+app.use("/api/meetings", meetingRoutes);
+app.use("/api/call-logs", callLogRoutes);
+app.use("/api/notification-preferences", notificationPreferenceRoutes);
+app.use("/api/message-templates", messageTemplateRoutes);
+app.use("/api/conference-recordings", conferenceRecordingRoutes);
+app.use("/api/conference-transcripts", conferenceTranscriptRoutes);
+app.use("/api/chatbot-conversations", chatBotConversationRoutes);
 
 /* ============================================
    NEW ADVANCED HIRING + BPO OPERATIONS SYSTEM
