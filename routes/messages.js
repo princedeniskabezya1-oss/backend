@@ -275,28 +275,54 @@ router.get("/:userId", authMiddleware, async (req,res)=>{
 router.post("/", authMiddleware, upload.single("file"), async (req,res)=>{
   try{
     const senderId = req.user.id;
-    const {
-      receiverId,
-      text = "",
-      replyTo,
-      clientMessageId
-    } = req.body;
+const {
+  receiverId,
+  text = "",
+  replyTo,
+  clientMessageId,
+  fileUrl = "",
+  fileType = "",
+  fileName = ""
+} = req.body;
 
     if(!receiverId || !isValidId(receiverId)){
       return res.status(400).json({ message:"Valid receiverId is required" });
     }
 
-    if(!text.trim() && !req.file){
-      return res.status(400).json({ message:"Message text or file is required" });
-    }
+if(!text.trim() && !req.file && !fileUrl){
+  return res.status(400).json({ message:"Message text, file, GIF, or sticker is required" });
+}
 
     const conversation =
       await findOrCreateDirectConversation(senderId,receiverId,senderId);
 
-    const attachment =
-      req.file
-        ? await uploadToCloudinary(req.file)
-        : null;
+let attachment =
+  req.file
+    ? await uploadToCloudinary(req.file)
+    : null;
+
+if(!attachment && fileUrl){
+  const type =
+    fileType.includes("gif")
+      ? "image"
+      : fileType.includes("image")
+        ? "image"
+        : fileType.includes("video")
+          ? "video"
+          : fileType.includes("audio")
+            ? "audio"
+            : "file";
+
+  attachment = {
+    url:fileUrl,
+    secureUrl:fileUrl,
+    publicId:"",
+    type,
+    mimeType:fileType || "image/webp",
+    originalName:fileName || "Chat asset",
+    size:0
+  };
+}
 
     const message = await Message.create({
       conversationId:conversation._id,
@@ -304,12 +330,12 @@ router.post("/", authMiddleware, upload.single("file"), async (req,res)=>{
       receiver:receiverId,
       participants:[senderId,receiverId],
       text:text.trim(),
-      fileUrl:attachment?.url || "",
-      fileType:attachment?.mimeType || "",
-      fileName:attachment?.originalName || "",
-      fileSize:attachment?.size || 0,
-      attachments:attachment ? [attachment] : [],
-      messageType:attachment ? attachment.type : "text",
+fileUrl:attachment?.url || "",
+fileType:attachment?.mimeType || "",
+fileName:attachment?.originalName || "",
+fileSize:attachment?.size || 0,
+attachments:attachment ? [attachment] : [],
+messageType:attachment ? attachment.type : "text",
       replyTo:isValidId(replyTo) ? replyTo : null,
       metadata:{
         clientMessageId,
