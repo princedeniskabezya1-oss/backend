@@ -4,7 +4,7 @@ const ConferenceTranscript =
 require("../models/ConferenceTranscript");
 
 const authMiddleware =
-require("../middleware/authMiddleware");
+require("../middleware/auth");
 
 const router = express.Router();
 
