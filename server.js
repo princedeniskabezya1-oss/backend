@@ -40,6 +40,7 @@ const messageTemplateRoutes = require("./routes/messageTemplates");
 const conferenceRecordingRoutes = require("./routes/conferenceRecordings");
 const conferenceTranscriptRoutes = require("./routes/conferenceTranscripts");
 const chatBotConversationRoutes = require("./routes/chatBotConversations");
+const chatAssetRoutes = require("./routes/chatAssets");
 
 const classModuleRoutes = require("./routes/classModules");
 const classLessonRoutes = require("./routes/classLessons");
@@ -95,6 +96,7 @@ app.use("/api/message-templates", messageTemplateRoutes);
 app.use("/api/conference-recordings", conferenceRecordingRoutes);
 app.use("/api/conference-transcripts", conferenceTranscriptRoutes);
 app.use("/api/chatbot-conversations", chatBotConversationRoutes);
+app.use("/api/chat-assets", chatAssetRoutes);
 
 /* ============================================
    NEW ADVANCED HIRING + BPO OPERATIONS SYSTEM
