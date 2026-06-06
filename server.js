@@ -1,4 +1,5 @@
 const messageRoutes = require("./routes/messages");
+const meetingRoutes = require("./routes/meetings");
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
@@ -59,7 +60,7 @@ app.use(express.urlencoded({ extended: true }));
    HEALTH
 ============================================ */
 app.get("/", (req, res) => {
-  res.send("Backend is running 🟢");
+  res.send("AIFT Backend is running");
 });
 
 /* ============================================
@@ -72,6 +73,7 @@ app.use("/api/applications", applicationRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/messages", messageRoutes);
+app.use("/api/meetings", meetingRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/employer-team", employerTeamRoutes);
 app.use("/api/schedules", scheduleRoutes);
