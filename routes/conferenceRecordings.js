@@ -3,7 +3,7 @@ const express = require("express");
 const ConferenceRecording = require("../models/ConferenceRecording");
 const Meeting = require("../models/Meeting");
 
-const authMiddleware = require("../middleware/authMiddleware");
+const authMiddleware = require("../middleware/auth");
 
 const router = express.Router();
 
