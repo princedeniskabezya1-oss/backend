@@ -6,7 +6,7 @@ const ConversationSetting = require("../models/ConversationSetting");
 const Message = require("../models/Message");
 const User = require("../models/User");
 
-const authMiddleware = require("../middleware/authMiddleware");
+const authMiddleware = require("../middleware/auth");
 
 const router = express.Router();
 
