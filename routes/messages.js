@@ -1,285 +1,828 @@
 const express = require("express");
-const router = express.Router();
+const mongoose = require("mongoose");
+const multer = require("multer");
 
 const Message = require("../models/Message");
-const auth = require("../middleware/auth");
-const upload = require("../middleware/upload");
-const cloudinary = require("../config/cloudinary");
-const User = require("../models/User");
-const Notification = require("../models/Notification");
+const Conversation = require("../models/Conversation");
+const ConversationSetting = require("../models/ConversationSetting");
+const CallLog = require("../models/CallLog");
 
-/* SEND MESSAGE */
-router.post("/", auth, upload.single("file"), async (req, res) => {
-  try {
-    const { receiverId, text, replyTo } = req.body;
-    let fileUrl = null;
-    let fileType = null;
+const authMiddleware = require("../middleware/authMiddleware");
+const cloudinary = require("../utils/cloudinary");
 
-    if (req.file) {
-      const result = await new Promise((resolve, reject) => {
-        cloudinary.uploader.upload_stream(
-          { resource_type: "auto" },
-          (error, result) => {
-            if (error) reject(error);
-            else resolve(result);
-          }
-        ).end(req.file.buffer);
-      });
+const router = express.Router();
 
-      fileUrl = result.secure_url;
-      fileType = req.file.mimetype;
-    }
-
-    if (!receiverId || (!text && !req.file)) {
-      return res.status(400).json({ message: "Message or file required" });
-    }
-
-    const currentUserId = req.user.id || req.user._id;
-
-    if (String(receiverId) === String(currentUserId)) {
-      return res.status(400).json({ message: "Cannot message yourself" });
-    }
-
-    const sender = await User.findById(currentUserId);
-    const receiver = await User.findById(receiverId);
-
-    if (!sender) {
-      return res.status(404).json({ message: "Sender not found" });
-    }
-
-    if (!receiver) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    const today = new Date().toDateString();
-
-    if (!sender.lastMessageReset || sender.lastMessageReset.toDateString() !== today) {
-      sender.dailyNewConversations = 0;
-      sender.lastMessageReset = new Date();
-    }
-
-    const existingConversation = await Message.findOne({
-      $or: [
-        { sender: sender._id, receiver: receiver._id },
-        { sender: receiver._id, receiver: sender._id }
-      ]
-    });
-
-    const isNewConversation = !existingConversation;
-
-    const isMutualFollow =
-      sender.following.includes(receiver._id) &&
-      receiver.following.includes(sender._id);
-
-    const employerCanMessage = sender.role === "employer";
-    const isProUser = sender.isPro === true;
-
-    if (isNewConversation && !isMutualFollow && !employerCanMessage && !isProUser) {
-      if (sender.dailyNewConversations >= 3) {
-        return res.status(403).json({
-          message: "Daily new conversation limit reached. Upgrade to Pro."
-        });
-      }
-
-      sender.dailyNewConversations += 1;
-    }
-
-    await sender.save();
-
-    const message = await Message.create({
-      sender: sender._id,
-      receiver: receiver._id,
-      text,
-      fileUrl,
-      fileType,
-      replyTo: replyTo || null
-    });
-
-    const fullMessage = await Message.findById(message._id)
-      .populate("sender", "name profileImage")
-      .populate("receiver", "name profileImage")
-      .populate({
-        path: "replyTo",
-        populate: { path: "sender", select: "name" }
-      });
-
-    const io = req.app.get("io");
-
-    io.to(receiver._id.toString()).emit("newMessage", fullMessage);
-    io.to(sender._id.toString()).emit("newMessage", fullMessage);
-
-    await Notification.create({
-      user: receiver._id,
-      type: "message",
-      sender: sender._id,
-      text: text,
-      link: `/messages.html?user=${sender._id}`
-    });
-
-    res.status(201).json(fullMessage);
-  } catch (err) {
-    console.error("SEND MESSAGE ERROR:", err);
-    res.status(500).json({ message: "Failed to send message" });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024
   }
 });
 
-/* GET UNREAD MESSAGE COUNT */
-/* IMPORTANT: keep these BEFORE /:userId */
-async function getUnreadMessageCount(req, res) {
-  try {
-    const userId = req.user.id || req.user._id;
-
-    if (!userId) {
-      return res.status(401).json({ message: "User not found in token" });
-    }
-
-    const count = await Message.countDocuments({
-      receiver: userId,
-      seen: false
-    });
-
-    res.json({ count });
-  } catch (err) {
-    console.error("UNREAD MESSAGE COUNT ERROR:", err);
-    res.status(500).json({ message: "Failed to count unread" });
-  }
+function isValidId(id){
+  return mongoose.Types.ObjectId.isValid(id);
 }
 
-router.get("/unread/count", auth, getUnreadMessageCount);
-router.get("/unread-count", auth, getUnreadMessageCount);
+function getIo(req){
+  return req.app.get("io") || req.io;
+}
 
-/* GET INBOX */
-router.get("/", auth, async (req, res) => {
-  try {
-    const currentUserId = req.user.id || req.user._id;
+function normalizeFileType(mime = ""){
+  if(mime.startsWith("image")) return "image";
+  if(mime.startsWith("video")) return "video";
+  if(mime.startsWith("audio")) return "audio";
+  if(mime.includes("pdf")) return "document";
+  if(mime.includes("document")) return "document";
+  return "file";
+}
 
-    const messages = await Message.find({
-      $or: [
-        { sender: currentUserId },
-        { receiver: currentUserId }
-      ]
-    })
-      .sort({ createdAt: -1 })
-      .populate("sender", "name profileImage")
-      .populate("receiver", "name profileImage");
+async function uploadToCloudinary(file){
+  if(!file) return null;
 
-    const seenUsers = new Set();
-    const conversations = [];
+  const type = normalizeFileType(file.mimetype);
 
-    for (const msg of messages) {
-      const otherUser =
-        String(msg.sender._id) === String(currentUserId)
-          ? msg.receiver
-          : msg.sender;
+  const resourceType =
+    type === "video" || type === "audio"
+      ? "video"
+      : type === "image"
+        ? "image"
+        : "raw";
 
-      if (!seenUsers.has(otherUser._id.toString())) {
-        seenUsers.add(otherUser._id.toString());
+  return new Promise((resolve,reject)=>{
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        folder:"aift/messages",
+        resource_type:resourceType
+      },
+      (error,result)=>{
+        if(error) return reject(error);
 
-        conversations.push({
-          user: otherUser,
-          lastMessage: msg.text,
-          lastMessageDate: msg.createdAt
+        resolve({
+          url:result.secure_url,
+          secureUrl:result.secure_url,
+          publicId:result.public_id,
+          type,
+          mimeType:file.mimetype,
+          originalName:file.originalname,
+          size:file.size,
+          width:result.width,
+          height:result.height,
+          duration:result.duration
         });
       }
-    }
+    );
 
-    res.json(conversations);
-  } catch (err) {
-    console.error("INBOX ERROR:", err);
-    res.status(500).json({ message: "Failed to load inbox" });
+    stream.end(file.buffer);
+  });
+}
+
+async function findOrCreateDirectConversation(userA,userB,createdBy){
+  let conversation = await Conversation.findOne({
+    type:"direct",
+    participantIds:{
+      $all:[userA,userB]
+    }
+  });
+
+  if(conversation) return conversation;
+
+  conversation = await Conversation.create({
+    type:"direct",
+    createdBy,
+    participants:[
+      {
+        user:userA,
+        role:"member"
+      },
+      {
+        user:userB,
+        role:"member"
+      }
+    ],
+    participantIds:[userA,userB],
+    metadata:{
+      source:"manual"
+    }
+  });
+
+  return conversation;
+}
+
+async function canAccessConversation(conversation,userId){
+  return conversation?.participants?.some(p =>
+    String(p.user) === String(userId) &&
+    p.isActive !== false &&
+    p.blocked !== true
+  );
+}
+
+function visibleMessageQuery(userId){
+  return {
+    deletedForEveryone:{
+      $ne:true
+    },
+    deletedFor:{
+      $ne:userId
+    }
+  };
+}
+
+function sanitizeDeletedMessage(message){
+  if(message.deletedForEveryone){
+    message.text = "This message was deleted";
+    message.fileUrl = "";
+    message.fileType = "";
+    message.attachments = [];
+  }
+
+  return message;
+}
+
+/* =========================
+   GET CONVERSATIONS
+   Keeps frontend compatibility:
+   GET /api/messages
+========================= */
+
+router.get("/", authMiddleware, async (req,res)=>{
+  try{
+    const userId = req.user.id;
+
+    let conversations = await Conversation.find({
+      participantIds:userId,
+      isActive:true
+    })
+      .populate("participants.user","name companyName schoolName role profileImage logo headline profession")
+      .populate("lastMessage.sender","name companyName schoolName role profileImage")
+      .sort({ updatedAt:-1 })
+      .lean();
+
+    const settings = await ConversationSetting.find({
+      user:userId
+    }).lean();
+
+    const settingsMap = new Map(
+      settings.map(item => [
+        String(item.conversationId || item.otherUser),
+        item
+      ])
+    );
+
+    const response = conversations.map(conv=>{
+      const otherParticipant =
+        conv.participants.find(p => String(p.user?._id) !== String(userId)) ||
+        conv.participants[0];
+
+      const otherUser =
+        otherParticipant?.user || {};
+
+      const participant =
+        conv.participants.find(p => String(p.user?._id) === String(userId));
+
+      const setting =
+        settingsMap.get(String(conv._id)) ||
+        settingsMap.get(String(otherUser._id)) ||
+        {};
+
+      return {
+        _id:conv._id,
+        conversationId:conv._id,
+        type:conv.type,
+        title:conv.title,
+        user:otherUser,
+        lastMessage:conv.lastMessage?.text || "",
+        lastMessageType:conv.lastMessage?.messageType || "text",
+        lastMessageDate:conv.lastMessage?.createdAt || conv.updatedAt,
+        unreadCount:participant?.unreadCount || 0,
+        unread:participant?.unreadCount || 0,
+        pinned:setting.pinned || participant?.pinned || false,
+        muted:setting.muted || participant?.muted || false,
+        archived:setting.archived || participant?.archived || false
+      };
+    });
+
+    res.json(response);
+
+  }catch(error){
+    console.error("GET CONVERSATIONS ERROR:",error);
+    res.status(500).json({ message:"Server error" });
   }
 });
 
-/* MARK CONVERSATION AS SEEN */
-router.patch("/seen/:userId", auth, async (req, res) => {
-  try {
-    const currentUserId = req.user.id || req.user._id;
+/* =========================
+   GET THREAD WITH USER
+   GET /api/messages/:userId
+========================= */
+
+router.get("/:userId", authMiddleware, async (req,res)=>{
+  try{
+    const userId = req.user.id;
+    const otherUserId = req.params.userId;
+
+    if(!isValidId(otherUserId)){
+      return res.status(400).json({ message:"Invalid user ID" });
+    }
+
+    const conversation =
+      await findOrCreateDirectConversation(userId,otherUserId,userId);
+
+    const messages = await Message.find({
+      conversationId:conversation._id,
+      deletedFor:{
+        $ne:userId
+      }
+    })
+      .populate("sender","name companyName schoolName role profileImage")
+      .populate("receiver","name companyName schoolName role profileImage")
+      .populate({
+        path:"replyTo",
+        select:"text sender",
+        populate:{
+          path:"sender",
+          select:"name companyName schoolName role"
+        }
+      })
+      .sort({ createdAt:1 })
+      .lean();
+
+    res.json(
+      messages.map(message=>{
+        if(message.deletedForEveryone){
+          return {
+            ...message,
+            text:"This message was deleted",
+            fileUrl:"",
+            fileType:"",
+            attachments:[]
+          };
+        }
+
+        return message;
+      })
+    );
+
+  }catch(error){
+    console.error("GET THREAD ERROR:",error);
+    res.status(500).json({ message:"Server error" });
+  }
+});
+
+/* =========================
+   SEND MESSAGE
+   POST /api/messages
+========================= */
+
+router.post("/", authMiddleware, upload.single("file"), async (req,res)=>{
+  try{
+    const senderId = req.user.id;
+    const {
+      receiverId,
+      text = "",
+      replyTo,
+      clientMessageId
+    } = req.body;
+
+    if(!receiverId || !isValidId(receiverId)){
+      return res.status(400).json({ message:"Valid receiverId is required" });
+    }
+
+    if(!text.trim() && !req.file){
+      return res.status(400).json({ message:"Message text or file is required" });
+    }
+
+    const conversation =
+      await findOrCreateDirectConversation(senderId,receiverId,senderId);
+
+    const attachment =
+      req.file
+        ? await uploadToCloudinary(req.file)
+        : null;
+
+    const message = await Message.create({
+      conversationId:conversation._id,
+      sender:senderId,
+      receiver:receiverId,
+      participants:[senderId,receiverId],
+      text:text.trim(),
+      fileUrl:attachment?.url || "",
+      fileType:attachment?.mimeType || "",
+      fileName:attachment?.originalName || "",
+      fileSize:attachment?.size || 0,
+      attachments:attachment ? [attachment] : [],
+      messageType:attachment ? attachment.type : "text",
+      replyTo:isValidId(replyTo) ? replyTo : null,
+      metadata:{
+        clientMessageId,
+        ipAddress:req.ip,
+        userAgent:req.headers["user-agent"]
+      }
+    });
+
+    conversation.setLastMessage(message);
+    conversation.incrementUnreadForOthers(senderId);
+    await conversation.save();
+
+    const populated = await Message.findById(message._id)
+      .populate("sender","name companyName schoolName role profileImage")
+      .populate("receiver","name companyName schoolName role profileImage")
+      .populate({
+        path:"replyTo",
+        select:"text sender",
+        populate:{
+          path:"sender",
+          select:"name companyName schoolName role"
+        }
+      });
+
+    const io = getIo(req);
+
+    io?.to(String(receiverId)).emit("newMessage", populated);
+    io?.to(String(senderId)).emit("newMessage", populated);
+
+    res.status(201).json(populated);
+
+  }catch(error){
+    console.error("SEND MESSAGE ERROR:",error);
+    res.status(500).json({ message:"Server error" });
+  }
+});
+
+/* =========================
+   MARK SEEN
+   PATCH /api/messages/seen/:userId
+========================= */
+
+router.patch("/seen/:userId", authMiddleware, async (req,res)=>{
+  try{
+    const userId = req.user.id;
+    const otherUserId = req.params.userId;
+
+    if(!isValidId(otherUserId)){
+      return res.status(400).json({ message:"Invalid user ID" });
+    }
+
+    const conversation = await Conversation.findOne({
+      type:"direct",
+      participantIds:{
+        $all:[userId,otherUserId]
+      }
+    });
+
+    if(conversation){
+      conversation.markRead(userId);
+      await conversation.save();
+    }
 
     await Message.updateMany(
       {
-        sender: req.params.userId,
-        receiver: currentUserId,
-        seen: false
+        sender:otherUserId,
+        receiver:userId,
+        seen:false
       },
-      { seen: true }
+      {
+        $set:{
+          seen:true,
+          seenAt:new Date(),
+          status:"seen"
+        },
+        $addToSet:{
+          readBy:{
+            user:userId,
+            readAt:new Date()
+          }
+        }
+      }
     );
 
-    res.json({ message: "Conversation marked as seen" });
-  } catch (err) {
-    console.error("SEEN ERROR:", err);
-    res.status(500).json({ message: "Failed to update seen status" });
+    getIo(req)?.to(String(otherUserId)).emit("messagesSeen", {
+      by:userId
+    });
+
+    res.json({
+      success:true
+    });
+
+  }catch(error){
+    console.error("MARK SEEN ERROR:",error);
+    res.status(500).json({ message:"Server error" });
   }
 });
 
-/* GET CONVERSATION */
-/* IMPORTANT: keep this AFTER /unread/count and /unread-count */
-router.get("/:userId", auth, async (req, res) => {
-  try {
-    const currentUserId = req.user.id || req.user._id;
+/* =========================
+   REACT
+   POST /api/messages/react
+========================= */
 
-    const messages = await Message.find({
-      $or: [
-        { sender: currentUserId, receiver: req.params.userId },
-        { sender: req.params.userId, receiver: currentUserId }
-      ]
-    })
-      .populate("sender", "name profileImage")
-      .populate("receiver", "name profileImage")
-      .populate({
-        path: "replyTo",
-        populate: { path: "sender", select: "name" }
-      })
-      .sort({ createdAt: 1 });
+router.post("/react", authMiddleware, async (req,res)=>{
+  try{
+    const userId = req.user.id;
+    const { messageId, emoji, reaction } = req.body;
 
-    res.json(messages);
-  } catch (err) {
-    console.error("GET CONVO ERROR:", err);
-    res.status(500).json({ message: "Failed to load messages" });
-  }
-});
-
-/* ADD REACTION */
-router.post("/react", auth, async (req, res) => {
-  try {
-    const currentUserId = req.user.id || req.user._id;
-    const { messageId, emoji } = req.body;
-
-    const message = await Message.findById(messageId)
-      .populate("sender")
-      .populate("receiver");
-
-    if (!message) {
-      return res.status(404).json({ message: "Message not found" });
+    if(!isValidId(messageId)){
+      return res.status(400).json({ message:"Invalid message ID" });
     }
 
-    message.reactions = message.reactions.filter(
-      r => String(r.user) !== String(currentUserId)
-    );
+    const message = await Message.findById(messageId);
+
+    if(!message){
+      return res.status(404).json({ message:"Message not found" });
+    }
+
+    if(!message.isParticipant(userId)){
+      return res.status(403).json({ message:"Not allowed" });
+    }
+
+    const value =
+      String(reaction || emoji || "").trim().slice(0,40);
+
+    if(!value){
+      return res.status(400).json({ message:"Reaction is required" });
+    }
+
+    message.reactions =
+      message.reactions.filter(item => String(item.user) !== String(userId));
 
     message.reactions.push({
-      user: currentUserId,
-      emoji
+      user:userId,
+      reaction:value,
+      createdAt:new Date()
     });
 
     await message.save();
 
-    const io = req.app.get("io");
+    const updated = await Message.findById(message._id)
+      .populate("sender","name profileImage")
+      .populate("receiver","name profileImage");
 
-    const updated = await Message.findById(messageId)
-      .populate("sender", "name profileImage")
-      .populate("receiver", "name profileImage")
-      .populate({
-        path: "replyTo",
-        populate: { path: "sender", select: "name profileImage" }
-      });
-
-    io.to(message.receiver._id.toString()).emit("reactionUpdate", updated);
-    io.to(message.sender._id.toString()).emit("reactionUpdate", updated);
+    const io = getIo(req);
+    io?.to(String(message.sender)).emit("reactionUpdate", updated);
+    io?.to(String(message.receiver)).emit("reactionUpdate", updated);
 
     res.json(updated);
-  } catch (err) {
-    console.error("REACTION ERROR:", err);
-    res.status(500).json({ message: "Failed to react" });
+
+  }catch(error){
+    console.error("REACT MESSAGE ERROR:",error);
+    res.status(500).json({ message:"Server error" });
+  }
+});
+
+/* =========================
+   EDIT MESSAGE
+========================= */
+
+router.patch("/:id/edit", authMiddleware, async (req,res)=>{
+  try{
+    const userId = req.user.id;
+    const { text } = req.body;
+
+    const message = await Message.findById(req.params.id);
+
+    if(!message){
+      return res.status(404).json({ message:"Message not found" });
+    }
+
+    if(String(message.sender) !== String(userId)){
+      return res.status(403).json({ message:"Only sender can edit this message" });
+    }
+
+    if(message.deletedForEveryone){
+      return res.status(400).json({ message:"Deleted message cannot be edited" });
+    }
+
+    message.editText(String(text || "").trim());
+    await message.save();
+
+    getIo(req)?.to(String(message.receiver)).emit("messageEdited", message);
+    getIo(req)?.to(String(message.sender)).emit("messageEdited", message);
+
+    res.json(message);
+
+  }catch(error){
+    console.error("EDIT MESSAGE ERROR:",error);
+    res.status(500).json({ message:"Server error" });
+  }
+});
+
+/* =========================
+   DELETE FOR ME
+========================= */
+
+router.patch("/:id/delete-for-me", authMiddleware, async (req,res)=>{
+  try{
+    const userId = req.user.id;
+    const message = await Message.findById(req.params.id);
+
+    if(!message){
+      return res.status(404).json({ message:"Message not found" });
+    }
+
+    if(!message.isParticipant(userId)){
+      return res.status(403).json({ message:"Not allowed" });
+    }
+
+    message.softDeleteFor(userId);
+    await message.save();
+
+    res.json({
+      success:true,
+      message:"Message deleted for you"
+    });
+
+  }catch(error){
+    console.error("DELETE FOR ME ERROR:",error);
+    res.status(500).json({ message:"Server error" });
+  }
+});
+
+/* =========================
+   DELETE FOR EVERYONE
+========================= */
+
+router.patch("/:id/delete-for-everyone", authMiddleware, async (req,res)=>{
+  try{
+    const userId = req.user.id;
+    const message = await Message.findById(req.params.id);
+
+    if(!message){
+      return res.status(404).json({ message:"Message not found" });
+    }
+
+    if(String(message.sender) !== String(userId)){
+      return res.status(403).json({
+        message:"Only sender can delete this message for everyone"
+      });
+    }
+
+    message.softDeleteForEveryone();
+    await message.save();
+
+    const io = getIo(req);
+    io?.to(String(message.receiver)).emit("messageDeleted", {
+      messageId:message._id
+    });
+    io?.to(String(message.sender)).emit("messageDeleted", {
+      messageId:message._id
+    });
+
+    res.json({
+      success:true,
+      message:"Message deleted for everyone"
+    });
+
+  }catch(error){
+    console.error("DELETE FOR EVERYONE ERROR:",error);
+    res.status(500).json({ message:"Server error" });
+  }
+});
+
+/* =========================
+   STAR MESSAGE
+========================= */
+
+router.patch("/:id/star", authMiddleware, async (req,res)=>{
+  try{
+    const userId = req.user.id;
+    const message = await Message.findById(req.params.id);
+
+    if(!message){
+      return res.status(404).json({ message:"Message not found" });
+    }
+
+    if(!message.isParticipant(userId)){
+      return res.status(403).json({ message:"Not allowed" });
+    }
+
+    const starred = message.toggleStar(userId);
+    await message.save();
+
+    res.json({
+      success:true,
+      starred
+    });
+
+  }catch(error){
+    console.error("STAR MESSAGE ERROR:",error);
+    res.status(500).json({ message:"Server error" });
+  }
+});
+
+/* =========================
+   CONVERSATION SETTINGS
+========================= */
+
+router.patch("/conversations/:conversationId/pin", authMiddleware, async (req,res)=>{
+  try{
+    const userId = req.user.id;
+    const conversationId = req.params.conversationId;
+
+    if(!isValidId(conversationId)){
+      return res.status(400).json({ message:"Invalid conversation ID" });
+    }
+
+    const conversation = await Conversation.findById(conversationId);
+
+    if(!conversation || !conversation.hasParticipant(userId)){
+      return res.status(403).json({ message:"Not allowed" });
+    }
+
+    const setting = await ConversationSetting.findOneAndUpdate(
+      {
+        user:userId,
+        conversationId
+      },
+      [
+        {
+          $set:{
+            pinned:{
+              $not:"$pinned"
+            },
+            user:new mongoose.Types.ObjectId(userId),
+            conversationId:new mongoose.Types.ObjectId(conversationId)
+          }
+        }
+      ],
+      {
+        upsert:true,
+        new:true
+      }
+    );
+
+    res.json(setting);
+
+  }catch(error){
+    console.error("PIN CONVERSATION ERROR:",error);
+    res.status(500).json({ message:"Server error" });
+  }
+});
+
+router.patch("/conversations/:conversationId/mute", authMiddleware, async (req,res)=>{
+  try{
+    const userId = req.user.id;
+    const conversationId = req.params.conversationId;
+    const { mutedUntil } = req.body;
+
+    if(!isValidId(conversationId)){
+      return res.status(400).json({ message:"Invalid conversation ID" });
+    }
+
+    const conversation = await Conversation.findById(conversationId);
+
+    if(!conversation || !conversation.hasParticipant(userId)){
+      return res.status(403).json({ message:"Not allowed" });
+    }
+
+    const current = await ConversationSetting.findOne({
+      user:userId,
+      conversationId
+    });
+
+    const setting = await ConversationSetting.findOneAndUpdate(
+      {
+        user:userId,
+        conversationId
+      },
+      {
+        user:userId,
+        conversationId,
+        muted:!(current?.muted),
+        mutedUntil:mutedUntil || null
+      },
+      {
+        upsert:true,
+        new:true
+      }
+    );
+
+    res.json(setting);
+
+  }catch(error){
+    console.error("MUTE CONVERSATION ERROR:",error);
+    res.status(500).json({ message:"Server error" });
+  }
+});
+
+router.patch("/conversations/:conversationId/archive", authMiddleware, async (req,res)=>{
+  try{
+    const userId = req.user.id;
+    const conversationId = req.params.conversationId;
+
+    const setting = await ConversationSetting.findOneAndUpdate(
+      {
+        user:userId,
+        conversationId
+      },
+      {
+        user:userId,
+        conversationId,
+        archived:true
+      },
+      {
+        upsert:true,
+        new:true
+      }
+    );
+
+    res.json(setting);
+
+  }catch(error){
+    console.error("ARCHIVE CONVERSATION ERROR:",error);
+    res.status(500).json({ message:"Server error" });
+  }
+});
+
+router.patch("/conversations/:conversationId/block", authMiddleware, async (req,res)=>{
+  try{
+    const userId = req.user.id;
+    const conversationId = req.params.conversationId;
+
+    const setting = await ConversationSetting.findOneAndUpdate(
+      {
+        user:userId,
+        conversationId
+      },
+      {
+        user:userId,
+        conversationId,
+        blocked:true
+      },
+      {
+        upsert:true,
+        new:true
+      }
+    );
+
+    res.json(setting);
+
+  }catch(error){
+    console.error("BLOCK CONVERSATION ERROR:",error);
+    res.status(500).json({ message:"Server error" });
+  }
+});
+
+/* =========================
+   CALL LOGS
+========================= */
+
+router.post("/calls", authMiddleware, async (req,res)=>{
+  try{
+    const userId = req.user.id;
+
+    const {
+      receiver,
+      conversationId,
+      meetingId,
+      callType = "audio",
+      status = "ringing"
+    } = req.body;
+
+    const call = await CallLog.create({
+      caller:userId,
+      receiver,
+      participants:[userId,receiver].filter(Boolean),
+      conversationId,
+      meetingId,
+      callType,
+      status,
+      startedAt:new Date(),
+      metadata:{
+        ipAddress:req.ip,
+        userAgent:req.headers["user-agent"]
+      }
+    });
+
+    res.status(201).json(call);
+
+  }catch(error){
+    console.error("CREATE CALL LOG ERROR:",error);
+    res.status(500).json({ message:"Server error" });
+  }
+});
+
+router.patch("/calls/:id/end", authMiddleware, async (req,res)=>{
+  try{
+    const userId = req.user.id;
+
+    const call = await CallLog.findById(req.params.id);
+
+    if(!call){
+      return res.status(404).json({ message:"Call not found" });
+    }
+
+    if(!call.participants.some(id => String(id) === String(userId))){
+      return res.status(403).json({ message:"Not allowed" });
+    }
+
+    call.status = "ended";
+    call.endedAt = new Date();
+    call.endedBy = userId;
+
+    await call.save();
+
+    res.json(call);
+
+  }catch(error){
+    console.error("END CALL LOG ERROR:",error);
+    res.status(500).json({ message:"Server error" });
   }
 });
 
