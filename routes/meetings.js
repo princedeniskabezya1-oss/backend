@@ -7,7 +7,7 @@ const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
 const CallLog = require("../models/CallLog");
 
-const authMiddleware = require("../middleware/authMiddleware");
+const authMiddleware = require("../middleware/auth");
 
 const router = express.Router();
 
