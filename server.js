@@ -201,48 +201,66 @@ io.on("connection", socket => {
     });
   });
 
-  socket.on("callUser", ({ to, from, callerName, callType, conversationId, meetingId }) => {
-    if (!to) return;
+socket.on("callUser", ({
+  to,
+  from,
+  callerName,
+  callerAvatar,
+  callType,
+  conversationId,
+  meetingId,
+  callId,
+  offer
+}) => {
+  if (!to) return;
 
-    io.to(String(to)).emit("incomingCall", {
-      from: from || socket.userId,
-      callerName: callerName || "AIFT User",
-      callType: callType || "audio",
-      conversationId,
-      meetingId,
-      startedAt: new Date()
-    });
+  io.to(String(to)).emit("incomingCall", {
+    from: from || socket.userId,
+    callerName: callerName || "AIFT User",
+    callerAvatar: callerAvatar || "",
+    callType: callType || "audio",
+    conversationId,
+    meetingId,
+    callId,
+    offer,
+    startedAt: new Date()
   });
+});
 
-  socket.on("acceptCall", ({ to, meetingId }) => {
-    if (!to) return;
+socket.on("acceptCall", ({ to, meetingId, callId, answer }) => {
+  if (!to) return;
 
-    io.to(String(to)).emit("callAccepted", {
-      from: socket.userId,
-      meetingId,
-      acceptedAt: new Date()
-    });
+  io.to(String(to)).emit("callAccepted", {
+    from: socket.userId,
+    meetingId,
+    callId,
+    answer,
+    acceptedAt: new Date()
   });
+});
 
-  socket.on("declineCall", ({ to, meetingId }) => {
-    if (!to) return;
+socket.on("declineCall", ({ to, meetingId, callId, reason }) => {
+  if (!to) return;
 
-    io.to(String(to)).emit("callDeclined", {
-      from: socket.userId,
-      meetingId,
-      declinedAt: new Date()
-    });
+  io.to(String(to)).emit("callDeclined", {
+    from: socket.userId,
+    meetingId,
+    callId,
+    reason: reason || "declined",
+    declinedAt: new Date()
   });
+});
 
-  socket.on("endCall", ({ to, meetingId }) => {
-    if (!to) return;
+socket.on("endCall", ({ to, meetingId, callId }) => {
+  if (!to) return;
 
-    io.to(String(to)).emit("callEnded", {
-      from: socket.userId,
-      meetingId,
-      endedAt: new Date()
-    });
+  io.to(String(to)).emit("callEnded", {
+    from: socket.userId,
+    meetingId,
+    callId,
+    endedAt: new Date()
   });
+});
 
   socket.on("joinMeetingRoom", ({ meetingId }) => {
     if (!meetingId || !socket.userId) return;
@@ -294,35 +312,38 @@ io.on("connection", socket => {
     });
   });
 
-  socket.on("webrtcOffer", ({ to, offer, meetingId }) => {
-    if (!to || !offer) return;
+socket.on("webrtcOffer", ({ to, offer, meetingId, callId }) => {
+  if (!to || !offer) return;
 
-    io.to(String(to)).emit("webrtcOffer", {
-      from: socket.userId,
-      offer,
-      meetingId
-    });
+  io.to(String(to)).emit("webrtcOffer", {
+    from: socket.userId,
+    offer,
+    meetingId,
+    callId
   });
+});
 
-  socket.on("webrtcAnswer", ({ to, answer, meetingId }) => {
-    if (!to || !answer) return;
+socket.on("webrtcAnswer", ({ to, answer, meetingId, callId }) => {
+  if (!to || !answer) return;
 
-    io.to(String(to)).emit("webrtcAnswer", {
-      from: socket.userId,
-      answer,
-      meetingId
-    });
+  io.to(String(to)).emit("webrtcAnswer", {
+    from: socket.userId,
+    answer,
+    meetingId,
+    callId
   });
+});
 
-  socket.on("webrtcIceCandidate", ({ to, candidate, meetingId }) => {
-    if (!to || !candidate) return;
+socket.on("webrtcIceCandidate", ({ to, candidate, meetingId, callId }) => {
+  if (!to || !candidate) return;
 
-    io.to(String(to)).emit("webrtcIceCandidate", {
-      from: socket.userId,
-      candidate,
-      meetingId
-    });
+  io.to(String(to)).emit("webrtcIceCandidate", {
+    from: socket.userId,
+    candidate,
+    meetingId,
+    callId
   });
+});
 
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
