@@ -118,57 +118,208 @@ const io = new Server(server, {
   cors: { origin: "*" }
 });
 
+const onlineUsers = new Map();
+
 io.on("connection", socket => {
   console.log("User connected:", socket.id);
 
   socket.on("join", userId => {
-    socket.join(String(userId));
-    socket.userId = String(userId);
-    console.log("User joined room:", userId);
+    if (!userId) return;
+
+    const id = String(userId);
+
+    socket.join(id);
+    socket.userId = id;
+
+    onlineUsers.set(id, {
+      socketId: socket.id,
+      lastSeen: new Date(),
+      online: true
+    });
+
+    io.emit("userOnline", {
+      userId: id,
+      online: true
+    });
+
+    console.log("User joined room:", id);
   });
 
   socket.on("typing", ({ to }) => {
-    socket.to(String(to)).emit("typing");
-  });
+    if (!to || !socket.userId) return;
 
-  socket.on("stopTyping", ({ to }) => {
-    socket.to(String(to)).emit("stopTyping");
-  });
-
-  socket.on("callUser", ({ to, from, callerName, callType }) => {
-    io.to(String(to)).emit("incomingCall", {
-      from,
-      callerName,
-      callType
+    socket.to(String(to)).emit("typing", {
+      from: socket.userId
     });
   });
 
-  socket.on("acceptCall", ({ to }) => {
-    io.to(String(to)).emit("callAccepted");
+  socket.on("stopTyping", ({ to }) => {
+    if (!to || !socket.userId) return;
+
+    socket.to(String(to)).emit("stopTyping", {
+      from: socket.userId
+    });
   });
 
-  socket.on("declineCall", ({ to }) => {
-    io.to(String(to)).emit("callDeclined");
+  socket.on("messageDelivered", ({ messageId, to }) => {
+    if (!messageId || !to || !socket.userId) return;
+
+    io.to(String(to)).emit("messageDelivered", {
+      messageId,
+      by: socket.userId,
+      deliveredAt: new Date()
+    });
   });
 
-  socket.on("endCall", ({ to }) => {
-    io.to(String(to)).emit("callEnded");
+  socket.on("messageSeen", ({ messageId, to }) => {
+    if (!messageId || !to || !socket.userId) return;
+
+    io.to(String(to)).emit("messageSeen", {
+      messageId,
+      by: socket.userId,
+      seenAt: new Date()
+    });
   });
 
-  socket.on("webrtcOffer", ({ to, offer }) => {
-    io.to(String(to)).emit("webrtcOffer", { offer });
+  socket.on("callUser", ({ to, from, callerName, callType, conversationId, meetingId }) => {
+    if (!to) return;
+
+    io.to(String(to)).emit("incomingCall", {
+      from: from || socket.userId,
+      callerName: callerName || "AIFT User",
+      callType: callType || "audio",
+      conversationId,
+      meetingId,
+      startedAt: new Date()
+    });
   });
 
-  socket.on("webrtcAnswer", ({ to, answer }) => {
-    io.to(String(to)).emit("webrtcAnswer", { answer });
+  socket.on("acceptCall", ({ to, meetingId }) => {
+    if (!to) return;
+
+    io.to(String(to)).emit("callAccepted", {
+      from: socket.userId,
+      meetingId,
+      acceptedAt: new Date()
+    });
   });
 
-  socket.on("webrtcIceCandidate", ({ to, candidate }) => {
-    io.to(String(to)).emit("webrtcIceCandidate", { candidate });
+  socket.on("declineCall", ({ to, meetingId }) => {
+    if (!to) return;
+
+    io.to(String(to)).emit("callDeclined", {
+      from: socket.userId,
+      meetingId,
+      declinedAt: new Date()
+    });
+  });
+
+  socket.on("endCall", ({ to, meetingId }) => {
+    if (!to) return;
+
+    io.to(String(to)).emit("callEnded", {
+      from: socket.userId,
+      meetingId,
+      endedAt: new Date()
+    });
+  });
+
+  socket.on("joinMeetingRoom", ({ meetingId }) => {
+    if (!meetingId || !socket.userId) return;
+
+    const room = `meeting:${meetingId}`;
+
+    socket.join(room);
+
+    socket.to(room).emit("meetingParticipantJoined", {
+      userId: socket.userId,
+      meetingId,
+      joinedAt: new Date()
+    });
+  });
+
+  socket.on("leaveMeetingRoom", ({ meetingId }) => {
+    if (!meetingId || !socket.userId) return;
+
+    const room = `meeting:${meetingId}`;
+
+    socket.leave(room);
+
+    socket.to(room).emit("meetingParticipantLeft", {
+      userId: socket.userId,
+      meetingId,
+      leftAt: new Date()
+    });
+  });
+
+  socket.on("raiseHand", ({ meetingId, raised }) => {
+    if (!meetingId || !socket.userId) return;
+
+    socket.to(`meeting:${meetingId}`).emit("participantHandRaised", {
+      userId: socket.userId,
+      meetingId,
+      raised: raised !== false,
+      updatedAt: new Date()
+    });
+  });
+
+  socket.on("screenShareStatus", ({ meetingId, sharing }) => {
+    if (!meetingId || !socket.userId) return;
+
+    socket.to(`meeting:${meetingId}`).emit("screenShareStatus", {
+      userId: socket.userId,
+      meetingId,
+      sharing: !!sharing,
+      updatedAt: new Date()
+    });
+  });
+
+  socket.on("webrtcOffer", ({ to, offer, meetingId }) => {
+    if (!to || !offer) return;
+
+    io.to(String(to)).emit("webrtcOffer", {
+      from: socket.userId,
+      offer,
+      meetingId
+    });
+  });
+
+  socket.on("webrtcAnswer", ({ to, answer, meetingId }) => {
+    if (!to || !answer) return;
+
+    io.to(String(to)).emit("webrtcAnswer", {
+      from: socket.userId,
+      answer,
+      meetingId
+    });
+  });
+
+  socket.on("webrtcIceCandidate", ({ to, candidate, meetingId }) => {
+    if (!to || !candidate) return;
+
+    io.to(String(to)).emit("webrtcIceCandidate", {
+      from: socket.userId,
+      candidate,
+      meetingId
+    });
   });
 
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
+
+    if (socket.userId) {
+      onlineUsers.set(socket.userId, {
+        socketId: socket.id,
+        lastSeen: new Date(),
+        online: false
+      });
+
+      io.emit("userOnline", {
+        userId: socket.userId,
+        online: false,
+        lastSeen: new Date()
+      });
+    }
   });
 });
 
