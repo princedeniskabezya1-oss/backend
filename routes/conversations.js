@@ -342,21 +342,25 @@ router.get("/:id", authMiddleware, async (req,res)=>{
       return res.status(403).json({ message:"You do not have access to this conversation" });
     }
 
-    await ConversationSetting.findOneAndUpdate(
-      {
-        user:req.user.id,
-        conversationId:conversation._id
-      },
-      {
-        user:req.user.id,
-        conversationId:conversation._id,
-        lastOpenedAt:new Date()
-      },
-      {
-        upsert:true,
-        new:true
-      }
-    );
+try{
+  await ConversationSetting.findOneAndUpdate(
+    {
+      user:req.user.id,
+      conversationId:conversation._id
+    },
+    {
+      user:req.user.id,
+      conversationId:conversation._id,
+      lastOpenedAt:new Date()
+    },
+    {
+      upsert:true,
+      new:true
+    }
+  );
+}catch(settingError){
+  console.warn("Conversation setting update skipped:", settingError.message);
+}
 
     res.json(conversation);
 
