@@ -324,15 +324,16 @@ const conversationSchema = new Schema(
     metadata: {
       source: {
         type: String,
-        enum: [
-          "manual",
-          "job",
-          "application",
-          "school",
-          "class",
-          "support",
-          "system"
-        ],
+enum: [
+  "manual",
+  "job",
+  "application",
+  "school",
+  "class",
+  "support",
+  "system",
+  "meeting_invite"
+],
         default: "manual"
       },
 
