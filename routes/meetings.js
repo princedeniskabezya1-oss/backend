@@ -84,7 +84,37 @@ function isHostOrCohost(meeting,userId){
 }
 
 function getParticipant(meeting,userId){
-  return meeting.participants.find(p => String(p.user) === String(userId));
+  return meeting.participants.find(p => String(participantUserId(p)) === String(userId));
+}
+
+async function findOrCreateDirectConversation(userA,userB,createdBy){
+  let conversation = await Conversation.findOne({
+    type:"direct",
+    participantIds:{
+      $all:[userA,userB]
+    }
+  });
+
+  if(conversation) return conversation;
+
+  return Conversation.create({
+    type:"direct",
+    createdBy,
+    participants:[
+      {
+        user:userA,
+        role:"member"
+      },
+      {
+        user:userB,
+        role:"member"
+      }
+    ],
+    participantIds:[userA,userB],
+    metadata:{
+      source:"meeting_invite"
+    }
+  });
 }
 
 function emitMeeting(req,meeting,event,payload = {}){
@@ -668,7 +698,8 @@ router.patch("/:id/cancel", authMiddleware, async (req,res)=>{
 
 router.post("/:id/invite", authMiddleware, async (req,res)=>{
   try{
-    const meeting = await Meeting.findById(req.params.id);
+    const meeting = await Meeting.findById(req.params.id)
+      .populate("host","name companyName schoolName role profileImage logo");
 
     if(!meeting){
       return res.status(404).json({ message:"Meeting not found" });
@@ -682,29 +713,91 @@ router.post("/:id/invite", authMiddleware, async (req,res)=>{
       ? req.body.users.filter(isValidId)
       : [];
 
-    users.forEach(userId=>{
+    if(!users.length){
+      return res.status(400).json({ message:"Select at least one user to invite" });
+    }
+
+    const joinUrl =
+      req.body.inviteLink ||
+      meeting.joinUrl ||
+      buildJoinUrl(req,meeting.meetingCode);
+
+    const createdMessages = [];
+
+    for(const userId of users){
       if(!meeting.invitedUsers.some(id => String(id) === String(userId))){
         meeting.invitedUsers.push(userId);
       }
 
+      const conversation =
+        await findOrCreateDirectConversation(req.user.id,userId,req.user.id);
+
+      const hostName =
+        meeting.host?.companyName ||
+        meeting.host?.schoolName ||
+        meeting.host?.name ||
+        "AIFT Host";
+
+      const message = await Message.create({
+        conversationId:conversation._id,
+        sender:req.user.id,
+        receiver:userId,
+        participants:[req.user.id,userId],
+        messageType:"meeting",
+        text:`${hostName} invited you to join ${meeting.title}`,
+        call:{
+          callType:"meeting",
+          status:"started",
+          meetingId:meeting._id,
+          meetingUrl:joinUrl,
+          startedAt:new Date()
+        },
+        meetingInvite:{
+          meetingId:meeting._id,
+          meetingCode:meeting.meetingCode,
+          title:meeting.title,
+          joinUrl,
+          logoUrl:"images/aift-logo.png",
+          hostName
+        }
+      });
+
+      conversation.setLastMessage(message);
+      conversation.incrementUnreadForOthers(req.user.id);
+      await conversation.save();
+
+      const populated = await Message.findById(message._id)
+        .populate("sender","name companyName schoolName role profileImage logo")
+        .populate("receiver","name companyName schoolName role profileImage logo");
+
+      createdMessages.push(populated);
+
+      getIo(req)?.to(String(userId)).emit("newMessage", populated);
+      getIo(req)?.to(String(req.user.id)).emit("newMessage", populated);
+
       getIo(req)?.to(String(userId)).emit("meetingInvited",{
         meetingId:meeting._id,
         title:meeting.title,
-        joinUrl:meeting.joinUrl,
+        meetingCode:meeting.meetingCode,
+        joinUrl,
         invitedBy:req.user.id
       });
-    });
+    }
 
+    meeting.joinUrl = joinUrl;
     await meeting.save();
 
-    res.json(meeting);
+    res.json({
+      success:true,
+      meeting,
+      messages:createdMessages
+    });
 
   }catch(error){
     console.error("INVITE MEETING ERROR:",error);
     res.status(500).json({ message:"Unable to invite users" });
   }
 });
-
 /* =========================
    WAITING ROOM APPROVE / REJECT
 ========================= */
