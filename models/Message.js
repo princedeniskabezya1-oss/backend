@@ -341,9 +341,21 @@ const messageSchema = new Schema(
       }
     ],
 
-    call: callMetaSchema,
+call: callMetaSchema,
 
-    metadata: {
+meetingInvite: {
+  meetingId: {
+    type: Schema.Types.ObjectId,
+    ref: "Meeting"
+  },
+  meetingCode: String,
+  title: String,
+  joinUrl: String,
+  logoUrl: String,
+  hostName: String
+},
+
+metadata: {
       userAgent: String,
       ipAddress: String,
       clientMessageId: String
