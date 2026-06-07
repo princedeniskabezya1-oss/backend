@@ -165,7 +165,7 @@ function normalizeAccessMode(value){
     return mode;
   }
 
-  return "restricted";
+  return "open";
 }
 
 function participantUserId(participant){
@@ -272,7 +272,7 @@ accessMode:normalizeAccessMode(req.body.accessMode || "open"),
 allowGuests:req.body.allowGuests === true,
 requireHostApproval:req.body.requireHostApproval === true,
 lockMeeting:false,
-allowJoinBeforeHost:req.body.allowJoinBeforeHost === true,
+allowJoinBeforeHost:req.body.allowJoinBeforeHost !== false,
 
 hostControls:{
   muteParticipantsOnEntry:req.body.hostControls?.muteParticipantsOnEntry === true,
@@ -750,7 +750,7 @@ router.post("/:id/invite", authMiddleware, async (req,res)=>{
         receiver:userId,
         participants:[req.user.id,userId],
         messageType:"meeting",
-        text:`${hostName} invited you to join ${meeting.title}\n\nJoin meeting: ${joinUrl}`,
+        text:`${hostName} invited you to join ${meeting.title}\n\nMeeting code: ${meeting.meetingCode}\nJoin link: ${joinUrl}`,
         call:{
           callType:"meeting",
           status:"started",
@@ -763,7 +763,7 @@ router.post("/:id/invite", authMiddleware, async (req,res)=>{
           meetingCode:meeting.meetingCode,
           title:meeting.title,
           joinUrl,
-          logoUrl:"images/aift-logo.png",
+          logoUrl:`${req.headers.origin || process.env.FRONTEND_URL || ""}/images/aift-logo.png`,
           hostName
         }
       });
