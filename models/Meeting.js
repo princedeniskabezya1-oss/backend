@@ -199,7 +199,7 @@ accessMode: {
     "invite_only",
     "domain_only"
   ],
-  default: "restricted",
+  default: "open",
   index: true
 },
 
