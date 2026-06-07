@@ -63,9 +63,15 @@ function canViewMeeting(meeting,userId){
 
   if(String(meeting.host) === id) return true;
 
-  if(meeting.invitedUsers?.some(user => String(user) === id)) return true;
+  if(meeting.accessMode === "open") return true;
 
-  if(meeting.participants?.some(p => String(p.user) === id)) return true;
+  if(meeting.accessMode === "waiting_room") return true;
+
+  if(meeting.invitedUsers?.some(user => String(user?._id || user) === id)) return true;
+
+  if(meeting.waitingRoomUsers?.some(user => String(user?._id || user) === id)) return true;
+
+  if(meeting.participants?.some(p => String(p.user?._id || p.user) === id)) return true;
 
   return false;
 }
@@ -262,7 +268,7 @@ router.post("/", authMiddleware, async (req,res)=>{
       maxParticipants:Number(req.body.maxParticipants || 100),
       passwordProtected:!!req.body.passwordProtected,
       password:req.body.passwordProtected ? hashPassword(req.body.password) : "",
-accessMode:normalizeAccessMode(req.body.accessMode || "restricted"),
+accessMode:normalizeAccessMode(req.body.accessMode || "open"),
 allowGuests:req.body.allowGuests === true,
 requireHostApproval:req.body.requireHostApproval === true,
 lockMeeting:false,
@@ -744,7 +750,7 @@ router.post("/:id/invite", authMiddleware, async (req,res)=>{
         receiver:userId,
         participants:[req.user.id,userId],
         messageType:"meeting",
-        text:`${hostName} invited you to join ${meeting.title}`,
+        text:`${hostName} invited you to join ${meeting.title}\n\nJoin meeting: ${joinUrl}`,
         call:{
           callType:"meeting",
           status:"started",
