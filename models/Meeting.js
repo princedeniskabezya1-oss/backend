@@ -188,12 +188,65 @@ const meetingSchema = new Schema(
       default: false
     },
 
-    password: String,
+password: String,
 
-    waitingRoomEnabled: {
-      type: Boolean,
-      default: false
-    },
+accessMode: {
+  type: String,
+  enum: [
+    "open",
+    "restricted",
+    "waiting_room",
+    "invite_only",
+    "domain_only"
+  ],
+  default: "restricted",
+  index: true
+},
+
+allowGuests: {
+  type: Boolean,
+  default: false
+},
+
+requireHostApproval: {
+  type: Boolean,
+  default: false
+},
+
+lockMeeting: {
+  type: Boolean,
+  default: false
+},
+
+allowJoinBeforeHost: {
+  type: Boolean,
+  default: true
+},
+
+hostControls: {
+  muteParticipantsOnEntry: {
+    type: Boolean,
+    default: false
+  },
+  allowParticipantsToUnmute: {
+    type: Boolean,
+    default: true
+  },
+  allowParticipantsToShareScreen: {
+    type: Boolean,
+    default: true
+  },
+  allowParticipantsToChat: {
+    type: Boolean,
+    default: true
+  },
+  allowParticipantsToInvite: {
+    type: Boolean,
+    default: false
+  }
+},
+
+waitingRoomEnabled: {
 
     recordingEnabled: {
       type: Boolean,
