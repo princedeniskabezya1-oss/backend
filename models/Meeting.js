@@ -228,18 +228,22 @@ hostControls: {
     type: Boolean,
     default: false
   },
+
   allowParticipantsToUnmute: {
     type: Boolean,
     default: true
   },
+
   allowParticipantsToShareScreen: {
     type: Boolean,
     default: true
   },
+
   allowParticipantsToChat: {
     type: Boolean,
     default: true
   },
+
   allowParticipantsToInvite: {
     type: Boolean,
     default: false
@@ -247,6 +251,9 @@ hostControls: {
 },
 
 waitingRoomEnabled: {
+  type: Boolean,
+  default: false
+},
 
     recordingEnabled: {
       type: Boolean,
