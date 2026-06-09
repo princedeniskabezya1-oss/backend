@@ -263,5 +263,53 @@ router.post("/create-first-admin", async (req, res) => {
     });
   }
 });
+/* ============================================
+   RESET ADMIN PASSWORD
+============================================ */
+router.post("/reset-admin-password", async (req, res) => {
+  try {
+
+    const { setupKey, email, newPassword } = req.body;
+
+    if (setupKey !== process.env.ADMIN_SETUP_KEY) {
+      return res.status(403).json({
+        message: "Invalid setup key"
+      });
+    }
+
+    const admin = await User.findOne({
+      email: String(email).toLowerCase().trim(),
+      role: "admin"
+    });
+
+    if (!admin) {
+      return res.status(404).json({
+        message: "Admin not found"
+      });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+
+    admin.password = await bcrypt.hash(
+      newPassword,
+      salt
+    );
+
+    await admin.save();
+
+    res.json({
+      message: "Admin password updated successfully"
+    });
+
+  } catch (error) {
+
+    console.error(error);
+
+    res.status(500).json({
+      message: error.message
+    });
+
+  }
+});
 
 module.exports = router;
