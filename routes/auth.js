@@ -184,4 +184,84 @@ router.get("/me", auth, async (req, res) => {
   }
 });
 
+/* ============================================
+   CREATE FIRST ADMIN - ONE TIME ONLY
+============================================ */
+router.post("/create-first-admin", async (req, res) => {
+  try {
+    const { setupKey, name, email, password } = req.body;
+
+    if (!process.env.ADMIN_SETUP_KEY) {
+      return res.status(500).json({
+        message: "Admin setup key is not configured"
+      });
+    }
+
+    if (setupKey !== process.env.ADMIN_SETUP_KEY) {
+      return res.status(403).json({
+        message: "Invalid admin setup key"
+      });
+    }
+
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        message: "Name, email and password are required"
+      });
+    }
+
+    if (String(password).length < 8) {
+      return res.status(400).json({
+        message: "Admin password must be at least 8 characters"
+      });
+    }
+
+    const existingAdmin = await User.findOne({ role: "admin" });
+
+    if (existingAdmin) {
+      return res.status(403).json({
+        message: "Admin already exists"
+      });
+    }
+
+    const normalizedEmail = String(email).toLowerCase().trim();
+
+    const existingUser = await User.findOne({ email: normalizedEmail });
+
+    if (existingUser) {
+      return res.status(400).json({
+        message: "Email already exists"
+      });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    const admin = await User.create({
+      name: String(name).trim(),
+      email: normalizedEmail,
+      password: hashedPassword,
+      role: "admin",
+      status: "active",
+      aiftVerified: true,
+      isVerified: true
+    });
+
+    res.status(201).json({
+      message: "First admin created successfully",
+      admin: {
+        id: admin._id,
+        name: admin.name,
+        email: admin.email,
+        role: admin.role
+      }
+    });
+
+  } catch (error) {
+    console.error("CREATE FIRST ADMIN ERROR:", error);
+    res.status(500).json({
+      message: error.message
+    });
+  }
+});
+
 module.exports = router;
