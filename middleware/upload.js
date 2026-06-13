@@ -25,7 +25,7 @@ const fileFilter = (req, file, cb) => {
     return cb(null, true);
   }
 
-  cb(new Error("Unsupported file type"), false);
+  cb(new Error("Unsupported file type. Please upload JPG, PNG, WEBP, MP4, or MOV only."), false);
 };
 
 const upload = multer({
