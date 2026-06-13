@@ -93,6 +93,81 @@ async function safeSavePost(post) {
   post.engagementScore = calcEngagement(post);
   return post.save({ validateModifiedOnly: true });
 }
+/* ==========================
+   SMART FEED
+   GET /api/posts/feed?skip=0&limit=20
+========================== */
+router.get("/feed", auth, async (req, res) => {
+  try {
+    const currentUser = await getCurrentUser(req);
+    const followingIds = safeArray(currentUser?.following).map(String);
+
+    const skip = Math.max(Number(req.query.skip || 0), 0);
+    const limit = Math.min(Math.max(Number(req.query.limit || 20), 1), 50);
+
+    const now = new Date();
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+    const posts = await Post.find({
+      isHiddenByAdmin: { $ne: true },
+      groupId: null,
+      createdAt: { $gte: sevenDaysAgo }
+    })
+      .populate("author", USER_POPULATE)
+      .populate("likes", USER_POPULATE)
+      .populate("comments.user", USER_POPULATE)
+      .populate("comments.replies.user", USER_POPULATE)
+      .populate({
+        path: "repostOf",
+        populate: { path: "author", select: USER_POPULATE }
+      })
+      .lean();
+
+    const scored = posts.map(post => {
+      const likesCount = safeArray(post.likes).length;
+      const commentsCount = safeArray(post.comments).length;
+      const sharesCount = Number(post.sharesCount || 0);
+      const viewsCount = Number(post.viewsCount || 0);
+      const media = safeArray(post.media);
+      const hasVideo = media.some(m => m.type === "video") || post.mediaType === "video";
+
+      const ageHours = Math.max((Date.now() - new Date(post.createdAt).getTime()) / 36e5, 1);
+      const recencyScore = Math.max(80 - ageHours, 0);
+
+      const followsScore = followingIds.includes(String(post.author?._id)) ? 35 : 0;
+      const engagementScore = likesCount * 3 + commentsCount * 6 + sharesCount * 8 + viewsCount * 0.3;
+      const mediaScore = media.length ? 8 : 0;
+      const videoScore = hasVideo ? 12 : 0;
+      const verifiedScore = post.author?.isVerified || post.author?.verified || post.author?.adminVerified ? 10 : 0;
+      const promotedScore =
+        post.isPromoted && post.promotedUntil && new Date(post.promotedUntil) > now ? 100 : 0;
+
+      const priorityScore =
+        Number(post.priorityScore || 0) +
+        promotedScore +
+        recencyScore +
+        followsScore +
+        engagementScore +
+        mediaScore +
+        videoScore +
+        verifiedScore;
+
+      return { ...post, priorityScore };
+    });
+
+    scored.sort((a, b) => b.priorityScore - a.priorityScore);
+
+    res.json({
+      posts: scored.slice(skip, skip + limit),
+      skip,
+      limit,
+      hasMore: scored.length > skip + limit
+    });
+  } catch (err) {
+    console.error("SMART FEED ERROR:", err.message);
+    res.status(500).json({ message: "Failed to load smart feed" });
+  }
+});
 
 /* ==========================
    GET FEED
