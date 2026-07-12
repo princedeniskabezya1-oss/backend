@@ -31,10 +31,11 @@ const ANALYTICS_EVENT_TYPES = [
   "follow",
   "unfollow",
 
-  /* Posts and updates */
-  "post_impression",
-  "post_view",
-  "post_unique_view",
+/* Posts and updates */
+"post_created",
+"post_impression",
+"post_view",
+"post_unique_view",
   "post_like",
   "post_unlike",
   "post_comment",
@@ -43,16 +44,18 @@ const ANALYTICS_EVENT_TYPES = [
   "post_save",
   "post_unsave",
 
-  /* Students */
-  "student_view",
-  "student_added",
+/* Students */
+"student_view",
+"student_unique_view",
+"student_added",
   "student_removed",
   "student_enrolled",
   "student_completed_program",
 
-  /* Teachers */
-  "teacher_view",
-  "teacher_added",
+/* Teachers */
+"teacher_view",
+"teacher_unique_view",
+"teacher_added",
   "teacher_removed",
   "teacher_assigned",
   "teacher_unassigned",
