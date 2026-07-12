@@ -1,25 +1,47 @@
+"use strict";
+
 const express = require("express");
+
+const auth = require("../middleware/auth");
+const optionalAuth = require("../middleware/optionalAuth");
+const analyticsContext = require("../middleware/analyticsContext");
+const analyticsRateLimit = require("../middleware/analyticsRateLimit");
+const validateAnalyticsEvent = require(
+  "../middleware/validateAnalyticsEvent"
+);
 
 const {
   recordEvent,
   getSchoolAnalytics
 } = require("../controllers/analyticsController");
 
-const auth = require("../middleware/auth");
-
 const router = express.Router();
 
 /*
-  Public actions can be recorded even when the visitor is not logged in.
-  Use optionalAuth here if your project already has one.
+  Public and authenticated analytics collection.
+
+  Important:
+  Browsers may submit low-risk public events such as views,
+  impressions and search clicks.
+
+  Security-sensitive events such as follow, unfollow,
+  post-like, attendance and assignment submission should
+  also be recorded directly by their backend action routes.
 */
 router.post(
   "/events",
+  optionalAuth,
+  analyticsContext,
+  analyticsRateLimit,
+  validateAnalyticsEvent,
   recordEvent
 );
 
 /*
-  Private school dashboard analytics.
+  The authenticated school owner loads their analytics.
+
+  The controller must also confirm that the logged-in user
+  owns the requested school analytics.
 */
 router.get(
   "/school/:schoolId",
