@@ -30,6 +30,7 @@ const schoolCompanyPartnershipRoutes = require("./routes/schoolCompanyPartnershi
 const internshipApplicationRoutes = require("./routes/internshipApplications");
 const schoolUpdateRoutes = require("./routes/schoolUpdates");
 const attendanceRoutes = require("./routes/attendance");
+const analyticsRoutes = require("./routes/analytics");
 const savedRoutes = require("./routes/saved");
 const groupRoutes = require("./routes/groups");
 const conversationRoutes = require("./routes/conversations");
@@ -49,21 +50,169 @@ const lessonProgressRoutes = require("./routes/lessonProgress");
 
 const app = express();
 
+/*
+  Render places the Node.js application behind one reverse proxy.
+
+  This allows Express and express-rate-limit to correctly use
+  the original visitor IP forwarded by Render.
+
+  Use the number 1 rather than true so the application does
+  not trust an unlimited proxy chain.
+*/
+app.set("trust proxy", 1);
+
 /* ============================================
    CORS
 ============================================ */
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
-}));
-app.options("*", cors());
+
+/*
+  Configure these values in the Render Environment page:
+
+  FRONTEND_URL=https://your-main-project.vercel.app
+  FRONTEND_URL_SECONDARY=https://your-secondary-project.vercel.app
+
+  FRONTEND_URL_SECONDARY is optional.
+*/
+const configuredFrontendOrigins = [
+  process.env.FRONTEND_URL,
+  process.env.FRONTEND_URL_SECONDARY
+]
+  .map(value => String(value || "").trim())
+  .filter(Boolean);
+
+/*
+  These origins are permitted for local development.
+*/
+const developmentOrigins = [
+  "http://localhost:3000",
+  "http://localhost:5173",
+  "http://localhost:5500",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:5173",
+  "http://127.0.0.1:5500"
+];
+
+const allowedOrigins = new Set([
+  ...configuredFrontendOrigins,
+  ...developmentOrigins
+]);
+
+/*
+  This allows Vercel preview deployments.
+
+  Later, when you use only stable production domains, you can
+  remove this function and rely only on FRONTEND_URL values.
+*/
+function isAllowedVercelPreview(origin) {
+  return /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(
+    String(origin || "")
+  );
+}
+
+function validateRequestOrigin(origin, callback) {
+  /*
+    Requests without an Origin header include:
+
+    - Render health checks
+    - server-to-server requests
+    - API testing programs
+    - some native application clients
+  */
+  if (!origin) {
+    return callback(null, true);
+  }
+
+  if (
+    allowedOrigins.has(origin) ||
+    isAllowedVercelPreview(origin)
+  ) {
+    return callback(null, true);
+  }
+
+  const error = new Error(
+    `Origin is not allowed by CORS: ${origin}`
+  );
+
+  error.statusCode = 403;
+
+  return callback(error);
+}
+
+const corsOptions = {
+  origin: validateRequestOrigin,
+
+  methods: [
+    "GET",
+    "POST",
+    "PATCH",
+    "PUT",
+    "DELETE",
+    "OPTIONS"
+  ],
+
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization",
+    "X-Analytics-Session",
+    "X-Analytics-Source"
+  ],
+
+  exposedHeaders: [
+    "RateLimit",
+    "RateLimit-Policy",
+    "RateLimit-Limit",
+    "RateLimit-Remaining",
+    "RateLimit-Reset"
+  ],
+
+  /*
+    Your frontend sends JWT tokens through the Authorization
+    header rather than cookies.
+  */
+  credentials: false,
+
+  /*
+    Allow browsers to cache successful preflight responses
+    for 24 hours.
+  */
+  maxAge: 86400,
+
+  optionsSuccessStatus: 204
+};
+
+app.use(cors(corsOptions));
+
+app.options("*", cors(corsOptions));
 
 /* ============================================
    MIDDLEWARE
 ============================================ */
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+
+/*
+  Limit JSON request bodies to protect public API endpoints
+  from unexpectedly large payloads.
+
+  Multer-based image, video, CV, and document uploads are not
+  affected by this JSON body limit.
+*/
+app.use(
+  express.json({
+    limit: "1mb",
+    strict: true
+  })
+);
+
+/*
+  Support URL-encoded form bodies while limiting the total
+  size and number of submitted parameters.
+*/
+app.use(
+  express.urlencoded({
+    extended: true,
+    limit: "1mb",
+    parameterLimit: 1000
+  })
+);
 
 /* ============================================
    HEALTH
@@ -89,7 +238,6 @@ app.use("/api/schedules", scheduleRoutes);
 app.use("/api/tasks", taskRoutes);
 app.use("/api/invites", inviteRoutes);
 app.use("/api/conversations", conversationRoutes);
-app.use("/api/meetings", meetingRoutes);
 app.use("/api/call-logs", callLogRoutes);
 app.use("/api/notification-preferences", notificationPreferenceRoutes);
 app.use("/api/message-templates", messageTemplateRoutes);
@@ -119,6 +267,15 @@ app.use("/api/school-company-partnerships", schoolCompanyPartnershipRoutes);
 app.use("/api/internship-applications", internshipApplicationRoutes);
 app.use("/api/school-updates", schoolUpdateRoutes);
 app.use("/api/attendance", attendanceRoutes);
+
+/*
+  Analytics endpoints:
+
+  POST /api/analytics/events
+  GET  /api/analytics/school/:schoolId
+*/
+app.use("/api/analytics", analyticsRoutes);
+
 app.use("/api/saved", savedRoutes);
 app.use("/api/groups", groupRoutes);
 
@@ -135,7 +292,36 @@ const { Server } = require("socket.io");
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: { origin: "*" }
+  cors: {
+    /*
+      Reuse the same origin validation rules as Express.
+    */
+    origin: validateRequestOrigin,
+
+    methods: [
+      "GET",
+      "POST"
+    ],
+
+    allowedHeaders: [
+      "Authorization",
+      "Content-Type"
+    ],
+
+    credentials: false
+  },
+
+  /*
+    Limit the size of one Socket.IO message to approximately
+    one megabyte.
+  */
+  maxHttpBufferSize: 1e6,
+
+  /*
+    Heartbeat settings used to detect disconnected clients.
+  */
+  pingInterval: 25000,
+  pingTimeout: 20000
 });
 
 const onlineUsers = new Map();
@@ -365,6 +551,64 @@ socket.on("webrtcIceCandidate", ({ to, candidate, meetingId, callId }) => {
 });
 
 app.set("io", io);
+
+/* ============================================
+   GLOBAL EXPRESS ERROR HANDLER
+============================================ */
+
+/*
+  This must remain after all route declarations and before
+  MongoDB connects and starts the HTTP server.
+*/
+app.use((error, req, res, next) => {
+  console.error("Unhandled Express error:", {
+    message: error.message,
+    method: req.method,
+    path: req.originalUrl,
+    statusCode:
+      error.statusCode ||
+      error.status ||
+      500
+  });
+
+  if (res.headersSent) {
+    return next(error);
+  }
+
+  const statusCode = Number(
+    error.statusCode ||
+    error.status ||
+    500
+  );
+
+  const isProduction =
+    process.env.NODE_ENV === "production";
+
+  let message =
+    error.message ||
+    "An unexpected server error occurred.";
+
+  if (
+    statusCode === 403 &&
+    message.includes("CORS")
+  ) {
+    message =
+      "This website is not permitted to access the AIFT API.";
+  }
+
+  if (
+    isProduction &&
+    statusCode >= 500
+  ) {
+    message =
+      "An unexpected server error occurred.";
+  }
+
+  return res.status(statusCode).json({
+    success: false,
+    message
+  });
+});
 
 /* ============================================
    DB
