@@ -1,15 +1,33 @@
+"use strict";
+
 const express = require("express");
-const router = express.Router();
+const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
+
+const router = express.Router();
 
 const User = require("../models/User");
 const Job = require("../models/Job");
 const Application = require("../models/Application");
 const Notification = require("../models/Notification");
 
+const AnalyticsEvent = require(
+  "../models/AnalyticsEvent"
+);
+
+const {
+  incrementDailyAnalytics
+} = require(
+  "../services/analyticsAggregationService"
+);
+
 const auth = require("../middleware/auth");
 const adminOnly = require("../middleware/adminOnly");
 const upload = require("../middleware/upload");
+const analyticsContext = require(
+  "../middleware/analyticsContext"
+);
+
 const cloudinary = require("../config/cloudinary");
 function canSchoolManageUser(manager, targetUser) {
   if (!manager || !targetUser) return false;
@@ -26,7 +44,169 @@ function canSchoolManageUser(manager, targetUser) {
     String(targetUser.createdBySchool || "") === schoolId
   );
 }
+/* ============================================
+   SCHOOL ANALYTICS HELPERS
+============================================ */
 
+function validObjectId(value) {
+  return mongoose.Types.ObjectId.isValid(
+    String(value || "")
+  );
+}
+
+function resolveLinkedSchoolId(user) {
+  if (!user) {
+    return null;
+  }
+
+  if (
+    String(user.role || "").toLowerCase() ===
+    "school"
+  ) {
+    return user._id || user.id || null;
+  }
+
+  return (
+    user.schoolId ||
+    user.linkedSchoolId ||
+    user.companyId ||
+    user.createdBySchool ||
+    null
+  );
+}
+
+function analyticsExpiryDate(
+  occurredAt = new Date()
+) {
+  const expiresAt = new Date(occurredAt);
+
+  expiresAt.setUTCDate(
+    expiresAt.getUTCDate() + 180
+  );
+
+  return expiresAt;
+}
+
+/*
+  Record a trusted analytics event after the backend has
+  validated and performed the real action.
+
+  This helper is not exposed directly to the browser.
+*/
+async function recordSchoolAnalyticsEvent({
+  req,
+  schoolId,
+  eventType,
+  entityType = "school",
+  entityId = null,
+  metadata = {},
+  occurredAt = new Date(),
+  mongoSession = null
+}) {
+  if (
+    !schoolId ||
+    !validObjectId(schoolId)
+  ) {
+    throw new TypeError(
+      "A valid schoolId is required for school analytics."
+    );
+  }
+
+  const context =
+    req.analyticsContext || {};
+
+  const actorId =
+    req.user?._id ||
+    req.user?.id ||
+    null;
+
+  const source =
+    context.source ||
+    "dashboard";
+
+  const deviceType =
+    context.deviceType ||
+    "unknown";
+
+  const eventPayload = {
+    schoolId,
+    actorId:
+      actorId && validObjectId(actorId)
+        ? actorId
+        : null,
+
+    sessionId:
+      context.sessionId ||
+      null,
+
+    ipHash:
+      context.ipHash ||
+      null,
+
+    eventType,
+    entityType,
+
+    entityId:
+      entityId && validObjectId(entityId)
+        ? entityId
+        : null,
+
+    source,
+
+    metadata:
+      metadata &&
+      typeof metadata === "object" &&
+      !Array.isArray(metadata)
+        ? metadata
+        : {},
+
+    userAgent:
+      context.userAgent ||
+      null,
+
+    referrer:
+      context.referrer ||
+      null,
+
+    requestPath:
+      context.requestPath ||
+      null,
+
+    deviceType,
+
+    occurredAt,
+
+    expiresAt:
+      analyticsExpiryDate(
+        occurredAt
+      )
+  };
+
+  const createOptions = {};
+
+  if (mongoSession) {
+    createOptions.session =
+      mongoSession;
+  }
+
+  const events =
+    await AnalyticsEvent.create(
+      [eventPayload],
+      createOptions
+    );
+
+  await incrementDailyAnalytics({
+    schoolId,
+    eventType,
+    occurredAt,
+    source,
+    deviceType,
+    metadata: eventPayload.metadata,
+    mongoSession
+  });
+
+  return events[0];
+}
 /* ============================================
    ADMIN GET ALL USERS
 ============================================ */
@@ -71,64 +251,288 @@ router.post("/", adminOnly, async (req, res) => {
 /* ============================================
    SCHOOL CREATE TEACHER / STUDENT
 ============================================ */
-router.post("/school-create", auth, async (req, res) => {
-  try {
-    if (!["school", "admin"].includes(req.user.role)) {
-      return res.status(403).json({ message: "Only school/admin can create users" });
+
+router.post(
+  "/school-create",
+  auth,
+  analyticsContext,
+  async (req, res) => {
+    let mongoSession = null;
+
+    try {
+      if (
+        !["school", "admin"].includes(
+          req.user.role
+        )
+      ) {
+        return res.status(403).json({
+          message:
+            "Only a school or administrator can create school users."
+        });
+      }
+
+      const {
+        name,
+        email,
+        password,
+        role,
+        course,
+        subject,
+        department,
+        bio
+      } = req.body;
+
+      const cleanName =
+        String(name || "").trim();
+
+      const cleanEmail =
+        String(email || "")
+          .trim()
+          .toLowerCase();
+
+      const cleanRole =
+        String(role || "")
+          .trim()
+          .toLowerCase();
+
+      if (
+        !["teacher", "student"].includes(
+          cleanRole
+        )
+      ) {
+        return res.status(400).json({
+          message:
+            "Role must be teacher or student."
+        });
+      }
+
+      if (
+        !cleanName ||
+        !cleanEmail ||
+        !password
+      ) {
+        return res.status(400).json({
+          message:
+            "Name, email, and password are required."
+        });
+      }
+
+      const requestedSchoolId =
+        req.user.role === "admin"
+          ? req.body.schoolId
+          : req.user._id;
+
+      if (
+        !requestedSchoolId ||
+        !validObjectId(requestedSchoolId)
+      ) {
+        return res.status(400).json({
+          message:
+            "A valid school ID is required."
+        });
+      }
+
+      const school = await User.findOne({
+        _id: requestedSchoolId,
+        role: "school",
+        status: {
+          $ne: "suspended"
+        }
+      })
+        .select("_id role status")
+        .lean();
+
+      if (!school) {
+        return res.status(404).json({
+          message:
+            "School account was not found."
+        });
+      }
+
+      const existing =
+        await User.findOne({
+          email: cleanEmail
+        })
+          .select("_id")
+          .lean();
+
+      if (existing) {
+        return res.status(409).json({
+          message:
+            "A user with this email already exists."
+        });
+      }
+
+      const hashedPassword =
+        await bcrypt.hash(
+          String(password),
+          12
+        );
+
+      mongoSession =
+        await mongoose.startSession();
+
+      mongoSession.startTransaction();
+
+      const createdUsers =
+        await User.create(
+          [
+            {
+              name: cleanName,
+              email: cleanEmail,
+              password: hashedPassword,
+              role: cleanRole,
+
+              schoolId:
+                school._id,
+
+              linkedSchoolId:
+                school._id,
+
+              companyId:
+                school._id,
+
+              createdBySchool:
+                req.user._id,
+
+              course:
+                cleanRole === "student"
+                  ? course || null
+                  : null,
+
+              subject:
+                cleanRole === "teacher"
+                  ? subject ||
+                    department ||
+                    null
+                  : null,
+
+              department:
+                cleanRole === "teacher"
+                  ? department ||
+                    subject ||
+                    null
+                  : null,
+
+              bio:
+                bio ||
+                null
+            }
+          ],
+          {
+            session: mongoSession
+          }
+        );
+
+      const createdUser =
+        createdUsers[0];
+
+      const eventType =
+        cleanRole === "student"
+          ? "student_added"
+          : "teacher_added";
+
+      await recordSchoolAnalyticsEvent({
+        req,
+
+        schoolId:
+          school._id,
+
+        eventType,
+
+        entityType:
+          cleanRole,
+
+        entityId:
+          createdUser._id,
+
+        metadata: {
+          createdRole:
+            cleanRole,
+
+          createdByRole:
+            req.user.role,
+
+          course:
+            cleanRole === "student"
+              ? String(course || "")
+                  .trim()
+                  .slice(0, 200)
+              : "",
+
+          department:
+            cleanRole === "teacher"
+              ? String(
+                  department ||
+                  subject ||
+                  ""
+                )
+                  .trim()
+                  .slice(0, 200)
+              : ""
+        },
+
+        mongoSession
+      });
+
+      await mongoSession
+        .commitTransaction();
+
+      const safeUser =
+        await User.findById(
+          createdUser._id
+        ).select("-password");
+
+      const io =
+        req.app.get("io");
+
+      if (io) {
+        io.to(
+          String(school._id)
+        ).emit(
+          "user:new",
+          safeUser
+        );
+      }
+
+      return res
+        .status(201)
+        .json(safeUser);
+    } catch (error) {
+      if (
+        mongoSession?.inTransaction()
+      ) {
+        await mongoSession
+          .abortTransaction()
+          .catch(() => {});
+      }
+
+      console.error(
+        "SCHOOL CREATE USER ERROR:",
+        error
+      );
+
+      if (error?.code === 11000) {
+        return res.status(409).json({
+          message:
+            "A user with this email already exists."
+        });
+      }
+
+      return res.status(500).json({
+        message:
+          error.message ||
+          "Failed to create school user."
+      });
+    } finally {
+      if (mongoSession) {
+        await mongoSession
+          .endSession()
+          .catch(() => {});
+      }
     }
-
-    const { name, email, password, role, course, subject, department, bio } = req.body;
-
-    const cleanRole = String(role || "").toLowerCase();
-
-    if (!["teacher", "student"].includes(cleanRole)) {
-      return res.status(400).json({ message: "Role must be teacher or student" });
-    }
-
-    if (!name || !email || !password) {
-      return res.status(400).json({ message: "Name, email, and password are required" });
-    }
-
-    const existing = await User.findOne({
-      email: String(email).toLowerCase().trim()
-    });
-
-    if (existing) {
-      return res.status(400).json({ message: "User already exists" });
-    }
-
-    const schoolId = req.user.role === "admin" && req.body.schoolId
-      ? req.body.schoolId
-      : req.user.id;
-
-    const hashed = await bcrypt.hash(password, 10);
-
-    const user = await User.create({
-      name: String(name).trim(),
-      email: String(email).toLowerCase().trim(),
-      password: hashed,
-      role: cleanRole,
-      schoolId,
-      linkedSchoolId: schoolId,
-      companyId: schoolId,
-      createdBySchool: req.user.id,
-      course: cleanRole === "student" ? course || null : null,
-      subject: cleanRole === "teacher" ? subject || department || null : null,
-      department: cleanRole === "teacher" ? department || subject || null : null,
-      bio: bio || null
-    });
-
-    const safeUser = await User.findById(user._id).select("-password");
-
-    const io = req.app.get("io");
-    if (io) io.to(String(schoolId)).emit("user:new", safeUser);
-
-    res.status(201).json(safeUser);
-  } catch (err) {
-    console.error("SCHOOL CREATE USER ERROR:", err);
-    res.status(500).json({ message: err.message || "Failed to create user" });
   }
-});
+);
 
 /* ============================================
    GET CURRENT USER
@@ -385,49 +789,259 @@ cloudinary.uploader.upload_stream(
 /* ============================================
    FOLLOW / UNFOLLOW
 ============================================ */
-router.patch("/:id/follow", auth, async (req, res) => {
-  try {
-    if (req.user.id === req.params.id) {
-      return res.status(400).json({ message: "Cannot follow yourself" });
-    }
 
-    const targetUser = await User.findById(req.params.id);
-    const currentUser = await User.findById(req.user.id);
+router.patch(
+  "/:id/follow",
+  auth,
+  analyticsContext,
+  async (req, res) => {
+    let mongoSession = null;
 
-    if (!targetUser) {
-      return res.status(404).json({ message: "User not found" });
-    }
+    try {
+      const currentUserId =
+        req.user._id ||
+        req.user.id;
 
-    const isFollowing = currentUser.following.includes(targetUser._id);
+      const targetUserId =
+        req.params.id;
 
-    if (isFollowing) {
-      currentUser.following.pull(targetUser._id);
-      targetUser.followers.pull(currentUser._id);
-    } else {
-      currentUser.following.push(targetUser._id);
-      targetUser.followers.push(currentUser._id);
+      if (
+        !validObjectId(targetUserId)
+      ) {
+        return res.status(400).json({
+          message:
+            "Invalid user ID."
+        });
+      }
 
-      await Notification.create({
-        user: targetUser._id,
-        type: "follow",
-        sender: currentUser._id,
-        text: `${currentUser.name} started following you`,
-        link: `/public-profile.html?id=${currentUser._id}`
+      if (
+        String(currentUserId) ===
+        String(targetUserId)
+      ) {
+        return res.status(400).json({
+          message:
+            "You cannot follow yourself."
+        });
+      }
+
+      mongoSession =
+        await mongoose.startSession();
+
+      mongoSession.startTransaction();
+
+      const [
+        currentUser,
+        targetUser
+      ] = await Promise.all([
+        User.findById(currentUserId)
+          .session(mongoSession),
+
+        User.findById(targetUserId)
+          .session(mongoSession)
+      ]);
+
+      if (!currentUser) {
+        await mongoSession
+          .abortTransaction();
+
+        return res.status(401).json({
+          message:
+            "Current user was not found."
+        });
+      }
+
+      if (!targetUser) {
+        await mongoSession
+          .abortTransaction();
+
+        return res.status(404).json({
+          message:
+            "User not found."
+        });
+      }
+
+      if (
+        targetUser.status === "suspended"
+      ) {
+        await mongoSession
+          .abortTransaction();
+
+        return res.status(403).json({
+          message:
+            "This account is unavailable."
+        });
+      }
+
+      const alreadyFollowing =
+        Array.isArray(
+          currentUser.following
+        ) &&
+        currentUser.following.some(
+          id =>
+            String(id) ===
+            String(targetUser._id)
+        );
+
+      let following;
+
+      if (alreadyFollowing) {
+        currentUser.following.pull(
+          targetUser._id
+        );
+
+        targetUser.followers.pull(
+          currentUser._id
+        );
+
+        following = false;
+      } else {
+        currentUser.following.addToSet(
+          targetUser._id
+        );
+
+        targetUser.followers.addToSet(
+          currentUser._id
+        );
+
+        following = true;
+      }
+
+      await currentUser.save({
+        session: mongoSession,
+        validateModifiedOnly: true
       });
+
+      await targetUser.save({
+        session: mongoSession,
+        validateModifiedOnly: true
+      });
+
+      if (following) {
+        await Notification.create(
+          [
+            {
+              user:
+                targetUser._id,
+
+              type:
+                "follow",
+
+              sender:
+                currentUser._id,
+
+              text:
+                `${currentUser.name || "Someone"} started following you`,
+
+              link:
+                `/public-profile.html?id=${currentUser._id}`
+            }
+          ],
+          {
+            session:
+              mongoSession
+          }
+        );
+      }
+
+      /*
+        School follower analytics belongs only to target
+        accounts whose role is school.
+
+        Other user roles continue to follow normally, but they
+        do not create school analytics records.
+      */
+      if (
+        targetUser.role === "school"
+      ) {
+        await recordSchoolAnalyticsEvent({
+          req,
+
+          schoolId:
+            targetUser._id,
+
+          eventType:
+            following
+              ? "follow"
+              : "unfollow",
+
+          entityType:
+            "school",
+
+          entityId:
+            targetUser._id,
+
+          metadata: {
+            followerRole:
+              currentUser.role ||
+              "unknown"
+          },
+
+          mongoSession
+        });
+      }
+
+      await mongoSession
+        .commitTransaction();
+
+      const io =
+        req.app.get("io");
+
+      if (io) {
+        io.to(
+          String(targetUser._id)
+        ).emit(
+          "user_follow_updated",
+          {
+            followerId:
+              currentUser._id,
+
+            targetId:
+              targetUser._id,
+
+            following,
+
+            followers:
+              targetUser.followers.length
+          }
+        );
+      }
+
+      return res.json({
+        following,
+
+        targetId:
+          targetUser._id,
+
+        followers:
+          targetUser.followers.length
+      });
+    } catch (error) {
+      if (
+        mongoSession?.inTransaction()
+      ) {
+        await mongoSession
+          .abortTransaction()
+          .catch(() => {});
+      }
+
+      console.error(
+        "FOLLOW ERROR:",
+        error
+      );
+
+      return res.status(500).json({
+        message:
+          "Follow operation failed."
+      });
+    } finally {
+      if (mongoSession) {
+        await mongoSession
+          .endSession()
+          .catch(() => {});
+      }
     }
-
-    await currentUser.save();
-    await targetUser.save();
-
-    res.json({
-      followers: targetUser.followers.length,
-      following: !isFollowing
-    });
-  } catch (err) {
-    console.error("FOLLOW ERROR:", err);
-    res.status(400).json({ message: "Follow failed" });
   }
-});
+);
 
 /* ============================================
    PUBLIC NETWORK PREVIEW
@@ -661,10 +1275,29 @@ router.get("/:id/public", async (req, res) => {
       });
     }
 
-    user.profileViews =
-      Number(user.profileViews || 0) + 1;
+/*
+  School profile views are recorded through the dedicated
+  analytics event endpoint, which provides:
 
-    await user.save();
+  - session deduplication
+  - self-view prevention
+  - unique visitor tracking
+  - traffic-source tracking
+  - device tracking
+
+  Continue preserving the legacy counter behavior for other
+  profile roles until their analytics migration is completed.
+*/
+if (user.role !== "school") {
+  user.profileViews =
+    Number(
+      user.profileViews || 0
+    ) + 1;
+
+  await user.save({
+    validateModifiedOnly: true
+  });
+}
 
     let posts = [];
 
@@ -802,47 +1435,249 @@ router.patch("/:id/password", adminOnly, async (req, res) => {
   }
 });
 
-router.delete("/:id", auth, async (req, res) => {
-  try {
-    const targetUser = await User.findById(req.params.id);
+router.delete(
+  "/:id",
+  auth,
+  analyticsContext,
+  async (req, res) => {
+    let mongoSession = null;
 
-    if (!targetUser) {
-      return res.status(404).json({ message: "User not found" });
+    try {
+      if (
+        !validObjectId(req.params.id)
+      ) {
+        return res.status(400).json({
+          message:
+            "Invalid user ID."
+        });
+      }
+
+      mongoSession =
+        await mongoose.startSession();
+
+      mongoSession.startTransaction();
+
+      const targetUser =
+        await User.findById(
+          req.params.id
+        ).session(mongoSession);
+
+      if (!targetUser) {
+        await mongoSession
+          .abortTransaction();
+
+        return res.status(404).json({
+          message:
+            "User not found."
+        });
+      }
+
+      const isAdmin =
+        req.user.role === "admin";
+
+      const isSchoolAllowed =
+        canSchoolManageUser(
+          req.user,
+          targetUser
+        );
+
+      if (
+        !isAdmin &&
+        !isSchoolAllowed
+      ) {
+        await mongoSession
+          .abortTransaction();
+
+        return res.status(403).json({
+          message:
+            "Not allowed to remove this user."
+        });
+      }
+
+      const targetRole =
+        String(
+          targetUser.role || ""
+        ).toLowerCase();
+
+      const linkedSchoolId =
+        resolveLinkedSchoolId(
+          targetUser
+        );
+
+      /*
+        Administrators permanently delete users.
+
+        When the deleted account belonged to a school as a
+        teacher or student, record the removal first.
+      */
+      if (isAdmin) {
+        if (
+          linkedSchoolId &&
+          ["teacher", "student"].includes(
+            targetRole
+          )
+        ) {
+          await recordSchoolAnalyticsEvent({
+            req,
+
+            schoolId:
+              linkedSchoolId,
+
+            eventType:
+              targetRole === "teacher"
+                ? "teacher_removed"
+                : "student_removed",
+
+            entityType:
+              targetRole,
+
+            entityId:
+              targetUser._id,
+
+            metadata: {
+              removalType:
+                "permanent_delete",
+
+              removedByRole:
+                req.user.role
+            },
+
+            mongoSession
+          });
+        }
+
+        await targetUser.deleteOne({
+          session: mongoSession
+        });
+
+        await mongoSession
+          .commitTransaction();
+
+        return res.json({
+          message:
+            "User deleted successfully."
+        });
+      }
+
+      if (
+        ![
+          "teacher",
+          "student",
+          "talent"
+        ].includes(targetRole)
+      ) {
+        await mongoSession
+          .abortTransaction();
+
+        return res.status(403).json({
+          message:
+            "School can only remove teachers or students."
+        });
+      }
+
+      const schoolId =
+        req.user._id;
+
+      targetUser.schoolId = null;
+      targetUser.linkedSchoolId = null;
+      targetUser.companyId = null;
+      targetUser.createdBySchool = null;
+
+      if (targetRole === "teacher") {
+        targetUser.assignedClasses = [];
+      }
+
+      await targetUser.save({
+        session: mongoSession,
+        validateModifiedOnly: true
+      });
+
+      if (
+        ["teacher", "student"].includes(
+          targetRole
+        )
+      ) {
+        await recordSchoolAnalyticsEvent({
+          req,
+
+          schoolId,
+
+          eventType:
+            targetRole === "teacher"
+              ? "teacher_removed"
+              : "student_removed",
+
+          entityType:
+            targetRole,
+
+          entityId:
+            targetUser._id,
+
+          metadata: {
+            removalType:
+              "school_unlink",
+
+            removedByRole:
+              req.user.role
+          },
+
+          mongoSession
+        });
+      }
+
+      await mongoSession
+        .commitTransaction();
+
+      const io =
+        req.app.get("io");
+
+      if (io) {
+        io.to(
+          String(schoolId)
+        ).emit(
+          "user:removed",
+          {
+            userId:
+              targetUser._id,
+
+            role:
+              targetRole
+          }
+        );
+      }
+
+      return res.json({
+        message:
+          "User removed from school."
+      });
+    } catch (error) {
+      if (
+        mongoSession?.inTransaction()
+      ) {
+        await mongoSession
+          .abortTransaction()
+          .catch(() => {});
+      }
+
+      console.error(
+        "SCHOOL USER DELETE ERROR:",
+        error
+      );
+
+      return res.status(500).json({
+        message:
+          error.message ||
+          "Failed to remove user."
+      });
+    } finally {
+      if (mongoSession) {
+        await mongoSession
+          .endSession()
+          .catch(() => {});
+      }
     }
-
-    const isAdmin = req.user.role === "admin";
-    const isSchoolAllowed = canSchoolManageUser(req.user, targetUser);
-
-    if (!isAdmin && !isSchoolAllowed) {
-      return res.status(403).json({ message: "Not allowed to remove this user" });
-    }
-
-    if (isAdmin) {
-      await targetUser.deleteOne();
-      return res.json({ message: "User deleted successfully" });
-    }
-
-    if (!["teacher", "student", "talent"].includes(String(targetUser.role))) {
-      return res.status(403).json({ message: "School can only remove teachers/students" });
-    }
-
-    targetUser.schoolId = null;
-    targetUser.linkedSchoolId = null;
-    targetUser.companyId = null;
-    targetUser.createdBySchool = null;
-
-    if (targetUser.role === "teacher") {
-      targetUser.assignedClasses = [];
-    }
-
-    await targetUser.save();
-
-    res.json({ message: "User removed from school" });
-  } catch (err) {
-    console.error("SCHOOL USER DELETE ERROR:", err);
-    res.status(400).json({ message: err.message || "Failed to remove user" });
   }
-});
+);
 
 router.get("/activity", auth, async (req, res) => {
   const applications = await Application.find({ applicantId: req.user.id });
