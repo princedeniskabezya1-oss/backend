@@ -289,6 +289,12 @@ app.use("/api/lesson-progress", lessonProgressRoutes);
 const http = require("http");
 const { Server } = require("socket.io");
 
+const {
+  schoolAnalyticsRoom
+} = require(
+  "./services/analyticsRealtimeService"
+);
+
 const server = http.createServer(app);
 
 const io = new Server(server, {
@@ -329,27 +335,120 @@ const onlineUsers = new Map();
 io.on("connection", socket => {
   console.log("User connected:", socket.id);
 
-  socket.on("join", userId => {
-    if (!userId) return;
+socket.on("join", payload => {
 
-    const id = String(userId);
+  /*
+    Backwards compatibility.
 
-    socket.join(id);
-    socket.userId = id;
+    Older frontend versions still send:
 
-    onlineUsers.set(id, {
-      socketId: socket.id,
-      lastSeen: new Date(),
-      online: true
-    });
+    socket.emit("join", userId)
 
-    io.emit("userOnline", {
-      userId: id,
-      online: true
-    });
+    while the upgraded frontend sends:
 
-    console.log("User joined room:", id);
+    socket.emit("join", {
+        userId,
+        role
+    })
+
+  */
+
+  const joinData =
+    typeof payload === "object"
+      ? payload
+      : {
+          userId: payload
+        };
+
+  if (!joinData.userId) {
+    return;
+  }
+
+  const userId =
+    String(joinData.userId);
+
+  socket.userId =
+    userId;
+
+  socket.userRole =
+    String(
+      joinData.role || ""
+    ).toLowerCase();
+
+  /*
+    Existing private room.
+
+    Messages
+
+    Notifications
+
+    Calls
+
+    etc.
+  */
+
+  socket.join(userId);
+
+  /*
+    New analytics room.
+
+    Only schools and admins join it.
+
+    Students never receive analytics.
+
+    Teachers never receive analytics.
+
+  */
+
+  if (
+    socket.userRole === "school" ||
+    socket.userRole === "admin"
+  ) {
+
+    socket.join(
+      schoolAnalyticsRoom(
+        userId
+      )
+    );
+
+  }
+
+  onlineUsers.set(userId, {
+
+    socketId:
+      socket.id,
+
+    lastSeen:
+      new Date(),
+
+    online:true
+
   });
+
+  io.emit("userOnline", {
+
+    userId,
+
+    online:true
+
+  });
+
+  console.log(
+
+    "Socket joined:",
+
+    {
+
+      userId,
+
+      role:
+        socket.userRole
+
+    }
+
+  );
+
+});
 
   socket.on("typing", ({ to }) => {
     if (!to || !socket.userId) return;
@@ -535,6 +634,29 @@ socket.on("webrtcIceCandidate", ({ to, candidate, meetingId, callId }) => {
     console.log("User disconnected:", socket.id);
 
     if (socket.userId) {
+      /*
+  Leave analytics room.
+
+  Socket.IO removes all rooms automatically,
+  but this keeps our own state explicit.
+*/
+
+if (
+  socket.userRole === "school" ||
+  socket.userRole === "admin"
+) {
+
+  socket.leave(
+
+    schoolAnalyticsRoom(
+
+      socket.userId
+
+    )
+
+  );
+
+}
       onlineUsers.set(socket.userId, {
         socketId: socket.id,
         lastSeen: new Date(),
