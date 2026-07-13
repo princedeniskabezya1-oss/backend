@@ -1,6 +1,10 @@
 "use strict";
 
-const AnalyticsEvent = require("../models/AnalyticsEvent");
+const mongoose = require("mongoose");
+
+const AnalyticsEvent = require(
+  "../models/AnalyticsEvent"
+);
 
 /*
 ==========================================================
@@ -145,17 +149,30 @@ module.exports=function validateAnalyticsEvent(
         -----------------------------------
         */
 
-        if(!body.schoolId){
-
-            return res.status(400).json({
-
-                success:false,
-
-                message:"schoolId is required."
-
-            });
-
-        }
+if (
+  !body.schoolId ||
+  !mongoose.Types.ObjectId.isValid(
+    String(body.schoolId)
+  )
+) {
+  return res.status(400).json({
+    success: false,
+    message:
+      "A valid schoolId is required."
+  });
+}
+if (
+  body.entityId &&
+  !mongoose.Types.ObjectId.isValid(
+    String(body.entityId)
+  )
+) {
+  return res.status(400).json({
+    success: false,
+    message:
+      "A valid entityId is required."
+  });
+}
 
         /*
         -----------------------------------
@@ -201,6 +218,7 @@ module.exports=function validateAnalyticsEvent(
             });
 
         }
+        
 
         /*
         -----------------------------------
@@ -208,13 +226,41 @@ module.exports=function validateAnalyticsEvent(
         -----------------------------------
         */
 
-        body.metadata=sanitizeMetadata(
-            body.metadata||{}
-        );
+body.metadata = sanitizeMetadata(
+  body.metadata || {}
+);
 
-        req.body=body;
+req.body = body;
 
-        next();
+/*
+  Provide a controlled analytics payload to the controller.
+
+  The controller prefers this object over the original
+  request body.
+*/
+req.validatedAnalyticsEvent = {
+  schoolId: body.schoolId,
+
+  eventType: body.eventType,
+
+  entityType:
+    body.entityType ||
+    "school",
+
+  entityId:
+    body.entityId ||
+    null,
+
+  source:
+    req.analyticsContext?.source ||
+    body.source ||
+    "unknown",
+
+  metadata:
+    body.metadata
+};
+
+return next();
 
     }
     catch(error){
