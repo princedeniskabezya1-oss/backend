@@ -1,198 +1,237 @@
 "use strict";
 
-const mongoose = require("mongoose");
+const AnalyticsEvent = require("../models/AnalyticsEvent");
 
-const ALLOWED_EVENT_TYPES = new Set([
-  "profile_view",
-  "profile_unique_view",
+/*
+==========================================================
+VALID EVENT TYPES
+==========================================================
+*/
 
-  "follow",
-  "unfollow",
+const VALID_EVENT_TYPES = new Set(
+    AnalyticsEvent.ANALYTICS_EVENT_TYPES
+);
 
-  "post_impression",
-  "post_view",
-  "post_like",
-  "post_unlike",
-  "post_comment",
-  "post_share",
-  "post_save",
-  "post_unsave",
+/*
+==========================================================
+VALID ENTITY TYPES
+==========================================================
+*/
 
-  "student_view",
-  "student_added",
-  "student_removed",
+const VALID_ENTITY_TYPES = new Set(
+    AnalyticsEvent.ANALYTICS_ENTITY_TYPES
+);
 
-  "teacher_view",
-  "teacher_added",
-  "teacher_removed",
+/*
+==========================================================
+MAXIMUM METADATA SIZE
+==========================================================
+*/
 
-  "class_created",
-  "class_view",
-  "class_enrolled",
-  "class_completed",
+const MAX_METADATA_KEYS = 30;
 
-  "schedule_created",
-  "schedule_view",
-  "schedule_attended",
+const MAX_METADATA_DEPTH = 5;
 
-  "attendance_present",
-  "attendance_late",
-  "attendance_absent",
-  "attendance_excused",
+const MAX_STRING_LENGTH = 500;
 
-  "assignment_created",
-  "assignment_view",
-  "assignment_submitted",
-  "assignment_reviewed",
-  "assignment_completed",
+/*
+==========================================================
+SAFE OBJECT CHECK
+==========================================================
+*/
 
-  "career_view",
-  "career_opportunity_created",
-  "career_application",
-  "career_placement",
+function isPlainObject(value){
 
-  "search_impression",
-  "search_click"
-]);
+    if(
+        value===null ||
+        typeof value!=="object"
+    ){
+        return false;
+    }
 
-const ALLOWED_ENTITY_TYPES = new Set([
-  "school",
-  "post",
-  "student",
-  "teacher",
-  "class",
-  "schedule",
-  "assignment",
-  "submission",
-  "opportunity",
-  "application"
-]);
+    return (
+        Object.getPrototypeOf(value)===Object.prototype
+    );
+}
 
-const ALLOWED_METADATA_KEYS = new Set([
-  "tab",
-  "section",
-  "position",
-  "resultIndex",
-  "searchTerm",
-  "contentType",
-  "status",
-  "deviceType",
-  "viewerRole",
-  "durationMs"
-]);
+/*
+==========================================================
+RECURSIVE SANITIZER
+==========================================================
+*/
 
-function sanitizeString(value, maximumLength = 200) {
-  if (value === null || value === undefined) {
+function sanitizeMetadata(
+    value,
+    depth=0
+){
+
+    if(depth>MAX_METADATA_DEPTH){
+        return {};
+    }
+
+    if(Array.isArray(value)){
+
+        return value
+            .slice(0,50)
+            .map(item=>sanitizeMetadata(item,depth+1));
+
+    }
+
+    if(isPlainObject(value)){
+
+        const output={};
+
+        Object.keys(value)
+            .slice(0,MAX_METADATA_KEYS)
+            .forEach(key=>{
+
+                output[key]=sanitizeMetadata(
+                    value[key],
+                    depth+1
+                );
+
+            });
+
+        return output;
+
+    }
+
+    if(typeof value==="string"){
+
+        return value
+            .trim()
+            .slice(0,MAX_STRING_LENGTH);
+
+    }
+
+    if(
+        typeof value==="number" &&
+        Number.isFinite(value)
+    ){
+        return value;
+    }
+
+    if(typeof value==="boolean"){
+        return value;
+    }
+
+    if(value instanceof Date){
+        return value;
+    }
+
     return null;
-  }
 
-  return String(value)
-    .trim()
-    .slice(0, maximumLength);
 }
 
-function sanitizeMetadata(metadata) {
-  if (
-    !metadata ||
-    typeof metadata !== "object" ||
-    Array.isArray(metadata)
-  ) {
-    return {};
-  }
+/*
+==========================================================
+VALIDATION MIDDLEWARE
+==========================================================
+*/
 
-  const clean = {};
+module.exports=function validateAnalyticsEvent(
+    req,
+    res,
+    next
+){
 
-  for (const [key, value] of Object.entries(metadata)) {
-    if (!ALLOWED_METADATA_KEYS.has(key)) {
-      continue;
+    try{
+
+        const body=req.body||{};
+
+        /*
+        -----------------------------------
+        SCHOOL
+        -----------------------------------
+        */
+
+        if(!body.schoolId){
+
+            return res.status(400).json({
+
+                success:false,
+
+                message:"schoolId is required."
+
+            });
+
+        }
+
+        /*
+        -----------------------------------
+        EVENT TYPE
+        -----------------------------------
+        */
+
+        if(
+            !VALID_EVENT_TYPES.has(
+                body.eventType
+            )
+        ){
+
+            return res.status(400).json({
+
+                success:false,
+
+                message:"Invalid analytics event."
+
+            });
+
+        }
+
+        /*
+        -----------------------------------
+        ENTITY TYPE
+        -----------------------------------
+        */
+
+        if(
+            body.entityType &&
+            !VALID_ENTITY_TYPES.has(
+                body.entityType
+            )
+        ){
+
+            return res.status(400).json({
+
+                success:false,
+
+                message:"Invalid entity type."
+
+            });
+
+        }
+
+        /*
+        -----------------------------------
+        SANITIZE
+        -----------------------------------
+        */
+
+        body.metadata=sanitizeMetadata(
+            body.metadata||{}
+        );
+
+        req.body=body;
+
+        next();
+
+    }
+    catch(error){
+
+        console.error(
+            "validateAnalyticsEvent:",
+            error
+        );
+
+        return res.status(500).json({
+
+            success:false,
+
+            message:"Analytics validation failed."
+
+        });
+
     }
 
-    if (
-      typeof value === "string" ||
-      typeof value === "number" ||
-      typeof value === "boolean"
-    ) {
-      clean[key] =
-        typeof value === "string"
-          ? sanitizeString(value, 300)
-          : value;
-    }
-  }
-
-  return clean;
-}
-
-function validateAnalyticsEvent(req, res, next) {
-  const schoolId = sanitizeString(
-    req.body?.schoolId,
-    64
-  );
-
-  const eventType = sanitizeString(
-    req.body?.eventType,
-    80
-  );
-
-  const entityType =
-    sanitizeString(
-      req.body?.entityType,
-      80
-    ) || "school";
-
-  const entityId = sanitizeString(
-    req.body?.entityId,
-    64
-  );
-
-  if (
-    !schoolId ||
-    !mongoose.Types.ObjectId.isValid(schoolId)
-  ) {
-    return res.status(400).json({
-      success: false,
-      message: "A valid schoolId is required."
-    });
-  }
-
-  if (!ALLOWED_EVENT_TYPES.has(eventType)) {
-    return res.status(400).json({
-      success: false,
-      message: "Unsupported analytics event type."
-    });
-  }
-
-  if (!ALLOWED_ENTITY_TYPES.has(entityType)) {
-    return res.status(400).json({
-      success: false,
-      message: "Unsupported analytics entity type."
-    });
-  }
-
-  if (
-    entityId &&
-    !mongoose.Types.ObjectId.isValid(entityId)
-  ) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid analytics entityId."
-    });
-  }
-
-  req.validatedAnalyticsEvent = {
-    schoolId,
-    eventType,
-    entityType,
-    entityId: entityId || null,
-    source:
-      req.analyticsContext?.source ||
-      "unknown",
-
-    metadata: sanitizeMetadata(
-      req.body?.metadata
-    )
-  };
-
-  return next();
-}
-
-module.exports = validateAnalyticsEvent;
+};
