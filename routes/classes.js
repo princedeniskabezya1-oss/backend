@@ -447,18 +447,63 @@ router.get("/:id/builder", auth, async (req, res) => {
 
     const user = req.user;
 
-    const canAccess =
-      user.role === "admin" ||
-      String(classDoc.schoolId?._id || classDoc.schoolId) === String(getUserSchoolId(user)) ||
-      String(classDoc.teacherId?._id || classDoc.teacherId) === String(user._id) ||
-      (Array.isArray(classDoc.studentIds) &&
-        classDoc.studentIds.some(student => String(student._id || student) === String(user._id)));
+const classSchoolId = String(classDoc.schoolId?._id || classDoc.schoolId);
+const userSchoolId = String(getUserSchoolId(user) || "");
+const classTeacherId = String(classDoc.teacherId?._id || classDoc.teacherId || "");
+const userId = String(user._id);
 
-    if (!canAccess) {
-      return res.status(403).json({
-        message: "Not allowed to view this class builder"
-      });
+const isAdmin =
+  user.role === "admin";
+
+const isSchool =
+  classSchoolId === userSchoolId;
+
+const isTeacher =
+  classTeacherId === userId;
+
+const isStudent =
+  Array.isArray(classDoc.studentIds) &&
+  classDoc.studentIds.some(
+    student => String(student._id || student) === userId
+  );
+
+const canAccess =
+  isAdmin ||
+  isSchool ||
+  isTeacher ||
+  isStudent;
+
+console.log("========== CLASS BUILDER ACCESS ==========");
+console.log({
+  role: user.role,
+  userId,
+  userSchoolId,
+  classSchoolId,
+  classTeacherId,
+  isAdmin,
+  isSchool,
+  isTeacher,
+  isStudent,
+  canAccess
+});
+console.log("==========================================");
+
+if (!canAccess) {
+  return res.status(403).json({
+    message: "Not allowed to view this class builder",
+    debug: {
+      role: user.role,
+      userId,
+      userSchoolId,
+      classSchoolId,
+      classTeacherId,
+      isAdmin,
+      isSchool,
+      isTeacher,
+      isStudent
     }
+  });
+}
 
     const schoolId = classDoc.schoolId?._id || classDoc.schoolId;
 
