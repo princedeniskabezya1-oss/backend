@@ -16,33 +16,172 @@ const auth = require("../middleware/auth");
 const Class = require("../models/Class");
 const User = require("../models/User");
 
-function canManageSchool(user, schoolId) {
-  if (!user) return false;
+/* ============================================
+   CLASS ACCESS HELPERS
+============================================ */
 
-  if (user.role === "admin") return true;
+function normalizeRole(value) {
+  const role = String(value || "")
+    .trim()
+    .toLowerCase();
 
-  if (user.role === "school" && String(user._id) === String(schoolId)) {
-    return true;
+  const aliases = {
+    instructor: "teacher",
+    faculty: "teacher",
+    learner: "student",
+    administrator: "admin"
+  };
+
+  return aliases[role] || role;
+}
+
+function normalizeObjectId(value) {
+  if (!value) {
+    return "";
   }
 
   if (
-    user.role === "teacher" &&
-    String(user.schoolId || user.linkedSchoolId) === String(schoolId)
+    typeof value === "object" &&
+    value._id
   ) {
+    return String(value._id);
+  }
+
+  return String(value);
+}
+
+function getUserSchoolIds(user) {
+  if (!user) {
+    return [];
+  }
+
+  const role =
+    normalizeRole(user.role);
+
+  const candidates = [
+    user.schoolId,
+    user.linkedSchoolId
+  ];
+
+  /*
+    A school account itself is the owning school record.
+  */
+  if (role === "school") {
+    candidates.push(user._id);
+  }
+
+  return [
+    ...new Set(
+      candidates
+        .map(normalizeObjectId)
+        .filter(Boolean)
+    )
+  ];
+}
+
+function getUserSchoolId(user) {
+  return (
+    getUserSchoolIds(user)[0] ||
+    null
+  );
+}
+
+function canManageSchool(user, schoolId) {
+  if (!user || !schoolId) {
+    return false;
+  }
+
+  const role =
+    normalizeRole(user.role);
+
+  if (role === "admin") {
     return true;
+  }
+
+  const normalizedSchoolId =
+    normalizeObjectId(schoolId);
+
+  const belongsToSchool =
+    getUserSchoolIds(user)
+      .includes(
+        normalizedSchoolId
+      );
+
+  if (role === "school") {
+    return belongsToSchool;
+  }
+
+  if (role === "teacher") {
+    return belongsToSchool;
   }
 
   return false;
 }
 
-function getUserSchoolId(user) {
-  if (!user) return null;
-
-  if (user.role === "school") {
-    return user._id;
+function canViewClassBuilder(
+  user,
+  classDoc
+) {
+  if (!user || !classDoc) {
+    return false;
   }
 
-  return user.schoolId || user.linkedSchoolId || user.companyId || null;
+  const role =
+    normalizeRole(user.role);
+
+  const userId =
+    normalizeObjectId(user._id);
+
+  const classSchoolId =
+    normalizeObjectId(
+      classDoc.schoolId
+    );
+
+  const classTeacherId =
+    normalizeObjectId(
+      classDoc.teacherId
+    );
+
+  const studentIds =
+    Array.isArray(
+      classDoc.studentIds
+    )
+      ? classDoc.studentIds
+          .map(normalizeObjectId)
+          .filter(Boolean)
+      : [];
+
+  if (role === "admin") {
+    return true;
+  }
+
+  if (
+    role === "school" &&
+    getUserSchoolIds(user)
+      .includes(classSchoolId)
+  ) {
+    return true;
+  }
+
+  if (
+    role === "teacher" &&
+    (
+      classTeacherId === userId ||
+      getUserSchoolIds(user)
+        .includes(classSchoolId)
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    role === "student" &&
+    studentIds.includes(userId)
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 function normalizeArray(value) {
@@ -445,63 +584,54 @@ router.get("/:id/builder", auth, async (req, res) => {
       });
     }
 
-    const user = req.user;
-
-const classSchoolId = String(classDoc.schoolId?._id || classDoc.schoolId);
-const userSchoolId = String(getUserSchoolId(user) || "");
-const classTeacherId = String(classDoc.teacherId?._id || classDoc.teacherId || "");
-const userId = String(user._id);
-
-const isAdmin =
-  user.role === "admin";
-
-const isSchool =
-  classSchoolId === userSchoolId;
-
-const isTeacher =
-  classTeacherId === userId;
-
-const isStudent =
-  Array.isArray(classDoc.studentIds) &&
-  classDoc.studentIds.some(
-    student => String(student._id || student) === userId
-  );
+const user =
+  req.user;
 
 const canAccess =
-  isAdmin ||
-  isSchool ||
-  isTeacher ||
-  isStudent;
-
-console.log("========== CLASS BUILDER ACCESS ==========");
-console.log({
-  role: user.role,
-  userId,
-  userSchoolId,
-  classSchoolId,
-  classTeacherId,
-  isAdmin,
-  isSchool,
-  isTeacher,
-  isStudent,
-  canAccess
-});
-console.log("==========================================");
+  canViewClassBuilder(
+    user,
+    classDoc
+  );
 
 if (!canAccess) {
-  return res.status(403).json({
-    message: "Not allowed to view this class builder",
-    debug: {
-      role: user.role,
-      userId,
-      userSchoolId,
-      classSchoolId,
-      classTeacherId,
-      isAdmin,
-      isSchool,
-      isTeacher,
-      isStudent
+  console.warn(
+    "Class builder access denied",
+    {
+      classId:
+        normalizeObjectId(
+          classDoc._id
+        ),
+
+      role:
+        normalizeRole(
+          user.role
+        ),
+
+      userId:
+        normalizeObjectId(
+          user._id
+        ),
+
+      userSchoolIds:
+        getUserSchoolIds(
+          user
+        ),
+
+      classSchoolId:
+        normalizeObjectId(
+          classDoc.schoolId
+        ),
+
+      classTeacherId:
+        normalizeObjectId(
+          classDoc.teacherId
+        )
     }
+  );
+
+  return res.status(403).json({
+    message:
+      "Not allowed to view this class builder"
   });
 }
 
