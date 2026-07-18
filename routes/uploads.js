@@ -8,77 +8,202 @@ const cloudinary = require("../config/cloudinary");
 const router = express.Router();
 
 /* =========================================================
+   CONSTANTS
+========================================================= */
+
+const ALLOWED_UPLOAD_ROLES = new Set([
+  "admin",
+  "school",
+  "teacher"
+]);
+
+const LESSON_COVER_TYPES = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "image/gif"
+]);
+
+const LESSON_VIDEO_TYPES = new Set([
+  "video/mp4",
+  "video/webm",
+  "video/quicktime"
+]);
+
+const MAX_LESSON_COVER_SIZE =
+  8 * 1024 * 1024;
+
+const MAX_LESSON_VIDEO_SIZE =
+  50 * 1024 * 1024;
+
+/* =========================================================
    HELPERS
 ========================================================= */
+
+function getAuthenticatedUserId(req) {
+  return String(
+    req.user?._id ||
+    req.user?.id ||
+    ""
+  ).trim();
+}
+
+function userCanUpload(req) {
+  const role =
+    String(
+      req.user?.role ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+  return ALLOWED_UPLOAD_ROLES.has(
+    role
+  );
+}
 
 function uploadBufferToCloudinary(
   fileBuffer,
   {
     folder,
-    publicId,
-    resourceType = "image",
-    transformation = []
-  } = {}
+    resourceType,
+    transformation
+  }
 ) {
-  return new Promise((resolve, reject) => {
-    const uploadStream =
-      cloudinary.uploader.upload_stream(
-        {
-          folder,
-          public_id: publicId || undefined,
-          resource_type: resourceType,
-          overwrite: false,
-          unique_filename: true,
-          use_filename: false,
-          transformation
-        },
-        (error, result) => {
-          if (error) {
-            return reject(error);
-          }
-
-          resolve(result);
-        }
-      );
-
-    Readable.from(fileBuffer).pipe(
-      uploadStream
-    );
-  });
-}
-
-function lessonCoverUploadMiddleware(
-  req,
-  res,
-  next
-) {
-  upload.single("cover")(
-    req,
-    res,
-    error => {
-      if (!error) {
-        return next();
-      }
+  return new Promise(
+    (resolve, reject) => {
+      const options = {
+        folder,
+        resource_type:
+          resourceType,
+        overwrite:
+          false,
+        unique_filename:
+          true,
+        use_filename:
+          false
+      };
 
       if (
-        error.code ===
-        "LIMIT_FILE_SIZE"
+        Array.isArray(
+          transformation
+        ) &&
+        transformation.length
       ) {
-        return res.status(413).json({
-          success: false,
-          message:
-            "The lesson cover is too large."
-        });
+        options.transformation =
+          transformation;
       }
 
-      return res.status(400).json({
-        success: false,
-        message:
-          error.message ||
-          "The lesson cover could not be uploaded."
-      });
+      const cloudinaryStream =
+        cloudinary.uploader.upload_stream(
+          options,
+          (error, result) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+
+            resolve(result);
+          }
+        );
+
+      Readable
+        .from(fileBuffer)
+        .pipe(cloudinaryStream);
     }
   );
+}
+
+function singleFileUpload(
+  fieldName
+) {
+  return function multerMiddleware(
+    req,
+    res,
+    next
+  ) {
+    upload.single(fieldName)(
+      req,
+      res,
+      error => {
+        if (!error) {
+          next();
+          return;
+        }
+
+        if (
+          error.code ===
+          "LIMIT_FILE_SIZE"
+        ) {
+          res.status(413).json({
+            success: false,
+            message:
+              "The selected file is larger than the allowed upload limit."
+          });
+
+          return;
+        }
+
+        res.status(400).json({
+          success: false,
+          message:
+            error.message ||
+            "The selected file could not be uploaded."
+        });
+      }
+    );
+  };
+}
+
+function cloudinaryResponse(
+  result,
+  originalFile,
+  mediaType
+) {
+  return {
+    success: true,
+
+    url:
+      result.secure_url,
+
+    secureUrl:
+      result.secure_url,
+
+    publicId:
+      result.public_id,
+
+    resourceType:
+      result.resource_type ||
+      mediaType,
+
+    mediaType,
+
+    width:
+      result.width ||
+      null,
+
+    height:
+      result.height ||
+      null,
+
+    duration:
+      result.duration ||
+      null,
+
+    format:
+      result.format ||
+      null,
+
+    bytes:
+      result.bytes ||
+      originalFile.size ||
+      0,
+
+    originalName:
+      originalFile.originalname ||
+      ""
+  };
 }
 
 /* =========================================================
@@ -88,25 +213,10 @@ function lessonCoverUploadMiddleware(
 router.post(
   "/lesson-cover",
   auth,
-  lessonCoverUploadMiddleware,
+  singleFileUpload("cover"),
   async (req, res) => {
     try {
-      const role =
-        String(
-          req.user?.role ||
-          ""
-        ).toLowerCase();
-
-      const allowedRoles =
-        new Set([
-          "admin",
-          "school",
-          "teacher"
-        ]);
-
-      if (
-        !allowedRoles.has(role)
-      ) {
+      if (!userCanUpload(req)) {
         return res.status(403).json({
           success: false,
           message:
@@ -122,17 +232,8 @@ router.post(
         });
       }
 
-      const allowedImageTypes =
-        new Set([
-          "image/jpeg",
-          "image/jpg",
-          "image/png",
-          "image/webp",
-          "image/gif"
-        ]);
-
       if (
-        !allowedImageTypes.has(
+        !LESSON_COVER_TYPES.has(
           req.file.mimetype
         )
       ) {
@@ -143,16 +244,9 @@ router.post(
         });
       }
 
-      /*
-        The general multer middleware allows files up to 50 MB,
-        but lesson covers should remain much smaller.
-      */
-      const lessonCoverLimit =
-        8 * 1024 * 1024;
-
       if (
         req.file.size >
-        lessonCoverLimit
+        MAX_LESSON_COVER_SIZE
       ) {
         return res.status(413).json({
           success: false,
@@ -162,11 +256,15 @@ router.post(
       }
 
       const userId =
-        String(
-          req.user?._id ||
-          req.user?.id ||
-          "unknown"
-        );
+        getAuthenticatedUserId(req);
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message:
+            "Your authenticated account could not be identified."
+        });
+      }
 
       const result =
         await uploadBufferToCloudinary(
@@ -174,8 +272,10 @@ router.post(
           {
             folder:
               `aift/classes/lesson-covers/${userId}`,
+
             resourceType:
               "image",
+
             transformation: [
               {
                 width: 1600,
@@ -188,23 +288,13 @@ router.post(
           }
         );
 
-      return res.status(201).json({
-        success: true,
-        url:
-          result.secure_url,
-        secureUrl:
-          result.secure_url,
-        publicId:
-          result.public_id,
-        width:
-          result.width || null,
-        height:
-          result.height || null,
-        format:
-          result.format || null,
-        bytes:
-          result.bytes || req.file.size
-      });
+      return res.status(201).json(
+        cloudinaryResponse(
+          result,
+          req.file,
+          "image"
+        )
+      );
     } catch (error) {
       console.error(
         "Lesson cover upload error:",
@@ -214,7 +304,109 @@ router.post(
       return res.status(500).json({
         success: false,
         message:
+          error?.message ||
           "Failed to upload the lesson cover image."
+      });
+    }
+  }
+);
+
+/* =========================================================
+   POST /api/uploads/lesson-video
+========================================================= */
+
+router.post(
+  "/lesson-video",
+  auth,
+  singleFileUpload("video"),
+  async (req, res) => {
+    try {
+      if (!userCanUpload(req)) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "You are not allowed to upload lesson videos."
+        });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Please select a lesson video."
+        });
+      }
+
+      if (
+        !LESSON_VIDEO_TYPES.has(
+          req.file.mimetype
+        )
+      ) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Lesson videos must be MP4, WEBM, or MOV files."
+        });
+      }
+
+      if (
+        req.file.size >
+        MAX_LESSON_VIDEO_SIZE
+      ) {
+        return res.status(413).json({
+          success: false,
+          message:
+            "Lesson videos must be 50 MB or smaller."
+        });
+      }
+
+      const userId =
+        getAuthenticatedUserId(req);
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          message:
+            "Your authenticated account could not be identified."
+        });
+      }
+
+      const result =
+        await uploadBufferToCloudinary(
+          req.file.buffer,
+          {
+            folder:
+              `aift/classes/lesson-videos/${userId}`,
+
+            resourceType:
+              "video",
+
+            /*
+              Image transformations must not be applied
+              to uploaded video files.
+            */
+            transformation: []
+          }
+        );
+
+      return res.status(201).json(
+        cloudinaryResponse(
+          result,
+          req.file,
+          "video"
+        )
+      );
+    } catch (error) {
+      console.error(
+        "Lesson video upload error:",
+        error
+      );
+
+      return res.status(500).json({
+        success: false,
+        message:
+          error?.message ||
+          "Failed to upload the lesson video."
       });
     }
   }
