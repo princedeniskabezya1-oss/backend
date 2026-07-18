@@ -14,8 +14,9 @@ const fileFilter = (req, file, cb) => {
     "image/png",
     "image/webp",
     "image/jpg",
-    "video/mp4",
-    "video/quicktime",
+"video/mp4",
+"video/webm",
+"video/quicktime",
     "application/pdf",
     "application/msword",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -25,7 +26,12 @@ const fileFilter = (req, file, cb) => {
     return cb(null, true);
   }
 
-  cb(new Error("Unsupported file type. Please upload JPG, PNG, WEBP, MP4, or MOV only."), false);
+  cb(
+  new Error(
+    "Unsupported file type. Please upload JPG, PNG, WEBP, GIF, MP4, WEBM, MOV, PDF, DOC, or DOCX files."
+  ),
+  false
+);
 };
 
 const upload = multer({
