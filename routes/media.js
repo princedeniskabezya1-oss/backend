@@ -1602,6 +1602,462 @@ router.get(
 );
 
 /* =========================================================
+   GET /api/media/analytics
+========================================================= */
+
+router.get(
+  "/analytics",
+  auth,
+  async (req, res) => {
+
+    try {
+
+      const classId = safeString(req.query.classId);
+
+      const access =
+        await resolveClassAccess(
+          req,
+          {
+            classId,
+            requireManagement:false
+          }
+        );
+
+      if(!access.allowed){
+        return sendAccessError(res, access);
+      }
+
+      const baseQuery = {
+
+        schoolId:access.schoolId,
+
+        classId:access.classId || null,
+
+        isDeleted:false
+
+      };
+
+      const [
+
+        totalFiles,
+
+        storage,
+
+        images,
+
+        videos,
+
+        audio,
+
+        documents,
+
+        favorites,
+
+        trash,
+
+        mostUsed,
+
+        largest,
+
+        recent,
+
+        unused
+
+      ] = await Promise.all([
+
+        Media.countDocuments(baseQuery),
+
+        Media.aggregate([
+          {$match:baseQuery},
+          {$group:{_id:null,total:{$sum:"$size"}}}
+        ]),
+
+        Media.countDocuments({...baseQuery,mediaType:"image"}),
+
+        Media.countDocuments({...baseQuery,mediaType:"video"}),
+
+        Media.countDocuments({...baseQuery,mediaType:"audio"}),
+
+        Media.countDocuments({...baseQuery,mediaType:"document"}),
+
+        Media.countDocuments({
+          ...baseQuery,
+          favoriteBy:getUserId(req)
+        }),
+
+        Media.countDocuments({
+          schoolId:access.schoolId,
+          classId:access.classId || null,
+          isDeleted:true
+        }),
+
+        Media.find(baseQuery)
+          .sort({usageCount:-1})
+          .limit(10)
+          .select("name usageCount thumbnailUrl mediaType"),
+
+        Media.find(baseQuery)
+          .sort({size:-1})
+          .limit(10)
+          .select("name size thumbnailUrl mediaType"),
+
+        Media.find(baseQuery)
+          .sort({createdAt:-1})
+          .limit(10)
+          .select("name createdAt thumbnailUrl mediaType"),
+
+        Media.find({
+          ...baseQuery,
+          usageCount:0
+        })
+          .limit(20)
+          .select("name thumbnailUrl mediaType")
+
+      ]);
+
+      return res.json({
+
+        success:true,
+
+        analytics:{
+
+          totalFiles,
+
+          totalStorage:
+            storage[0]?.total || 0,
+
+          images,
+
+          videos,
+
+          audio,
+
+          documents,
+
+          favorites,
+
+          trash,
+
+          mostUsed,
+
+          largest,
+
+          recentUploads:recent,
+
+          unused
+
+        }
+
+      });
+
+    }
+
+    catch(error){
+
+      console.error(
+        "Media analytics error:",
+        error
+      );
+
+      return res.status(500).json({
+
+        success:false,
+
+        message:
+          "Failed to load media analytics."
+
+      });
+
+    }
+
+  }
+);
+
+/* =========================================================
+   GET /api/media/duplicates
+========================================================= */
+
+router.get(
+  "/duplicates",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+    try {
+      const classId =
+        safeString(
+          req.query.classId
+        );
+
+      const access =
+        await resolveClassAccess(
+          req,
+          {
+            classId,
+
+            requireManagement:
+              true
+          }
+        );
+
+      if (!access.allowed) {
+        return sendAccessError(
+          res,
+          access
+        );
+      }
+
+      const baseQuery = {
+        schoolId:
+          new mongoose.Types.ObjectId(
+            access.schoolId
+          ),
+
+        classId:
+          access.classId
+            ? new mongoose.Types.ObjectId(
+                access.classId
+              )
+            : null,
+
+        isDeleted:
+          false,
+
+        checksum: {
+          $exists:
+            true,
+
+          $ne:
+            ""
+        }
+      };
+
+      const duplicateGroups =
+        await Media.aggregate([
+          {
+            $match:
+              baseQuery
+          },
+
+          {
+            $group: {
+              _id: {
+                checksum:
+                  "$checksum",
+
+                size:
+                  "$size",
+
+                mimeType:
+                  "$mimeType"
+              },
+
+              count: {
+                $sum:
+                  1
+              },
+
+              totalSize: {
+                $sum:
+                  "$size"
+              },
+
+              files: {
+                $push: {
+                  _id:
+                    "$_id",
+
+                  name:
+                    "$name",
+
+                  originalName:
+                    "$originalName",
+
+                  mediaType:
+                    "$mediaType",
+
+                  mimeType:
+                    "$mimeType",
+
+                  size:
+                    "$size",
+
+                  url:
+                    "$url",
+
+                  secureUrl:
+                    "$secureUrl",
+
+                  thumbnailUrl:
+                    "$thumbnailUrl",
+
+                  folderId:
+                    "$folderId",
+
+                  usageCount:
+                    "$usageCount",
+
+                  downloadCount:
+                    "$downloadCount",
+
+                  createdAt:
+                    "$createdAt",
+
+                  uploadedBy:
+                    "$uploadedBy"
+                }
+              }
+            }
+          },
+
+          {
+            $match: {
+              count: {
+                $gt:
+                  1
+              }
+            }
+          },
+
+          {
+            $sort: {
+              count:
+                -1,
+
+              totalSize:
+                -1
+            }
+          }
+        ]);
+
+      const duplicateFileCount =
+        duplicateGroups.reduce(
+          (
+            total,
+            group
+          ) =>
+            total +
+            Number(
+              group.count || 0
+            ),
+          0
+        );
+
+      const removableDuplicateCount =
+        duplicateGroups.reduce(
+          (
+            total,
+            group
+          ) =>
+            total +
+            Math.max(
+              0,
+              Number(
+                group.count || 0
+              ) - 1
+            ),
+          0
+        );
+
+      const recoverableStorage =
+        duplicateGroups.reduce(
+          (
+            total,
+            group
+          ) => {
+            const fileSize =
+              Number(
+                group._id?.size || 0
+              );
+
+            const removable =
+              Math.max(
+                0,
+                Number(
+                  group.count || 0
+                ) - 1
+              );
+
+            return total +
+              fileSize *
+              removable;
+          },
+          0
+        );
+
+      return res.json({
+        success:
+          true,
+
+        summary: {
+          duplicateGroups:
+            duplicateGroups.length,
+
+          duplicateFiles:
+            duplicateFileCount,
+
+          removableDuplicates:
+            removableDuplicateCount,
+
+          recoverableStorage
+        },
+
+        groups:
+          duplicateGroups.map(
+            group => ({
+              checksum:
+                group._id.checksum,
+
+              size:
+                group._id.size,
+
+              mimeType:
+                group._id.mimeType,
+
+              count:
+                group.count,
+
+              totalSize:
+                group.totalSize,
+
+              recoverableStorage:
+                Math.max(
+                  0,
+                  Number(
+                    group.count || 0
+                  ) - 1
+                ) *
+                Number(
+                  group._id.size || 0
+                ),
+
+              files:
+                group.files
+            })
+          )
+      });
+    } catch (error) {
+      console.error(
+        "Get media duplicates error:",
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          success:
+            false,
+
+          message:
+            error?.message ||
+            "Failed to identify duplicate media files."
+        });
+    }
+  }
+);
+
+/* =========================================================
    GET /api/media/:id
 ========================================================= */
 
@@ -3070,6 +3526,387 @@ router.post(
         });
     }
   }
+);
+
+/* =========================================================
+   POST /api/media/:id/download
+   TRACK DOWNLOAD AND RETURN FILE URL
+========================================================= */
+
+router.post(
+  "/:id/download",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+    try {
+      if (
+        !isValidObjectId(
+          req.params.id
+        )
+      ) {
+        return res
+          .status(400)
+          .json({
+            success:
+              false,
+
+            message:
+              "The media ID is invalid."
+          });
+      }
+
+      const media =
+        await Media.findById(
+          req.params.id
+        );
+
+      if (!media) {
+        return res
+          .status(404)
+          .json({
+            success:
+              false,
+
+            message:
+              "The media item could not be found."
+          });
+      }
+
+      const access =
+        await resolveClassAccess(
+          req,
+          {
+            classId:
+              safeString(
+                media.classId
+              ),
+
+            requireManagement:
+              false
+          }
+        );
+
+      if (
+        !access.allowed ||
+        !objectIdEquals(
+          access.schoolId,
+          media.schoolId
+        )
+      ) {
+        return res
+          .status(403)
+          .json({
+            success:
+              false,
+
+            message:
+              "You cannot download this media item."
+          });
+      }
+
+      if (media.isDeleted) {
+        return res
+          .status(410)
+          .json({
+            success:
+              false,
+
+            message:
+              "This media item is currently in Trash and cannot be downloaded."
+          });
+      }
+
+      if (
+        media.status !==
+        "ready"
+      ) {
+        return res
+          .status(409)
+          .json({
+            success:
+              false,
+
+            message:
+              media.status ===
+              "processing"
+                ? "This media item is still processing."
+                : "This media item is not available for download."
+          });
+      }
+
+      const downloadUrl =
+        safeString(
+          media.secureUrl ||
+          media.url
+        );
+
+      if (!downloadUrl) {
+        return res
+          .status(409)
+          .json({
+            success:
+              false,
+
+            message:
+              "This media item does not have a valid download URL."
+          });
+      }
+
+      media.downloadCount =
+        Math.max(
+          0,
+          Number(
+            media.downloadCount
+          ) || 0
+        ) + 1;
+
+      await media.save();
+
+      emitMediaEvent(
+        req,
+        "media:downloaded",
+        {
+          mediaId:
+            String(
+              media._id
+            ),
+
+          downloadCount:
+            media.downloadCount
+        },
+        media.schoolId,
+        media.classId
+      );
+
+      return res.json({
+        success:
+          true,
+
+        message:
+          "The media download has been recorded.",
+
+        download: {
+          mediaId:
+            String(
+              media._id
+            ),
+
+          name:
+            media.name,
+
+          url:
+            downloadUrl,
+
+          mimeType:
+            media.mimeType,
+
+          extension:
+            media.extension,
+
+          downloadCount:
+            media.downloadCount
+        }
+      });
+    } catch (error) {
+      console.error(
+        "Media download error:",
+        error
+      );
+
+      return res
+        .status(500)
+        .json({
+          success:
+            false,
+
+          message:
+            error?.message ||
+            "Failed to prepare the media download."
+        });
+    }
+  }
+);
+
+/* =========================================================
+   DELETE /api/media/:id/usage/:usageId
+========================================================= */
+
+router.delete(
+  "/:id/usage/:usageId",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try{
+
+      if(
+        !isValidObjectId(req.params.id)
+      ){
+
+        return res.status(400).json({
+
+          success:false,
+
+          message:
+            "The media ID is invalid."
+
+        });
+
+      }
+
+      const media =
+        await Media.findById(
+          req.params.id
+        );
+
+      if(!media){
+
+        return res.status(404).json({
+
+          success:false,
+
+          message:
+            "The media item could not be found."
+
+        });
+
+      }
+
+      const access =
+        await resolveClassAccess(
+          req,
+          {
+            classId:
+              safeString(
+                media.classId
+              ),
+
+            requireManagement:true
+          }
+        );
+
+      if(
+        !access.allowed ||
+        !objectIdEquals(
+          access.schoolId,
+          media.schoolId
+        )
+      ){
+
+        return res.status(403).json({
+
+          success:false,
+
+          message:
+            "You cannot modify this media item."
+
+        });
+
+      }
+
+      const usageId =
+        safeString(
+          req.params.usageId
+        );
+
+      const before =
+        media.usage.length;
+
+      media.usage =
+        media.usage.filter(
+
+          usage =>
+
+            String(
+              usage._id
+            ) !== usageId
+
+        );
+
+      if(
+        before ===
+        media.usage.length
+      ){
+
+        return res.status(404).json({
+
+          success:false,
+
+          message:
+            "Usage record not found."
+
+        });
+
+      }
+
+      media.usageCount =
+        media.usage.length;
+
+      await media.save();
+
+      emitMediaEvent(
+
+        req,
+
+        "media:usageRemoved",
+
+        {
+
+          mediaId:
+            String(
+              media._id
+            ),
+
+          usageCount:
+            media.usageCount
+
+        },
+
+        media.schoolId,
+
+        media.classId
+
+      );
+
+      return res.json({
+
+        success:true,
+
+        usageCount:
+          media.usageCount
+
+      });
+
+    }
+
+    catch(error){
+
+      console.error(
+
+        "Remove media usage error:",
+
+        error
+
+      );
+
+      return res.status(500).json({
+
+        success:false,
+
+        message:
+          error.message ||
+          "Failed to remove media usage."
+
+      });
+
+    }
+
+  }
+
 );
 
 /* =========================================================
