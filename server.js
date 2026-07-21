@@ -551,6 +551,49 @@ socket.on("endCall", ({ to, meetingId, callId }) => {
   });
 });
 
+  /* ============================================
+   MEDIA LIBRARY ROOM
+============================================ */
+
+socket.on(
+  "joinMediaRoom",
+  ({
+    classId
+  }) => {
+
+    if(
+      !classId ||
+      !socket.userId
+    ){
+      return;
+    }
+
+    socket.join(
+      `media:${classId}`
+    );
+
+  }
+);
+
+socket.on(
+  "leaveMediaRoom",
+  ({
+    classId
+  }) => {
+
+    if(
+      !classId
+    ){
+      return;
+    }
+
+    socket.leave(
+      `media:${classId}`
+    );
+
+  }
+);
+
   socket.on("joinMeetingRoom", ({ meetingId }) => {
     if (!meetingId || !socket.userId) return;
 
