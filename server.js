@@ -48,6 +48,7 @@ const classLessonRoutes = require("./routes/classLessons");
 const quizRoutes = require("./routes/quizzes");
 const lessonProgressRoutes = require("./routes/lessonProgress");
 const uploadRoutes = require("./routes/uploads");
+const mediaRoutes = require("./routes/media");
 
 const app = express();
 
@@ -285,6 +286,7 @@ app.use("/api/class-lessons", classLessonRoutes);
 app.use("/api/quizzes", quizRoutes);
 app.use("/api/lesson-progress", lessonProgressRoutes);
 app.use("/api/uploads", uploadRoutes);
+app.use("/api/media", mediaRoutes);
 /* ============================================
    SOCKET.IO
 ============================================ */
