@@ -67,14 +67,10 @@ app.set("trust proxy", 1);
    CORS
 ============================================ */
 
-/*
-  Configure these values in the Render Environment page:
+const PRODUCTION_FRONTEND_ORIGINS = [
+  "https://job-platform-frontend-nine.vercel.app"
+];
 
-  FRONTEND_URL=https://your-main-project.vercel.app
-  FRONTEND_URL_SECONDARY=https://your-secondary-project.vercel.app
-
-  FRONTEND_URL_SECONDARY is optional.
-*/
 const configuredFrontendOrigins = [
   process.env.FRONTEND_URL,
   process.env.FRONTEND_URL_SECONDARY
@@ -82,9 +78,6 @@ const configuredFrontendOrigins = [
   .map(value => String(value || "").trim())
   .filter(Boolean);
 
-/*
-  These origins are permitted for local development.
-*/
 const developmentOrigins = [
   "http://localhost:3000",
   "http://localhost:5173",
@@ -95,71 +88,115 @@ const developmentOrigins = [
 ];
 
 const allowedOrigins = new Set([
+  ...PRODUCTION_FRONTEND_ORIGINS,
   ...configuredFrontendOrigins,
   ...developmentOrigins
 ]);
 
-/*
-  This allows Vercel preview deployments.
+function normalizeOrigin(origin) {
+  return String(origin || "")
+    .trim()
+    .replace(/\/+$/, "");
+}
 
-  Later, when you use only stable production domains, you can
-  remove this function and rely only on FRONTEND_URL values.
-*/
-function isAllowedVercelPreview(origin) {
-  return /^https:\/\/[a-z0-9-]+\.vercel\.app$/i.test(
-    String(origin || "")
-  );
+function isAllowedVercelOrigin(origin) {
+  const normalizedOrigin = normalizeOrigin(origin);
+
+  if (!normalizedOrigin) {
+    return false;
+  }
+
+  try {
+    const parsedOrigin = new URL(normalizedOrigin);
+
+    return (
+      parsedOrigin.protocol === "https:" &&
+      parsedOrigin.hostname.endsWith(".vercel.app")
+    );
+  } catch (error) {
+    return false;
+  }
 }
 
 function validateRequestOrigin(origin, callback) {
   /*
-    Requests without an Origin header include:
+    Requests without an Origin header may include:
 
     - Render health checks
     - server-to-server requests
-    - API testing programs
-    - some native application clients
+    - Postman or API testing applications
+    - some native clients
   */
   if (!origin) {
     return callback(null, true);
   }
 
+  const normalizedOrigin = normalizeOrigin(origin);
+
+  const originIsExplicitlyAllowed =
+    Array.from(allowedOrigins).some(
+      allowedOrigin =>
+        normalizeOrigin(allowedOrigin) ===
+        normalizedOrigin
+    );
+
   if (
-    allowedOrigins.has(origin) ||
-    isAllowedVercelPreview(origin)
+    originIsExplicitlyAllowed ||
+    isAllowedVercelOrigin(normalizedOrigin)
   ) {
     return callback(null, true);
   }
 
-  const error = new Error(
-    `Origin is not allowed by CORS: ${origin}`
+  console.error("[CORS] Blocked request origin:", {
+    origin: normalizedOrigin,
+    allowedOrigins:
+      Array.from(allowedOrigins)
+  });
+
+  const corsError = new Error(
+    `Origin is not allowed by CORS: ${normalizedOrigin}`
   );
 
-  error.statusCode = 403;
+  corsError.statusCode = 403;
+  corsError.code = "CORS_ORIGIN_DENIED";
 
-  return callback(error);
+  return callback(corsError);
 }
 
 const corsOptions = {
-  origin: validateRequestOrigin,
+  origin:
+    validateRequestOrigin,
 
   methods: [
     "GET",
+    "HEAD",
     "POST",
-    "PATCH",
     "PUT",
+    "PATCH",
     "DELETE",
     "OPTIONS"
   ],
 
   allowedHeaders: [
-    "Content-Type",
+    "Accept",
     "Authorization",
+    "Content-Type",
+    "Origin",
+    "X-Requested-With",
+    "Cache-Control",
+    "Pragma",
+    "Range",
+    "If-None-Match",
     "X-Analytics-Session",
     "X-Analytics-Source"
   ],
 
   exposedHeaders: [
+    "Content-Length",
+    "Content-Range",
+    "Content-Type",
+    "Accept-Ranges",
+    "ETag",
     "RateLimit",
     "RateLimit-Policy",
     "RateLimit-Limit",
@@ -168,23 +205,39 @@ const corsOptions = {
   ],
 
   /*
-    Your frontend sends JWT tokens through the Authorization
-    header rather than cookies.
-  */
-  credentials: false,
+    Some Media Library modules use credentials: "include".
 
-  /*
-    Allow browsers to cache successful preflight responses
-    for 24 hours.
+    Access-Control-Allow-Credentials must therefore be enabled
+    for cross-origin browser requests.
   */
-  maxAge: 86400,
+  credentials:
+    true,
 
-  optionsSuccessStatus: 204
+  preflightContinue:
+    false,
+
+  optionsSuccessStatus:
+    204,
+
+  maxAge:
+    86400
 };
 
-app.use(cors(corsOptions));
+app.use(
+  cors(corsOptions)
+);
 
-app.options("*", cors(corsOptions));
+/*
+  Handle every preflight request before authentication,
+  uploads, routes, and other middleware execute.
+
+  The regular expression is compatible with newer Express
+  and path-to-regexp versions.
+*/
+app.options(
+  /.*/,
+  cors(corsOptions)
+);
 
 /* ============================================
    MIDDLEWARE
@@ -303,10 +356,8 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    /*
-      Reuse the same origin validation rules as Express.
-    */
-    origin: validateRequestOrigin,
+    origin:
+      validateRequestOrigin,
 
     methods: [
       "GET",
@@ -314,11 +365,17 @@ const io = new Server(server, {
     ],
 
     allowedHeaders: [
+      "Accept",
       "Authorization",
-      "Content-Type"
+      "Content-Type",
+      "Origin",
+      "X-Requested-With",
+      "Cache-Control",
+      "Pragma"
     ],
 
-    credentials: false
+    credentials:
+      true
   },
 
   /*
@@ -558,39 +615,56 @@ socket.on("endCall", ({ to, meetingId, callId }) => {
 socket.on(
   "joinMediaRoom",
   ({
-    classId
-  }) => {
-
-    if(
-      !classId ||
-      !socket.userId
-    ){
+    classId,
+    schoolId
+  } = {}) => {
+    if (!socket.userId) {
       return;
     }
 
-    socket.join(
-      `media:${classId}`
-    );
+    const normalizedClassId =
+      String(classId || "").trim();
 
+    const normalizedSchoolId =
+      String(schoolId || "").trim();
+
+    if (normalizedClassId) {
+      socket.join(
+        `media:class:${normalizedClassId}`
+      );
+    }
+
+    if (normalizedSchoolId) {
+      socket.join(
+        `media:school:${normalizedSchoolId}`
+      );
+    }
   }
 );
 
 socket.on(
   "leaveMediaRoom",
   ({
-    classId
-  }) => {
+    classId,
+    schoolId
+  } = {}) => {
+    const normalizedClassId =
+      String(classId || "").trim();
 
-    if(
-      !classId
-    ){
-      return;
+    const normalizedSchoolId =
+      String(schoolId || "").trim();
+
+    if (normalizedClassId) {
+      socket.leave(
+        `media:class:${normalizedClassId}`
+      );
     }
 
-    socket.leave(
-      `media:${classId}`
-    );
-
+    if (normalizedSchoolId) {
+      socket.leave(
+        `media:school:${normalizedSchoolId}`
+      );
+    }
   }
 );
 
