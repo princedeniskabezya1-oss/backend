@@ -2,6 +2,19 @@ const mongoose = require("mongoose");
 
 const quizQuestionSchema = new mongoose.Schema(
   {
+
+    source:{
+
+    type:String,
+
+    enum:[
+        "embedded",
+        "question_bank"
+    ],
+
+    default:"embedded"
+
+},
     question: {
       type: String,
       required: true,
@@ -28,6 +41,14 @@ const quizQuestionSchema = new mongoose.Schema(
   type: mongoose.Schema.Types.ObjectId,
   ref: "QuestionBank",
   default: null,
+},
+
+  snapshot:{
+
+    type:Boolean,
+
+    default:false
+
 },
 
 explanation: {
