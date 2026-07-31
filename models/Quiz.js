@@ -24,6 +24,27 @@ const quizQuestionSchema = new mongoose.Schema(
       default: "",
     },
 
+    questionBankId: {
+  type: mongoose.Schema.Types.ObjectId,
+  ref: "QuestionBank",
+  default: null,
+},
+
+explanation: {
+  type: String,
+  default: "",
+},
+
+difficulty: {
+  type: String,
+  default: "medium",
+},
+
+required: {
+  type: Boolean,
+  default: true,
+},
+
     points: {
       type: Number,
       default: 1,
