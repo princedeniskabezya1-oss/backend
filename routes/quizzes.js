@@ -1,187 +1,1082 @@
 const express = require("express");
 const router = express.Router();
 
+const auth = require("../middleware/auth");
+
 const Quiz = require("../models/Quiz");
 const QuizSubmission = require("../models/QuizSubmission");
+const Class = require("../models/Class");
 
-function pick(obj, fields) {
-  const out = {};
-  fields.forEach((field) => {
-    if (obj[field] !== undefined) out[field] = obj[field];
-  });
-  return out;
+
+/* ============================================
+   HELPERS
+============================================ */
+
+function normalizeRole(value) {
+  const role =
+    String(value || "")
+      .trim()
+      .toLowerCase();
+
+  const aliases = {
+    administrator: "admin",
+    instructor: "teacher",
+    faculty: "teacher",
+    learner: "student"
+  };
+
+  return aliases[role] || role;
 }
 
-/* GET /api/quizzes?classId=&moduleId=&lessonId=&schoolId= */
-router.get("/", async (req, res) => {
-  try {
-    const { classId, moduleId, lessonId, schoolId, status } = req.query;
 
-    const query = {};
-    if (classId) query.classId = classId;
-    if (moduleId) query.moduleId = moduleId;
-    if (lessonId) query.lessonId = lessonId;
-    if (schoolId) query.schoolId = schoolId;
-    if (status) query.status = status;
-
-    const quizzes = await Quiz.find(query)
-      .sort({ createdAt: -1 })
-      .lean();
-
-    res.json(quizzes);
-  } catch (err) {
-    console.error("GET quizzes error:", err);
-    res.status(500).json({ message: "Failed to load quizzes" });
+function normalizeObjectId(value) {
+  if (!value) {
+    return "";
   }
-});
 
-/* POST /api/quizzes */
-router.post("/", async (req, res) => {
-  try {
-    const { schoolId, classId, title } = req.body;
-
-    if (!schoolId || !classId || !title) {
-      return res.status(400).json({
-        message: "schoolId, classId, and title are required",
-      });
-    }
-
-    const quiz = await Quiz.create({
-      schoolId,
-      classId,
-      moduleId: req.body.moduleId || null,
-      lessonId: req.body.lessonId || null,
-      title,
-      instructions: req.body.instructions || "",
-      questions: Array.isArray(req.body.questions) ? req.body.questions : [],
-      passingScore: Number(req.body.passingScore || 70),
-      timeLimitMinutes: Number(req.body.timeLimitMinutes || 0),
-      attemptsAllowed: Number(req.body.attemptsAllowed || 1),
-      status: req.body.status || "draft",
-    });
-
-    res.status(201).json(quiz);
-  } catch (err) {
-    console.error("POST quiz error:", err);
-    res.status(500).json({ message: "Failed to create quiz" });
+  if (
+    typeof value === "object" &&
+    value._id
+  ) {
+    return String(value._id);
   }
-});
 
-/* PATCH /api/quizzes/:id */
-router.patch("/:id", async (req, res) => {
-  try {
-    const updates = pick(req.body, [
-      "moduleId",
-      "lessonId",
-      "title",
-      "instructions",
-      "questions",
-      "passingScore",
-      "timeLimitMinutes",
-      "attemptsAllowed",
-      "status",
-    ]);
+  return String(value);
+}
 
-    const quiz = await Quiz.findByIdAndUpdate(req.params.id, updates, {
-      new: true,
-      runValidators: true,
-    });
 
-    if (!quiz) {
-      return res.status(404).json({ message: "Quiz not found" });
-    }
-
-    res.json(quiz);
-  } catch (err) {
-    console.error("PATCH quiz error:", err);
-    res.status(500).json({ message: "Failed to update quiz" });
+function getUserSchoolIds(user) {
+  if (!user) {
+    return [];
   }
-});
 
-/* DELETE /api/quizzes/:id */
-router.delete("/:id", async (req, res) => {
-  try {
-    const quiz = await Quiz.findByIdAndDelete(req.params.id);
+  const role =
+    normalizeRole(user.role);
 
-    if (!quiz) {
-      return res.status(404).json({ message: "Quiz not found" });
-    }
+  const values = [
+    user.schoolId,
+    user.linkedSchoolId
+  ];
 
-    res.json({ message: "Quiz deleted" });
-  } catch (err) {
-    console.error("DELETE quiz error:", err);
-    res.status(500).json({ message: "Failed to delete quiz" });
+  if (role === "school") {
+    values.push(user._id);
   }
-});
 
-/* POST /api/quizzes/:id/submit */
-router.post("/:id/submit", async (req, res) => {
-  try {
-    const quiz = await Quiz.findById(req.params.id);
+  return [
+    ...new Set(
+      values
+        .map(normalizeObjectId)
+        .filter(Boolean)
+    )
+  ];
+}
 
-    if (!quiz) {
-      return res.status(404).json({ message: "Quiz not found" });
+
+function canManageSchool(user, schoolId) {
+  if (!user || !schoolId) {
+    return false;
+  }
+
+  const role =
+    normalizeRole(user.role);
+
+  if (role === "admin") {
+    return true;
+  }
+
+  if (
+    ![
+      "school",
+      "teacher"
+    ].includes(role)
+  ) {
+    return false;
+  }
+
+  return getUserSchoolIds(user)
+    .includes(
+      normalizeObjectId(schoolId)
+    );
+}
+
+
+function isStudentEnrolled(user, classDoc) {
+  if (!user || !classDoc) {
+    return false;
+  }
+
+  const role =
+    normalizeRole(user.role);
+
+  if (role !== "student") {
+    return false;
+  }
+
+  const studentId =
+    normalizeObjectId(user._id);
+
+  const enrolledStudentIds =
+    Array.isArray(classDoc.studentIds)
+      ? classDoc.studentIds
+          .map(normalizeObjectId)
+          .filter(Boolean)
+      : [];
+
+  return enrolledStudentIds.includes(
+    studentId
+  );
+}
+
+
+function canViewClass(user, classDoc) {
+  if (!user || !classDoc) {
+    return false;
+  }
+
+  const role =
+    normalizeRole(user.role);
+
+  if (role === "admin") {
+    return true;
+  }
+
+  if (
+    canManageSchool(
+      user,
+      classDoc.schoolId
+    )
+  ) {
+    return true;
+  }
+
+  return isStudentEnrolled(
+    user,
+    classDoc
+  );
+}
+
+
+function pick(object, fields) {
+  const output = {};
+
+  fields.forEach(field => {
+    if (
+      object[field] !== undefined
+    ) {
+      output[field] =
+        object[field];
     }
+  });
 
-    const { studentId, answers } = req.body;
+  return output;
+}
 
-    if (!studentId) {
-      return res.status(400).json({ message: "studentId is required" });
-    }
 
-    const submittedAnswers = Array.isArray(answers) ? answers : [];
+function normalizeAnswer(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
 
-    let totalPoints = 0;
-    let score = 0;
 
-    const gradedAnswers = quiz.questions.map((question) => {
-      const submitted = submittedAnswers.find(
-        (a) => String(a.questionId) === String(question._id)
+function gradeQuestion(
+  question,
+  submittedAnswer
+) {
+  const answer =
+    String(
+      submittedAnswer || ""
+    ).trim();
+
+  const correctAnswer =
+    String(
+      question.correctAnswer || ""
+    ).trim();
+
+  if (
+    question.type ===
+    "short_answer"
+  ) {
+    return (
+      normalizeAnswer(answer) ===
+      normalizeAnswer(correctAnswer)
+    );
+  }
+
+  return answer === correctAnswer;
+}
+
+
+/* ============================================
+   GET QUIZZES
+   GET /api/quizzes
+============================================ */
+
+router.get(
+  "/",
+  auth,
+  async (req, res) => {
+    try {
+      const {
+        classId,
+        moduleId,
+        lessonId,
+        schoolId,
+        status
+      } = req.query;
+
+      const query = {};
+
+      if (classId) {
+        const classDoc =
+          await Class.findById(
+            classId
+          ).select(
+            "schoolId teacherId studentIds"
+          );
+
+        if (!classDoc) {
+          return res.status(404).json({
+            message: "Class not found"
+          });
+        }
+
+        if (
+          !canViewClass(
+            req.user,
+            classDoc
+          )
+        ) {
+          return res.status(403).json({
+            message:
+              "Not allowed to view quizzes for this class"
+          });
+        }
+
+        query.classId =
+          classId;
+      } else {
+        const role =
+          normalizeRole(
+            req.user.role
+          );
+
+        if (role === "admin") {
+          if (schoolId) {
+            query.schoolId =
+              schoolId;
+          }
+        } else {
+          const userSchoolIds =
+            getUserSchoolIds(
+              req.user
+            );
+
+          if (!userSchoolIds.length) {
+            return res.status(403).json({
+              message:
+                "User is not linked to a school"
+            });
+          }
+
+          query.schoolId = {
+            $in: userSchoolIds
+          };
+        }
+      }
+
+      if (moduleId) {
+        query.moduleId =
+          moduleId;
+      }
+
+      if (lessonId) {
+        query.lessonId =
+          lessonId;
+      }
+
+      if (status) {
+        query.status =
+          status;
+      }
+
+      /*
+        Students should only see published quizzes.
+      */
+      if (
+        normalizeRole(
+          req.user.role
+        ) === "student"
+      ) {
+        query.status =
+          "published";
+      }
+
+      const quizzes =
+        await Quiz.find(query)
+          .sort({
+            createdAt: -1
+          })
+          .lean();
+
+      return res.json(
+        quizzes
+      );
+    } catch (err) {
+      console.error(
+        "GET /api/quizzes error:",
+        err
       );
 
-      const points = Number(question.points || 1);
-      totalPoints += points;
-
-      const submittedAnswer = String(submitted?.answer || "").trim();
-      const correctAnswer = String(question.correctAnswer || "").trim();
-
-      const isCorrect =
-        question.type === "short_answer"
-          ? submittedAnswer.toLowerCase() === correctAnswer.toLowerCase()
-          : submittedAnswer === correctAnswer;
-
-      if (isCorrect) score += points;
-
-      return {
-        questionId: question._id,
-        answer: submittedAnswer,
-        isCorrect,
-        pointsEarned: isCorrect ? points : 0,
-      };
-    });
-
-    const percentage = totalPoints
-      ? Math.round((score / totalPoints) * 100)
-      : 0;
-
-    const submission = await QuizSubmission.create({
-      schoolId: quiz.schoolId,
-      classId: quiz.classId,
-      quizId: quiz._id,
-      studentId,
-      answers: gradedAnswers,
-      score,
-      totalPoints,
-      percentage,
-      passed: percentage >= Number(quiz.passingScore || 70),
-      submittedAt: new Date(),
-    });
-
-    res.status(201).json(submission);
-  } catch (err) {
-    console.error("POST quiz submit error:", err);
-    res.status(500).json({ message: "Failed to submit quiz" });
+      return res.status(500).json({
+        message:
+          "Failed to load quizzes"
+      });
+    }
   }
-});
+);
+
+
+/* ============================================
+   CREATE QUIZ
+   POST /api/quizzes
+============================================ */
+
+router.post(
+  "/",
+  auth,
+  async (req, res) => {
+    try {
+      const {
+        schoolId,
+        classId,
+        title
+      } = req.body;
+
+      if (
+        !schoolId ||
+        !classId ||
+        !String(title || "").trim()
+      ) {
+        return res.status(400).json({
+          message:
+            "schoolId, classId, and title are required"
+        });
+      }
+
+      const classDoc =
+        await Class.findById(
+          classId
+        );
+
+      if (!classDoc) {
+        return res.status(404).json({
+          message: "Class not found"
+        });
+      }
+
+      if (
+        normalizeObjectId(
+          classDoc.schoolId
+        ) !==
+        normalizeObjectId(
+          schoolId
+        )
+      ) {
+        return res.status(403).json({
+          message:
+            "Class does not belong to this school"
+        });
+      }
+
+      if (
+        !canManageSchool(
+          req.user,
+          classDoc.schoolId
+        )
+      ) {
+        return res.status(403).json({
+          message:
+            "Not allowed to create quizzes"
+        });
+      }
+
+      const quiz =
+        await Quiz.create({
+          schoolId:
+            classDoc.schoolId,
+
+          classId:
+            classDoc._id,
+
+          moduleId:
+            req.body.moduleId ||
+            null,
+
+          lessonId:
+            req.body.lessonId ||
+            null,
+
+          title:
+            String(title).trim(),
+
+          instructions:
+            req.body.instructions ||
+            "",
+
+          questions:
+            Array.isArray(
+              req.body.questions
+            )
+              ? req.body.questions
+              : [],
+
+          passingScore:
+            Number(
+              req.body.passingScore ??
+              70
+            ),
+
+          timeLimitMinutes:
+            Number(
+              req.body.timeLimitMinutes ??
+              0
+            ),
+
+          attemptsAllowed:
+            Math.max(
+              1,
+              Number(
+                req.body.attemptsAllowed ??
+                1
+              )
+            ),
+
+          status:
+            [
+              "draft",
+              "published",
+              "archived"
+            ].includes(
+              req.body.status
+            )
+              ? req.body.status
+              : "draft"
+        });
+
+      return res.status(201).json(
+        quiz
+      );
+    } catch (err) {
+      console.error(
+        "POST /api/quizzes error:",
+        err
+      );
+
+      return res.status(500).json({
+        message:
+          "Failed to create quiz"
+      });
+    }
+  }
+);
+
+
+/* ============================================
+   UPDATE QUIZ
+   PATCH /api/quizzes/:id
+============================================ */
+
+router.patch(
+  "/:id",
+  auth,
+  async (req, res) => {
+    try {
+      const quiz =
+        await Quiz.findById(
+          req.params.id
+        );
+
+      if (!quiz) {
+        return res.status(404).json({
+          message: "Quiz not found"
+        });
+      }
+
+      if (
+        !canManageSchool(
+          req.user,
+          quiz.schoolId
+        )
+      ) {
+        return res.status(403).json({
+          message:
+            "Not allowed to update quiz"
+        });
+      }
+
+      const updates =
+        pick(
+          req.body,
+          [
+            "moduleId",
+            "lessonId",
+            "title",
+            "instructions",
+            "questions",
+            "passingScore",
+            "timeLimitMinutes",
+            "attemptsAllowed",
+            "status"
+          ]
+        );
+
+      Object.entries(
+        updates
+      ).forEach(
+        ([
+          field,
+          value
+        ]) => {
+          quiz[field] =
+            value;
+        }
+      );
+
+      await quiz.save();
+
+      return res.json(
+        quiz
+      );
+    } catch (err) {
+      console.error(
+        "PATCH /api/quizzes/:id error:",
+        err
+      );
+
+      return res.status(500).json({
+        message:
+          "Failed to update quiz"
+      });
+    }
+  }
+);
+
+
+/* ============================================
+   DELETE QUIZ
+   DELETE /api/quizzes/:id
+============================================ */
+
+router.delete(
+  "/:id",
+  auth,
+  async (req, res) => {
+    try {
+      const quiz =
+        await Quiz.findById(
+          req.params.id
+        );
+
+      if (!quiz) {
+        return res.status(404).json({
+          message: "Quiz not found"
+        });
+      }
+
+      if (
+        !canManageSchool(
+          req.user,
+          quiz.schoolId
+        )
+      ) {
+        return res.status(403).json({
+          message:
+            "Not allowed to delete quiz"
+        });
+      }
+
+      const deleteResult =
+        await QuizSubmission.deleteMany({
+          quizId: quiz._id
+        });
+
+      await quiz.deleteOne();
+
+      return res.json({
+        message: "Quiz deleted",
+
+        deletedSubmissionCount:
+          deleteResult.deletedCount ||
+          0
+      });
+    } catch (err) {
+      console.error(
+        "DELETE /api/quizzes/:id error:",
+        err
+      );
+
+      return res.status(500).json({
+        message:
+          "Failed to delete quiz"
+      });
+    }
+  }
+);
+
+
+/* ============================================
+   GET QUIZ SUBMISSIONS
+   GET /api/quizzes/submissions
+============================================ */
+
+router.get(
+  "/submissions/list",
+  auth,
+  async (req, res) => {
+    try {
+      const {
+        classId,
+        quizId,
+        studentId
+      } = req.query;
+
+      const query = {};
+
+      const role =
+        normalizeRole(
+          req.user.role
+        );
+
+      if (classId) {
+        const classDoc =
+          await Class.findById(
+            classId
+          );
+
+        if (!classDoc) {
+          return res.status(404).json({
+            message: "Class not found"
+          });
+        }
+
+        if (
+          !canViewClass(
+            req.user,
+            classDoc
+          )
+        ) {
+          return res.status(403).json({
+            message:
+              "Not allowed to view quiz submissions"
+          });
+        }
+
+        query.classId =
+          classId;
+      }
+
+      if (quizId) {
+        const quiz =
+          await Quiz.findById(
+            quizId
+          );
+
+        if (!quiz) {
+          return res.status(404).json({
+            message: "Quiz not found"
+          });
+        }
+
+        if (
+          role !== "student" &&
+          !canManageSchool(
+            req.user,
+            quiz.schoolId
+          )
+        ) {
+          return res.status(403).json({
+            message:
+              "Not allowed to view quiz submissions"
+          });
+        }
+
+        query.quizId =
+          quizId;
+      }
+
+      /*
+        Students can only view their own submissions.
+      */
+      if (role === "student") {
+        query.studentId =
+          req.user._id;
+      } else if (studentId) {
+        query.studentId =
+          studentId;
+      }
+
+      if (
+        role !== "student" &&
+        !classId &&
+        !quizId
+      ) {
+        const schoolIds =
+          getUserSchoolIds(
+            req.user
+          );
+
+        if (
+          role !== "admin"
+        ) {
+          query.schoolId = {
+            $in: schoolIds
+          };
+        }
+      }
+
+      const submissions =
+        await QuizSubmission.find(
+          query
+        )
+          .populate(
+            "quizId",
+            "title passingScore attemptsAllowed status"
+          )
+          .populate(
+            "classId",
+            "title subject classCode"
+          )
+          .populate(
+            "studentId",
+            "name email profileImage avatar course"
+          )
+          .sort({
+            submittedAt: -1,
+            createdAt: -1
+          })
+          .lean();
+
+      return res.json(
+        submissions
+      );
+    } catch (err) {
+      console.error(
+        "GET quiz submissions error:",
+        err
+      );
+
+      return res.status(500).json({
+        message:
+          "Failed to load quiz submissions"
+      });
+    }
+  }
+);
+
+
+/* ============================================
+   SUBMIT QUIZ
+   POST /api/quizzes/:id/submit
+============================================ */
+
+router.post(
+  "/:id/submit",
+  auth,
+  async (req, res) => {
+    try {
+      const role =
+        normalizeRole(
+          req.user.role
+        );
+
+      if (role !== "student") {
+        return res.status(403).json({
+          message:
+            "Only students can submit quizzes"
+        });
+      }
+
+      const quiz =
+        await Quiz.findById(
+          req.params.id
+        );
+
+      if (!quiz) {
+        return res.status(404).json({
+          message: "Quiz not found"
+        });
+      }
+
+      if (
+        quiz.status !==
+        "published"
+      ) {
+        return res.status(403).json({
+          message:
+            "This quiz is not available"
+        });
+      }
+
+      const classDoc =
+        await Class.findById(
+          quiz.classId
+        ).select(
+          "schoolId studentIds"
+        );
+
+      if (!classDoc) {
+        return res.status(404).json({
+          message: "Class not found"
+        });
+      }
+
+      if (
+        !isStudentEnrolled(
+          req.user,
+          classDoc
+        )
+      ) {
+        return res.status(403).json({
+          message:
+            "You are not enrolled in this class"
+        });
+      }
+
+      const previousAttemptCount =
+        await QuizSubmission.countDocuments({
+          quizId: quiz._id,
+          studentId: req.user._id
+        });
+
+      const attemptsAllowed =
+        Math.max(
+          1,
+          Number(
+            quiz.attemptsAllowed ||
+            1
+          )
+        );
+
+      if (
+        previousAttemptCount >=
+        attemptsAllowed
+      ) {
+        return res.status(403).json({
+          message:
+            "You have used all allowed attempts for this quiz"
+        });
+      }
+
+      const submittedAnswers =
+        Array.isArray(
+          req.body.answers
+        )
+          ? req.body.answers
+          : [];
+
+      let totalPoints = 0;
+      let score = 0;
+
+      const gradedAnswers =
+        quiz.questions.map(
+          question => {
+            const submitted =
+              submittedAnswers.find(
+                answer =>
+                  normalizeObjectId(
+                    answer.questionId
+                  ) ===
+                  normalizeObjectId(
+                    question._id
+                  )
+              );
+
+            const points =
+              Math.max(
+                0,
+                Number(
+                  question.points ||
+                  1
+                )
+              );
+
+            totalPoints +=
+              points;
+
+            const submittedAnswer =
+              String(
+                submitted?.answer ||
+                ""
+              ).trim();
+
+            const isCorrect =
+              gradeQuestion(
+                question,
+                submittedAnswer
+              );
+
+            const pointsEarned =
+              isCorrect
+                ? points
+                : 0;
+
+            score +=
+              pointsEarned;
+
+            return {
+              questionId:
+                question._id,
+
+              answer:
+                submittedAnswer,
+
+              isCorrect,
+
+              pointsEarned,
+
+              pointsPossible:
+                points
+            };
+          }
+        );
+
+      const percentage =
+        totalPoints
+          ? Math.round(
+              score /
+              totalPoints *
+              100
+            )
+          : 0;
+
+      const attemptNumber =
+        previousAttemptCount +
+        1;
+
+      const timeSpentSeconds =
+        Math.max(
+          0,
+          Number(
+            req.body.timeSpentSeconds ||
+            0
+          )
+        );
+
+      const submission =
+        await QuizSubmission.create({
+          schoolId:
+            quiz.schoolId,
+
+          classId:
+            quiz.classId,
+
+          quizId:
+            quiz._id,
+
+          studentId:
+            req.user._id,
+
+          attemptNumber,
+
+          answers:
+            gradedAnswers,
+
+          score,
+
+          totalPoints,
+
+          percentage,
+
+          passed:
+            percentage >=
+            Number(
+              quiz.passingScore ||
+              70
+            ),
+
+          status:
+            "submitted",
+
+          startedAt:
+            req.body.startedAt ||
+            null,
+
+          submittedAt:
+            new Date(),
+
+          timeSpentSeconds
+        });
+
+      const populated =
+        await QuizSubmission.findById(
+          submission._id
+        )
+          .populate(
+            "quizId",
+            "title passingScore attemptsAllowed status"
+          )
+          .populate(
+            "classId",
+            "title subject classCode"
+          )
+          .populate(
+            "studentId",
+            "name email profileImage avatar course"
+          );
+
+      const io =
+        req.app.get("io");
+
+      if (io) {
+        io
+          .to(
+            String(
+              quiz.schoolId
+            )
+          )
+          .emit(
+            "quiz:submitted",
+            populated
+          );
+
+        io
+          .to(
+            String(
+              req.user._id
+            )
+          )
+          .emit(
+            "quiz:submitted",
+            populated
+          );
+      }
+
+      return res.status(201).json(
+        populated
+      );
+    } catch (err) {
+      console.error(
+        "POST quiz submit error:",
+        err
+      );
+
+      if (
+        err?.code === 11000
+      ) {
+        return res.status(409).json({
+          message:
+            "This quiz attempt has already been recorded"
+        });
+      }
+
+      return res.status(500).json({
+        message:
+          "Failed to submit quiz"
+      });
+    }
+  }
+);
+
 
 module.exports = router;
