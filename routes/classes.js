@@ -4,6 +4,7 @@ const router = express.Router();
 const ClassModule = require("../models/ClassModule");
 const ClassLesson = require("../models/ClassLesson");
 const Quiz = require("../models/Quiz");
+const QuizSubmission = require("../models/QuizSubmission");
 const LessonProgress = require("../models/LessonProgress");
 const Attendance = require("../models/Attendance");
 const Assignment = require("../models/Assignment");
@@ -641,18 +642,94 @@ if (!canAccess) {
       modules,
       lessons,
       quizzes,
+      quizSubmissions,
       assignments,
       submissions,
       attendance,
       progress
     ] = await Promise.all([
-      ClassModule.find({ classId }).sort({ order: 1, createdAt: 1 }).lean(),
-      ClassLesson.find({ classId }).sort({ order: 1, createdAt: 1 }).lean(),
-      Quiz.find({ classId }).sort({ createdAt: -1 }).lean(),
-      Assignment.find({ classId }).sort({ createdAt: -1 }).lean(),
-      Submission.find({ classId }).sort({ createdAt: -1 }).lean(),
-      Attendance.find({ classId }).sort({ date: -1 }).limit(200).lean(),
-      LessonProgress.find({ classId }).sort({ updatedAt: -1 }).lean()
+      ClassModule.find({
+        classId
+      })
+        .sort({
+          order: 1,
+          createdAt: 1
+        })
+        .lean(),
+
+      ClassLesson.find({
+        classId
+      })
+        .sort({
+          order: 1,
+          createdAt: 1
+        })
+        .lean(),
+
+      Quiz.find({
+        classId
+      })
+        .sort({
+          createdAt: -1
+        })
+        .lean(),
+
+      QuizSubmission.find({
+        classId
+      })
+        .populate(
+          "quizId",
+          "title passingScore attemptsAllowed status"
+        )
+        .populate(
+          "studentId",
+          "name email profileImage avatar course"
+        )
+        .sort({
+          submittedAt: -1
+        })
+        .lean(),
+
+      Assignment.find({
+        classId
+      })
+        .sort({
+          createdAt: -1
+        })
+        .lean(),
+
+      Submission.find({
+        classId
+      })
+        .populate(
+          "assignmentId",
+          "title dueDate status"
+        )
+        .populate(
+          "studentId",
+          "name email profileImage avatar course"
+        )
+        .sort({
+          createdAt: -1
+        })
+        .lean(),
+
+      Attendance.find({
+        classId
+      })
+        .sort({
+          date: -1
+        })
+        .limit(500)
+        .lean(),
+
+      LessonProgress.find({
+        classId
+      })
+        .sort({
+          updatedAt: -1
+        })
+        .lean()
     ]);
 
     const completedLessons = progress.filter(
@@ -686,6 +763,7 @@ if (!canAccess) {
       modules,
       lessons,
       quizzes,
+      quizSubmissions,
       assignments,
       submissions,
       attendance,
@@ -902,13 +980,12 @@ router.patch("/:id/builder/quiz/:quizId", auth, async (req, res) => {
 
     const allowedQuizFields = [
       "title",
-      "description",
       "instructions",
       "questions",
       "passingScore",
-      "timeLimit",
-      "published",
-      "order",
+      "timeLimitMinutes",
+      "attemptsAllowed",
+      "status",
       "lessonId",
       "moduleId"
     ];
