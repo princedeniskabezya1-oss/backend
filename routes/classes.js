@@ -203,6 +203,801 @@ function normalizeArray(value) {
   return [];
 }
 
+/* ============================================
+   CLASS SETTINGS NORMALIZATION
+============================================ */
+
+function normalizeSettingsObject(value) {
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value)
+  ) {
+    return {};
+  }
+
+  return value;
+}
+
+function normalizeBoolean(value, fallback = false) {
+  if (typeof value === "boolean") {
+    return value;
+  }
+
+  if (
+    value === "true" ||
+    value === 1 ||
+    value === "1"
+  ) {
+    return true;
+  }
+
+  if (
+    value === "false" ||
+    value === 0 ||
+    value === "0"
+  ) {
+    return false;
+  }
+
+  return fallback;
+}
+
+function normalizeString(
+  value,
+  {
+    fallback = null,
+    maximumLength = null,
+    lowercase = false
+  } = {}
+) {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  let normalized = value.trim();
+
+  if (!normalized) {
+    return fallback;
+  }
+
+  if (lowercase) {
+    normalized =
+      normalized.toLowerCase();
+  }
+
+  if (
+    Number.isFinite(
+      Number(maximumLength)
+    ) &&
+    Number(maximumLength) > 0
+  ) {
+    normalized =
+      normalized.slice(
+        0,
+        Number(maximumLength)
+      );
+  }
+
+  return normalized;
+}
+
+function normalizeNumber(
+  value,
+  {
+    fallback = 0,
+    minimum = Number.NEGATIVE_INFINITY,
+    maximum = Number.POSITIVE_INFINITY,
+    integer = false
+  } = {}
+) {
+  const parsed =
+    Number(value);
+
+  if (!Number.isFinite(parsed)) {
+    return fallback;
+  }
+
+  const normalized =
+    integer
+      ? Math.round(parsed)
+      : parsed;
+
+  return Math.min(
+    maximum,
+    Math.max(
+      minimum,
+      normalized
+    )
+  );
+}
+
+function normalizeDate(value) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return null;
+  }
+
+  const date =
+    new Date(value);
+
+  if (
+    Number.isNaN(
+      date.getTime()
+    )
+  ) {
+    const error =
+      new Error(
+        "One of the supplied dates is invalid."
+      );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  return date;
+}
+
+function normalizeEnum(
+  value,
+  allowedValues,
+  fallback
+) {
+  const normalized =
+    String(value || "")
+      .trim()
+      .toLowerCase();
+
+  return allowedValues.includes(
+    normalized
+  )
+    ? normalized
+    : fallback;
+}
+
+function normalizeHexColor(
+  value,
+  fallback = "#1a73e8"
+) {
+  const normalized =
+    String(value || "")
+      .trim();
+
+  return /^#[0-9a-fA-F]{6}$/.test(
+    normalized
+  )
+    ? normalized
+    : fallback;
+}
+
+function normalizeNullableObjectId(
+  value
+) {
+  if (
+    value === null ||
+    value === undefined ||
+    value === ""
+  ) {
+    return null;
+  }
+
+  return value;
+}
+
+/* ============================================
+   CLASS SETTINGS SANITIZERS
+============================================ */
+
+function sanitizeAppearanceSettings(
+  value,
+  current = {}
+) {
+  const input =
+    normalizeSettingsObject(
+      value
+    );
+
+  return {
+    accentColor:
+      normalizeHexColor(
+        input.accentColor,
+        current.accentColor ||
+          "#1a73e8"
+      ),
+
+    theme:
+      normalizeEnum(
+        input.theme,
+        [
+          "light",
+          "dark",
+          "system"
+        ],
+        current.theme ||
+          "light"
+      ),
+
+thumbnailImage:
+  input.thumbnailImage !==
+  undefined
+    ? normalizeString(
+        input.thumbnailImage,
+        {
+          fallback:null,
+          maximumLength:800
+        }
+      )
+    : current.thumbnailImage ||
+      null,
+
+logoImage:
+  input.logoImage !==
+  undefined
+    ? normalizeString(
+        input.logoImage,
+        {
+          fallback:null,
+          maximumLength:800
+        }
+      )
+    : current.logoImage ||
+      null,
+
+    showInstructor:
+      normalizeBoolean(
+        input.showInstructor,
+        current.showInstructor ??
+          true
+      ),
+
+    showProgress:
+      normalizeBoolean(
+        input.showProgress,
+        current.showProgress ??
+          true
+      )
+  };
+}
+
+function sanitizeEnrollmentSettings(
+  value,
+  current = {}
+) {
+  const input =
+    normalizeSettingsObject(
+      value
+    );
+
+  const enrollmentOpensAt =
+    input.enrollmentOpensAt !==
+    undefined
+      ? normalizeDate(
+          input.enrollmentOpensAt
+        )
+      : current.enrollmentOpensAt ||
+        null;
+
+  const enrollmentClosesAt =
+    input.enrollmentClosesAt !==
+    undefined
+      ? normalizeDate(
+          input.enrollmentClosesAt
+        )
+      : current.enrollmentClosesAt ||
+        null;
+
+  if (
+    enrollmentOpensAt &&
+    enrollmentClosesAt &&
+    enrollmentClosesAt <=
+      enrollmentOpensAt
+  ) {
+    const error =
+      new Error(
+        "Enrollment closing time must be after the opening time."
+      );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  return {
+    accessType:
+      normalizeEnum(
+        input.accessType,
+        [
+          "public",
+          "private",
+          "invite_only",
+          "hidden"
+        ],
+        current.accessType ||
+          "private"
+      ),
+
+    allowJoinCode:
+      normalizeBoolean(
+        input.allowJoinCode,
+        current.allowJoinCode ??
+          true
+      ),
+
+    autoApprove:
+      normalizeBoolean(
+        input.autoApprove,
+        current.autoApprove ??
+          false
+      ),
+
+    maximumStudents:
+      normalizeNumber(
+        input.maximumStudents,
+        {
+          fallback:
+            current.maximumStudents ||
+            0,
+
+          minimum:
+            0,
+
+          maximum:
+            100000,
+
+          integer:
+            true
+        }
+      ),
+
+    waitingListEnabled:
+      normalizeBoolean(
+        input.waitingListEnabled,
+        current.waitingListEnabled ??
+          false
+      ),
+
+    enrollmentOpensAt,
+
+    enrollmentClosesAt
+  };
+}
+
+function sanitizeLearningSettings(
+  value,
+  current = {}
+) {
+  const input =
+    normalizeSettingsObject(
+      value
+    );
+
+  return {
+    sequentialLessons:
+      normalizeBoolean(
+        input.sequentialLessons,
+        current.sequentialLessons ??
+          false
+      ),
+
+    allowLessonSkipping:
+      normalizeBoolean(
+        input.allowLessonSkipping,
+        current.allowLessonSkipping ??
+          true
+      ),
+
+    allowReplay:
+      normalizeBoolean(
+        input.allowReplay,
+        current.allowReplay ??
+          true
+      ),
+
+    autoCompleteLessons:
+      normalizeBoolean(
+        input.autoCompleteLessons,
+        current.autoCompleteLessons ??
+          false
+      ),
+
+    allowDownloads:
+      normalizeBoolean(
+        input.allowDownloads,
+        current.allowDownloads ??
+          true
+      ),
+
+    discussionsEnabled:
+      normalizeBoolean(
+        input.discussionsEnabled,
+        current.discussionsEnabled ??
+          true
+      ),
+
+    notesEnabled:
+      normalizeBoolean(
+        input.notesEnabled,
+        current.notesEnabled ??
+          true
+      ),
+
+    bookmarksEnabled:
+      normalizeBoolean(
+        input.bookmarksEnabled,
+        current.bookmarksEnabled ??
+          true
+      ),
+
+    certificatesEnabled:
+      normalizeBoolean(
+        input.certificatesEnabled,
+        current.certificatesEnabled ??
+          false
+      ),
+
+    gamificationEnabled:
+      normalizeBoolean(
+        input.gamificationEnabled,
+        current.gamificationEnabled ??
+          false
+      ),
+
+    completionRule:
+      normalizeEnum(
+        input.completionRule,
+        [
+          "all_lessons",
+          "required_lessons",
+          "manual",
+          "percentage"
+        ],
+        current.completionRule ||
+          "all_lessons"
+      ),
+
+    completionPercentage:
+      normalizeNumber(
+        input.completionPercentage,
+        {
+          fallback:
+            current.completionPercentage ||
+            100,
+
+          minimum:
+            1,
+
+          maximum:
+            100,
+
+          integer:
+            true
+        }
+      )
+  };
+}
+
+function sanitizeAssessmentSettings(
+  value,
+  current = {}
+) {
+  const input =
+    normalizeSettingsObject(
+      value
+    );
+
+  return {
+    assignmentsEnabled:
+      normalizeBoolean(
+        input.assignmentsEnabled,
+        current.assignmentsEnabled ??
+          true
+      ),
+
+    quizzesEnabled:
+      normalizeBoolean(
+        input.quizzesEnabled,
+        current.quizzesEnabled ??
+          true
+      ),
+
+    allowLateSubmissions:
+      normalizeBoolean(
+        input.allowLateSubmissions,
+        current.allowLateSubmissions ??
+          true
+      ),
+
+    defaultQuizAttempts:
+      normalizeNumber(
+        input.defaultQuizAttempts,
+        {
+          fallback:
+            current.defaultQuizAttempts ||
+            1,
+
+          minimum:
+            1,
+
+          maximum:
+            100,
+
+          integer:
+            true
+        }
+      ),
+
+    defaultPassingScore:
+      normalizeNumber(
+        input.defaultPassingScore,
+        {
+          fallback:
+            current.defaultPassingScore ??
+            70,
+
+          minimum:
+            0,
+
+          maximum:
+            100,
+
+          integer:
+            true
+        }
+      ),
+
+    randomizeQuestions:
+      normalizeBoolean(
+        input.randomizeQuestions,
+        current.randomizeQuestions ??
+          false
+      ),
+
+    shuffleAnswers:
+      normalizeBoolean(
+        input.shuffleAnswers,
+        current.shuffleAnswers ??
+          false
+      ),
+
+    showCorrectAnswers:
+      normalizeBoolean(
+        input.showCorrectAnswers,
+        current.showCorrectAnswers ??
+          true
+      ),
+
+    releaseGradesAutomatically:
+      normalizeBoolean(
+        input.releaseGradesAutomatically,
+        current.releaseGradesAutomatically ??
+          true
+      ),
+
+    peerReviewEnabled:
+      normalizeBoolean(
+        input.peerReviewEnabled,
+        current.peerReviewEnabled ??
+          false
+      )
+  };
+}
+
+function sanitizePublishingSettings(
+  value,
+  current = {}
+) {
+  const input =
+    normalizeSettingsObject(
+      value
+    );
+
+  const scheduledPublishAt =
+    input.scheduledPublishAt !==
+    undefined
+      ? normalizeDate(
+          input.scheduledPublishAt
+        )
+      : current.scheduledPublishAt ||
+        null;
+
+  const scheduledArchiveAt =
+    input.scheduledArchiveAt !==
+    undefined
+      ? normalizeDate(
+          input.scheduledArchiveAt
+        )
+      : current.scheduledArchiveAt ||
+        null;
+
+  if (
+    scheduledPublishAt &&
+    scheduledArchiveAt &&
+    scheduledArchiveAt <=
+      scheduledPublishAt
+  ) {
+    const error =
+      new Error(
+        "Scheduled archive time must be after the publication time."
+      );
+
+    error.statusCode = 400;
+
+    throw error;
+  }
+
+  const rawSlug =
+    input.slug !== undefined
+      ? normalizeString(
+          input.slug,
+          {
+            fallback:null,
+            maximumLength:160,
+            lowercase:true
+          }
+        )
+      : current.slug ||
+        null;
+
+  const slug =
+    rawSlug
+      ? rawSlug
+          .replace(
+            /[^a-z0-9]+/g,
+            "-"
+          )
+          .replace(
+            /^-+|-+$/g,
+            ""
+          )
+      : null;
+
+  return {
+    visibility:
+      normalizeEnum(
+        input.visibility,
+        [
+          "public",
+          "private",
+          "unlisted"
+        ],
+        current.visibility ||
+          "private"
+      ),
+
+    scheduledPublishAt,
+
+    scheduledArchiveAt,
+
+    slug,
+
+    metaTitle:
+      normalizeString(
+        input.metaTitle,
+        {
+          fallback:
+            input.metaTitle === ""
+              ? null
+              : current.metaTitle ||
+                null,
+
+          maximumLength:
+            160
+        }
+      ),
+
+    metaDescription:
+      normalizeString(
+        input.metaDescription,
+        {
+          fallback:
+            input.metaDescription === ""
+              ? null
+              : current.metaDescription ||
+                null,
+
+          maximumLength:
+            320
+        }
+      )
+  };
+}
+
+function sanitizeNotificationSettings(
+  value,
+  current = {}
+) {
+  const input =
+    normalizeSettingsObject(
+      value
+    );
+
+  return {
+    notifyStudentsNewLesson:
+      normalizeBoolean(
+        input.notifyStudentsNewLesson,
+        current.notifyStudentsNewLesson ??
+          true
+      ),
+
+    notifyStudentsNewAssignment:
+      normalizeBoolean(
+        input.notifyStudentsNewAssignment,
+        current.notifyStudentsNewAssignment ??
+          true
+      ),
+
+    notifyStudentsBeforeDueDate:
+      normalizeBoolean(
+        input.notifyStudentsBeforeDueDate,
+        current.notifyStudentsBeforeDueDate ??
+          true
+      ),
+
+    dueDateReminderHours:
+      normalizeNumber(
+        input.dueDateReminderHours,
+        {
+          fallback:
+            current.dueDateReminderHours ||
+            24,
+
+          minimum:
+            1,
+
+          maximum:
+            720,
+
+          integer:
+            true
+        }
+      ),
+
+    notifyTeacherSubmission:
+      normalizeBoolean(
+        input.notifyTeacherSubmission,
+        current.notifyTeacherSubmission ??
+          true
+      ),
+
+    notifyTeacherQuizCompletion:
+      normalizeBoolean(
+        input.notifyTeacherQuizCompletion,
+        current.notifyTeacherQuizCompletion ??
+          true
+      ),
+
+    inactivityRemindersEnabled:
+      normalizeBoolean(
+        input.inactivityRemindersEnabled,
+        current.inactivityRemindersEnabled ??
+          false
+      ),
+
+    inactivityReminderDays:
+      normalizeNumber(
+        input.inactivityReminderDays,
+        {
+          fallback:
+            current.inactivityReminderDays ||
+            7,
+
+          minimum:
+            1,
+
+          maximum:
+            365,
+
+          integer:
+            true
+        }
+      )
+  };
+}
+
 function uploadClassCover(file) {
   return new Promise((resolve, reject) => {
     cloudinary.uploader
@@ -791,99 +1586,688 @@ if (!canAccess) {
    UPDATE CLASS BUILDER PROFILE + VISUAL CONTENT
    PATCH /api/classes/:id/builder
 ===================================================== */
+
 router.patch("/:id/builder", auth, async (req, res) => {
   try {
-    const classDoc = await Class.findById(req.params.id);
+    const classDoc =
+      await Class.findById(
+        req.params.id
+      );
 
     if (!classDoc) {
       return res.status(404).json({
-        message: "Class not found"
+        message:
+          "Class not found"
       });
     }
 
-    if (!canManageSchool(req.user, classDoc.schoolId)) {
+    if (
+      !canManageSchool(
+        req.user,
+        classDoc.schoolId
+      )
+    ) {
       return res.status(403).json({
-        message: "Not allowed to update class builder"
+        message:
+          "Not allowed to update class builder"
       });
     }
 
-    const allowedFields = [
-      "title",
-      "name",
-      "subject",
-      "description",
-      "classCode",
-      "code",
-      "meetingLink",
-      "schedule",
-      "teacherId",
-      "coverImage",
-      "bannerImage",
-      "welcomeContent",
-      "learningOutcomes",
-      "level",
-      "language",
-      "materials",
-      "status",
-      "projectCanvas",
-      "projectCanvasUpdatedAt",
-      "contentBlocks",
-      "contentBlocksUpdatedAt",
-      "published"
+    const oldTeacherId =
+      classDoc.teacherId
+        ? String(classDoc.teacherId)
+        : null;
+
+    /* ============================================
+       GENERAL CLASS INFORMATION
+    ============================================ */
+
+    if (
+      req.body.title !==
+      undefined
+    ) {
+      const title =
+        normalizeString(
+          req.body.title,
+          {
+            fallback:null,
+            maximumLength:120
+          }
+        );
+
+      if (!title) {
+        return res.status(400).json({
+          message:
+            "Class title is required"
+        });
+      }
+
+      classDoc.title =
+        title;
+    }
+
+    if (
+      req.body.name !==
+      undefined
+    ) {
+      const title =
+        normalizeString(
+          req.body.name,
+          {
+            fallback:null,
+            maximumLength:120
+          }
+        );
+
+      if (title) {
+        classDoc.title =
+          title;
+      }
+    }
+
+    if (
+      req.body.subtitle !==
+      undefined
+    ) {
+      classDoc.subtitle =
+        normalizeString(
+          req.body.subtitle,
+          {
+            fallback:null,
+            maximumLength:220
+          }
+        );
+    }
+
+    if (
+      req.body.category !==
+      undefined
+    ) {
+      classDoc.category =
+        normalizeString(
+          req.body.category,
+          {
+            fallback:null,
+            maximumLength:120
+          }
+        );
+    }
+
+    if (
+      req.body.estimatedDurationMinutes !==
+      undefined
+    ) {
+      classDoc.estimatedDurationMinutes =
+        normalizeNumber(
+          req.body.estimatedDurationMinutes,
+          {
+            fallback:
+              classDoc.estimatedDurationMinutes ||
+              0,
+
+            minimum:0,
+            maximum:1000000,
+            integer:true
+          }
+        );
+    }
+
+    if (
+      req.body.subject !==
+      undefined
+    ) {
+      classDoc.subject =
+        normalizeString(
+          req.body.subject,
+          {
+            fallback:null,
+            maximumLength:120
+          }
+        );
+    }
+
+    if (
+      req.body.level !==
+      undefined
+    ) {
+      classDoc.level =
+        normalizeString(
+          req.body.level,
+          {
+            fallback:null,
+            maximumLength:80
+          }
+        );
+    }
+
+    if (
+      req.body.language !==
+      undefined
+    ) {
+      classDoc.language =
+        normalizeString(
+          req.body.language,
+          {
+            fallback:null,
+            maximumLength:80
+          }
+        );
+    }
+
+    if (
+      req.body.description !==
+      undefined
+    ) {
+      classDoc.description =
+        normalizeString(
+          req.body.description,
+          {
+            fallback:null,
+            maximumLength:3000
+          }
+        );
+    }
+
+    if (
+      req.body.welcomeContent !==
+      undefined
+    ) {
+      classDoc.welcomeContent =
+        normalizeString(
+          req.body.welcomeContent,
+          {
+            fallback:null,
+            maximumLength:10000
+          }
+        );
+    }
+
+    if (
+      req.body.schedule !==
+      undefined
+    ) {
+      classDoc.schedule =
+        normalizeString(
+          req.body.schedule,
+          {
+            fallback:null,
+            maximumLength:200
+          }
+        );
+    }
+
+    if (
+      req.body.meetingLink !==
+      undefined
+    ) {
+      classDoc.meetingLink =
+        normalizeString(
+          req.body.meetingLink,
+          {
+            fallback:null,
+            maximumLength:500
+          }
+        );
+    }
+
+    if (
+      req.body.classCode !==
+      undefined ||
+      req.body.code !==
+      undefined
+    ) {
+      classDoc.classCode =
+        normalizeString(
+          req.body.classCode ??
+          req.body.code,
+          {
+            fallback:null,
+            maximumLength:40
+          }
+        );
+    }
+
+    /* ============================================
+       CLASS RELATIONSHIPS
+    ============================================ */
+
+    if (
+      req.body.teacherId !==
+      undefined
+    ) {
+      const nextTeacherId =
+        normalizeNullableObjectId(
+          req.body.teacherId
+        );
+
+      if (nextTeacherId) {
+        const teacher =
+          await User.findById(
+            nextTeacherId
+          );
+
+        if (!teacher) {
+          return res.status(404).json({
+            message:
+              "Teacher not found"
+          });
+        }
+
+        const teacherRole =
+          normalizeRole(
+            teacher.role
+          );
+
+        if (
+          ![
+            "teacher",
+            "school",
+            "admin"
+          ].includes(
+            teacherRole
+          )
+        ) {
+          return res.status(400).json({
+            message:
+              "Selected user is not an instructor"
+          });
+        }
+
+if (
+  teacherRole !==
+  "admin"
+) {
+  const teacherSchoolIds = [
+    ...getUserSchoolIds(
+      teacher
+    ),
+
+    normalizeObjectId(
+      teacher.companyId
+    )
+  ].filter(Boolean);
+
+  const uniqueTeacherSchoolIds =
+    [
+      ...new Set(
+        teacherSchoolIds
+      )
     ];
 
-    allowedFields.forEach(field => {
-      if (req.body[field] !== undefined) {
-        if (
-          ["learningOutcomes", "materials"].includes(field)
-        ) {
-          classDoc[field] = normalizeArray(req.body[field]);
-        } else if (field === "name") {
-          classDoc.title = req.body[field] || classDoc.title;
-        } else if (field === "code") {
-          classDoc.classCode = req.body[field] || null;
-        } else {
-          classDoc[field] = req.body[field];
-        }
-      }
+  if (
+    !uniqueTeacherSchoolIds.includes(
+      normalizeObjectId(
+        classDoc.schoolId
+      )
+    )
+  ) {
+    return res.status(403).json({
+      message:
+        "Teacher is not linked to this school"
     });
+  }
+}
+      }
 
-    if (req.body.contentBlocks !== undefined) {
-      classDoc.contentBlocksUpdatedAt = new Date();
+      classDoc.teacherId =
+        nextTeacherId;
     }
 
-    if (req.body.projectCanvas !== undefined) {
-      classDoc.projectCanvasUpdatedAt = new Date();
+    /* ============================================
+       MEDIA AND CLASS CONTENT
+    ============================================ */
+
+    if (
+      req.body.coverImage !==
+      undefined
+    ) {
+      classDoc.coverImage =
+        normalizeString(
+          req.body.coverImage,
+          {
+            fallback:null,
+            maximumLength:800
+          }
+        );
+    }
+
+    if (
+      req.body.bannerImage !==
+      undefined
+    ) {
+      classDoc.bannerImage =
+        normalizeString(
+          req.body.bannerImage,
+          {
+            fallback:null,
+            maximumLength:800
+          }
+        );
+    }
+
+    if (
+      req.body.learningOutcomes !==
+      undefined
+    ) {
+      classDoc.learningOutcomes =
+        normalizeArray(
+          req.body.learningOutcomes
+        )
+          .map(item =>
+            String(item).trim()
+          )
+          .filter(Boolean);
+    }
+
+    if (
+      req.body.materials !==
+      undefined
+    ) {
+      classDoc.materials =
+        normalizeArray(
+          req.body.materials
+        )
+          .map(item =>
+            String(item).trim()
+          )
+          .filter(Boolean);
+    }
+
+    if (
+      req.body.projectCanvas !==
+      undefined
+    ) {
+      classDoc.projectCanvas =
+        Array.isArray(
+          req.body.projectCanvas
+        )
+          ? req.body.projectCanvas
+          : [];
+
+      classDoc.projectCanvasUpdatedAt =
+        new Date();
+    }
+
+    if (
+      req.body.contentBlocks !==
+      undefined
+    ) {
+      classDoc.contentBlocks =
+        Array.isArray(
+          req.body.contentBlocks
+        )
+          ? req.body.contentBlocks
+          : [];
+
+      classDoc.contentBlocksUpdatedAt =
+        new Date();
+    }
+
+    /* ============================================
+       CLASS STATE
+    ============================================ */
+
+    if (
+      req.body.status !==
+      undefined
+    ) {
+      classDoc.status =
+        normalizeEnum(
+          req.body.status,
+          [
+            "active",
+            "archived"
+          ],
+          classDoc.status ||
+          "active"
+        );
+    }
+
+    if (
+      req.body.published !==
+      undefined
+    ) {
+      classDoc.published =
+        normalizeBoolean(
+          req.body.published,
+          classDoc.published ??
+          false
+        );
+    }
+
+    /* ============================================
+       STRUCTURED SETTINGS
+    ============================================ */
+
+    if (
+      req.body.appearanceSettings !==
+      undefined
+    ) {
+      classDoc.appearanceSettings =
+        sanitizeAppearanceSettings(
+          req.body.appearanceSettings,
+          classDoc.appearanceSettings?.toObject
+            ? classDoc.appearanceSettings.toObject()
+            : classDoc.appearanceSettings ||
+              {}
+        );
+    }
+
+    if (
+      req.body.enrollmentSettings !==
+      undefined
+    ) {
+      classDoc.enrollmentSettings =
+        sanitizeEnrollmentSettings(
+          req.body.enrollmentSettings,
+          classDoc.enrollmentSettings?.toObject
+            ? classDoc.enrollmentSettings.toObject()
+            : classDoc.enrollmentSettings ||
+              {}
+        );
+    }
+
+    if (
+      req.body.learningSettings !==
+      undefined
+    ) {
+      classDoc.learningSettings =
+        sanitizeLearningSettings(
+          req.body.learningSettings,
+          classDoc.learningSettings?.toObject
+            ? classDoc.learningSettings.toObject()
+            : classDoc.learningSettings ||
+              {}
+        );
+    }
+
+    if (
+      req.body.assessmentSettings !==
+      undefined
+    ) {
+      classDoc.assessmentSettings =
+        sanitizeAssessmentSettings(
+          req.body.assessmentSettings,
+          classDoc.assessmentSettings?.toObject
+            ? classDoc.assessmentSettings.toObject()
+            : classDoc.assessmentSettings ||
+              {}
+        );
+    }
+
+    if (
+      req.body.publishingSettings !==
+      undefined
+    ) {
+      classDoc.publishingSettings =
+        sanitizePublishingSettings(
+          req.body.publishingSettings,
+          classDoc.publishingSettings?.toObject
+            ? classDoc.publishingSettings.toObject()
+            : classDoc.publishingSettings ||
+              {}
+        );
+    }
+
+    if (
+      req.body.notificationSettings !==
+      undefined
+    ) {
+      classDoc.notificationSettings =
+        sanitizeNotificationSettings(
+          req.body.notificationSettings,
+          classDoc.notificationSettings?.toObject
+            ? classDoc.notificationSettings.toObject()
+            : classDoc.notificationSettings ||
+              {}
+        );
     }
 
     await classDoc.save();
 
-    const updatedClass = await Class.findById(classDoc._id)
-      .populate("schoolId", "name schoolName profileImage schoolLogo")
-      .populate("teacherId", "name email profileImage avatar role subject department")
-      .populate("studentIds", "name email profileImage avatar course");
+    /* ============================================
+       SYNCHRONIZE TEACHER CLASS REFERENCES
+    ============================================ */
 
-    const io = req.app.get("io");
+    const newTeacherId =
+      classDoc.teacherId
+        ? String(classDoc.teacherId)
+        : null;
+
+    if (
+      oldTeacherId &&
+      oldTeacherId !==
+      newTeacherId
+    ) {
+      await User.findByIdAndUpdate(
+        oldTeacherId,
+        {
+          $pull: {
+            assignedClasses:
+              classDoc._id
+          }
+        }
+      );
+    }
+
+    if (newTeacherId) {
+      await User.findByIdAndUpdate(
+        newTeacherId,
+        {
+          $addToSet: {
+            assignedClasses:
+              classDoc._id
+          }
+        }
+      );
+    }
+
+    const updatedClass =
+      await Class.findById(
+        classDoc._id
+      )
+        .populate(
+          "schoolId",
+          "name schoolName profileImage schoolLogo"
+        )
+        .populate(
+          "teacherId",
+          "name email profileImage avatar role subject department"
+        )
+        .populate(
+          "studentIds",
+          "name email profileImage avatar course"
+        );
+
+    const io =
+      req.app.get("io");
 
     if (io) {
-      io.to(String(classDoc.schoolId)).emit("class:builder:updated", {
-        classId: classDoc._id,
-        class: updatedClass
-      });
+      io.to(
+        String(
+          classDoc.schoolId
+        )
+      ).emit(
+        "class:builder:updated",
+        {
+          classId:
+            classDoc._id,
+
+          class:
+            updatedClass
+        }
+      );
+
+      if (newTeacherId) {
+        io.to(
+          newTeacherId
+        ).emit(
+          "class:builder:updated",
+          {
+            classId:
+              classDoc._id,
+
+            class:
+              updatedClass
+          }
+        );
+      }
     }
 
     return res.json({
-      success: true,
-      class: updatedClass
+      success:true,
+      class:updatedClass
     });
   } catch (err) {
-    console.error("PATCH class builder error:", err);
+    console.error(
+      "PATCH class builder error:",
+      err
+    );
+
+    if (
+      err?.statusCode === 400
+    ) {
+      return res.status(400).json({
+        message:
+          err.message ||
+          "Invalid class settings"
+      });
+    }
+
+    if (
+      err?.name ===
+      "ValidationError"
+    ) {
+      const firstValidationError =
+        Object.values(
+          err.errors ||
+          {}
+        )[0];
+
+      return res.status(400).json({
+        message:
+          firstValidationError?.message ||
+          err.message ||
+          "Invalid class settings"
+      });
+    }
+
+    if (
+      err?.name ===
+      "CastError"
+    ) {
+      return res.status(400).json({
+        message:
+          "One of the supplied IDs is invalid."
+      });
+    }
+
     return res.status(500).json({
-      message: "Failed to update class builder"
+      message:
+        "Failed to update class builder"
     });
   }
 });
-
 /* =====================================================
    UPDATE LESSON FROM VISUAL STUDIO NORMAL MODE
    PATCH /api/classes/:id/builder/lesson/:lessonId
