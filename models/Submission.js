@@ -1,5 +1,113 @@
 const mongoose = require("mongoose");
 
+const submissionAttachmentSchema =
+  new mongoose.Schema(
+    {
+      url: {
+        type: String,
+        required: true,
+        trim: true,
+        maxlength: 1200
+      },
+
+      secureUrl: {
+        type: String,
+        trim: true,
+        maxlength: 1200,
+        default: ""
+      },
+
+      publicId: {
+        type: String,
+        trim: true,
+        maxlength: 500,
+        default: ""
+      },
+
+      originalName: {
+        type: String,
+        trim: true,
+        maxlength: 255,
+        default: "Attachment"
+      },
+
+      mimeType: {
+        type: String,
+        trim: true,
+        maxlength: 150,
+        default:
+          "application/octet-stream"
+      },
+
+      attachmentType: {
+        type: String,
+        enum: [
+          "image",
+          "video",
+          "audio",
+          "pdf",
+          "document",
+          "presentation",
+          "spreadsheet",
+          "text",
+          "file"
+        ],
+        default: "file"
+      },
+
+      resourceType: {
+        type: String,
+        enum: [
+          "image",
+          "video",
+          "raw"
+        ],
+        default: "raw"
+      },
+
+      size: {
+        type: Number,
+        min: 0,
+        default: 0
+      },
+
+      format: {
+        type: String,
+        trim: true,
+        default: ""
+      },
+
+      width: {
+        type: Number,
+        default: null
+      },
+
+      height: {
+        type: Number,
+        default: null
+      },
+
+      duration: {
+        type: Number,
+        default: null
+      },
+
+      uploadedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: null
+      },
+
+      uploadedAt: {
+        type: Date,
+        default: Date.now
+      }
+    },
+    {
+      _id: true
+    }
+  );
+
 const submissionRevisionSchema =
   new mongoose.Schema(
     {
@@ -22,12 +130,17 @@ const submissionRevisionSchema =
         default: null
       },
 
-      fileUrl: {
-        type: String,
-        trim: true,
-        maxlength: 800,
-        default: null
-      },
+fileUrl: {
+  type: String,
+  trim: true,
+  maxlength: 1200,
+  default: null
+},
+
+attachments: {
+  type: [submissionAttachmentSchema],
+  default: []
+},
 
       status: {
         type: String,
@@ -138,12 +251,28 @@ const submissionSchema =
         default: null
       },
 
-      fileUrl: {
-        type: String,
-        trim: true,
-        maxlength: 800,
-        default: null
-      },
+fileUrl: {
+  type: String,
+  trim: true,
+  maxlength: 1200,
+  default: null
+},
+
+attachments: {
+  type: [submissionAttachmentSchema],
+  default: [],
+  validate: {
+    validator(value) {
+      return (
+        Array.isArray(value) &&
+        value.length <= 20
+      );
+    },
+
+    message:
+      "A submission may contain no more than 20 attachments."
+  }
+},
 
       grade: {
         type: String,
