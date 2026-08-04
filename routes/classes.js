@@ -1582,6 +1582,605 @@ if (!canAccess) {
   }
 });
 
+
+/* =====================================================
+   STUDENT CLASS PROGRESS
+   GET /api/classes/:id/student-progress
+===================================================== */
+
+router.get(
+  "/:id/student-progress",
+  auth,
+  async (req, res) => {
+    try {
+      const classId =
+        normalizeObjectId(
+          req.params.id
+        );
+
+      const role =
+        normalizeRole(
+          req.user?.role
+        );
+
+      const requestedStudentId =
+        normalizeObjectId(
+          req.query.studentId
+        );
+
+      /*
+        Students may only request their own progress.
+
+        School, teacher, and admin accounts may inspect a
+        specific student by supplying ?studentId=<id>.
+      */
+
+      const studentId =
+        role === "student"
+          ? normalizeObjectId(
+              req.user._id
+            )
+          : requestedStudentId;
+
+      if (!classId) {
+        return res.status(400).json({
+          message:
+            "A valid class ID is required."
+        });
+      }
+
+      if (!studentId) {
+        return res.status(400).json({
+          message:
+            "A student ID is required."
+        });
+      }
+
+      const classDoc =
+        await Class.findById(classId)
+          .populate(
+            "teacherId",
+            "name email profileImage avatar subject department"
+          )
+          .populate(
+            "studentIds",
+            "name email profileImage avatar course"
+          )
+          .lean();
+
+      if (!classDoc) {
+        return res.status(404).json({
+          message:"Class not found."
+        });
+      }
+
+      if (
+        !canViewClassBuilder(
+          req.user,
+          classDoc
+        )
+      ) {
+        return res.status(403).json({
+          message:
+            "Not allowed to view progress for this class."
+        });
+      }
+
+      /*
+        A student must actually belong to the class.
+      */
+
+      const enrolledStudentIds =
+        Array.isArray(
+          classDoc.studentIds
+        )
+          ? classDoc.studentIds
+              .map(
+                normalizeObjectId
+              )
+              .filter(Boolean)
+          : [];
+
+      if (
+        role === "student" &&
+        !enrolledStudentIds.includes(
+          studentId
+        )
+      ) {
+        return res.status(403).json({
+          message:
+            "You are not enrolled in this class."
+        });
+      }
+
+      const [
+        lessons,
+        lessonProgress,
+        assignments,
+        submissions,
+        quizzes,
+        quizSubmissions,
+        attendance
+      ] = await Promise.all([
+
+        ClassLesson.find({
+          classId,
+          status:"published"
+        })
+          .sort({
+            order:1,
+            createdAt:1
+          })
+          .lean(),
+
+        LessonProgress.find({
+          classId,
+          studentId
+        })
+          .sort({
+            updatedAt:-1
+          })
+          .lean(),
+
+        Assignment.find({
+          classId,
+          status:"published"
+        })
+          .sort({
+            dueDate:1,
+            createdAt:-1
+          })
+          .lean(),
+
+        Submission.find({
+          classId,
+          studentId
+        })
+          .sort({
+            createdAt:-1
+          })
+          .lean(),
+
+        Quiz.find({
+          classId,
+          status:"published"
+        })
+          .sort({
+            createdAt:1
+          })
+          .lean(),
+
+        QuizSubmission.find({
+          classId,
+          studentId
+        })
+          .sort({
+            submittedAt:-1,
+            createdAt:-1
+          })
+          .lean(),
+
+        Attendance.find({
+          classId,
+          studentId
+        })
+          .sort({
+            date:-1,
+            createdAt:-1
+          })
+          .lean()
+      ]);
+
+      /*
+        Generic percentage utility.
+      */
+
+      const toPercent = value => {
+        const number =
+          Number(value);
+
+        if (!Number.isFinite(number)) {
+          return 0;
+        }
+
+        return Math.max(
+          0,
+          Math.min(
+            100,
+            Math.round(number)
+          )
+        );
+      };
+
+      /*
+        LESSON PROGRESS
+
+        Only published lessons are counted.
+      */
+
+      const progressByLessonId =
+        new Map();
+
+      lessonProgress.forEach(item => {
+        const lessonId =
+          normalizeObjectId(
+            item.lessonId
+          );
+
+        if (
+          lessonId &&
+          !progressByLessonId.has(
+            lessonId
+          )
+        ) {
+          progressByLessonId.set(
+            lessonId,
+            item
+          );
+        }
+      });
+
+      const completedLessons =
+        lessons.filter(lesson => {
+          const progress =
+            progressByLessonId.get(
+              normalizeObjectId(
+                lesson._id
+              )
+            );
+
+          return (
+            progress?.status ===
+              "completed" ||
+            Number(
+              progress?.progressPercent ||
+              0
+            ) >= 100 ||
+            progress?.completed === true
+          );
+        }).length;
+
+      const lessonPercentage =
+        lessons.length
+          ? toPercent(
+              (
+                completedLessons /
+                lessons.length
+              ) * 100
+            )
+          : null;
+
+      /*
+        ASSIGNMENT PROGRESS
+
+        One assignment counts as completed once the student
+        has created a submission for it.
+      */
+
+      const submittedAssignmentIds =
+        new Set(
+          submissions
+            .map(submission =>
+              normalizeObjectId(
+                submission.assignmentId
+              )
+            )
+            .filter(Boolean)
+        );
+
+      const completedAssignments =
+        assignments.filter(
+          assignment =>
+            submittedAssignmentIds.has(
+              normalizeObjectId(
+                assignment._id
+              )
+            )
+        ).length;
+
+      const assignmentPercentage =
+        assignments.length
+          ? toPercent(
+              (
+                completedAssignments /
+                assignments.length
+              ) * 100
+            )
+          : null;
+
+      /*
+        QUIZ PROGRESS
+
+        A quiz counts as completed when at least one
+        submission exists for that quiz.
+      */
+
+      const submittedQuizIds =
+        new Set(
+          quizSubmissions
+            .map(submission =>
+              normalizeObjectId(
+                submission.quizId
+              )
+            )
+            .filter(Boolean)
+        );
+
+      const completedQuizzes =
+        quizzes.filter(
+          quiz =>
+            submittedQuizIds.has(
+              normalizeObjectId(
+                quiz._id
+              )
+            )
+        ).length;
+
+      const quizPercentage =
+        quizzes.length
+          ? toPercent(
+              (
+                completedQuizzes /
+                quizzes.length
+              ) * 100
+            )
+          : null;
+
+      /*
+        ATTENDANCE PROGRESS
+
+        Same weighted rules used by your attendance
+        analytics:
+
+        present = 100%
+        late    = 75%
+        excused = 50%
+        absent  = 0%
+      */
+
+      const attendanceWeights = {
+        present:1,
+        late:.75,
+        excused:.5,
+        absent:0
+      };
+
+      const attendancePoints =
+        attendance.reduce(
+          (total,record) => {
+            return (
+              total +
+              (
+                attendanceWeights[
+                  record.status
+                ] || 0
+              )
+            );
+          },
+          0
+        );
+
+      const attendancePercentage =
+        attendance.length
+          ? toPercent(
+              (
+                attendancePoints /
+                attendance.length
+              ) * 100
+            )
+          : null;
+
+      /*
+        Do not penalize a student for categories that the
+        class does not use.
+
+        Example:
+        A class with no quizzes calculates progress from
+        lessons, assignments, and attendance only.
+      */
+
+      const enabledComponents = [
+        {
+          key:"lessons",
+          value:lessonPercentage,
+          weight:45
+        },
+        {
+          key:"assignments",
+          value:assignmentPercentage,
+          weight:30
+        },
+        {
+          key:"quizzes",
+          value:quizPercentage,
+          weight:15
+        },
+        {
+          key:"attendance",
+          value:attendancePercentage,
+          weight:10
+        }
+      ].filter(
+        component =>
+          component.value !== null
+      );
+
+      const availableWeight =
+        enabledComponents.reduce(
+          (total,component) =>
+            total +
+            component.weight,
+          0
+        );
+
+      const overallPercentage =
+        availableWeight
+          ? toPercent(
+              enabledComponents.reduce(
+                (
+                  total,
+                  component
+                ) => {
+                  return (
+                    total +
+                    (
+                      component.value *
+                      component.weight
+                    )
+                  );
+                },
+                0
+              ) /
+              availableWeight
+            )
+          : 0;
+
+      /*
+        Locate the latest meaningful learning activity.
+      */
+
+      const recentActivityCandidates = [
+        ...lessonProgress.map(item => ({
+          type:"lesson",
+          id:
+            normalizeObjectId(
+              item.lessonId
+            ),
+          date:
+            item.updatedAt ||
+            item.completedAt ||
+            item.createdAt
+        })),
+
+        ...submissions.map(item => ({
+          type:"assignment",
+          id:
+            normalizeObjectId(
+              item.assignmentId
+            ),
+          date:
+            item.updatedAt ||
+            item.submittedAt ||
+            item.createdAt
+        })),
+
+        ...quizSubmissions.map(item => ({
+          type:"quiz",
+          id:
+            normalizeObjectId(
+              item.quizId
+            ),
+          date:
+            item.updatedAt ||
+            item.submittedAt ||
+            item.createdAt
+        }))
+      ]
+        .filter(item => item.date)
+        .sort(
+          (first,second) =>
+            new Date(
+              second.date
+            ).getTime() -
+            new Date(
+              first.date
+            ).getTime()
+        );
+
+      const latestActivity =
+        recentActivityCandidates[0] ||
+        null;
+
+      return res.json({
+        classId,
+        studentId,
+
+        progress:{
+          overall:overallPercentage,
+
+          lessons:{
+            total:lessons.length,
+            completed:
+              completedLessons,
+            percentage:
+              lessonPercentage ?? 0
+          },
+
+          assignments:{
+            total:
+              assignments.length,
+            completed:
+              completedAssignments,
+            percentage:
+              assignmentPercentage ?? 0
+          },
+
+          quizzes:{
+            total:quizzes.length,
+            completed:
+              completedQuizzes,
+            percentage:
+              quizPercentage ?? 0
+          },
+
+          attendance:{
+            total:
+              attendance.length,
+
+            present:
+              attendance.filter(
+                item =>
+                  item.status ===
+                  "present"
+              ).length,
+
+            late:
+              attendance.filter(
+                item =>
+                  item.status ===
+                  "late"
+              ).length,
+
+            absent:
+              attendance.filter(
+                item =>
+                  item.status ===
+                  "absent"
+              ).length,
+
+            excused:
+              attendance.filter(
+                item =>
+                  item.status ===
+                  "excused"
+              ).length,
+
+            percentage:
+              attendancePercentage ?? 0
+          }
+        },
+
+        latestActivity,
+
+        generatedAt:
+          new Date().toISOString()
+      });
+    } catch (err) {
+      console.error(
+        "GET student class progress error:",
+        err
+      );
+
+      return res.status(500).json({
+        message:
+          "Failed to calculate student class progress."
+      });
+    }
+  }
+);
+
+
+
 /* =====================================================
    UPDATE CLASS BUILDER PROFILE + VISUAL CONTENT
    PATCH /api/classes/:id/builder
