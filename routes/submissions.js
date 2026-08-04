@@ -13,6 +13,225 @@ function canViewSchool(user, schoolId) {
   return false;
 }
 
+const MAX_SUBMISSION_ATTACHMENTS =
+  20;
+
+const ALLOWED_ATTACHMENT_TYPES =
+  new Set([
+    "image",
+    "video",
+    "audio",
+    "pdf",
+    "document",
+    "presentation",
+    "spreadsheet",
+    "text",
+    "file"
+  ]);
+
+const ALLOWED_RESOURCE_TYPES =
+  new Set([
+    "image",
+    "video",
+    "raw"
+  ]);
+
+
+function sanitizeSubmissionAttachments(
+  attachments,
+  userId
+) {
+  if (!Array.isArray(attachments)) {
+    return [];
+  }
+
+  const uniqueUrls =
+    new Set();
+
+  return attachments
+    .slice(
+      0,
+      MAX_SUBMISSION_ATTACHMENTS
+    )
+    .map(attachment => {
+      const url =
+        String(
+          attachment?.secureUrl ||
+          attachment?.url ||
+          ""
+        ).trim();
+
+      if (!url) {
+        return null;
+      }
+
+      let parsedUrl;
+
+      try {
+        parsedUrl =
+          new URL(url);
+      } catch {
+        return null;
+      }
+
+      if (
+        ![
+          "http:",
+          "https:"
+        ].includes(
+          parsedUrl.protocol
+        )
+      ) {
+        return null;
+      }
+
+      if (
+        uniqueUrls.has(url)
+      ) {
+        return null;
+      }
+
+      uniqueUrls.add(url);
+
+      const attachmentType =
+        String(
+          attachment?.attachmentType ||
+          "file"
+        )
+          .trim()
+          .toLowerCase();
+
+      const resourceType =
+        String(
+          attachment?.resourceType ||
+          "raw"
+        )
+          .trim()
+          .toLowerCase();
+
+      return {
+        url,
+
+        secureUrl:
+          String(
+            attachment?.secureUrl ||
+            url
+          ).trim(),
+
+        publicId:
+          String(
+            attachment?.publicId ||
+            ""
+          )
+            .trim()
+            .slice(
+              0,
+              500
+            ),
+
+        originalName:
+          String(
+            attachment?.originalName ||
+            "Attachment"
+          )
+            .trim()
+            .slice(
+              0,
+              255
+            ),
+
+        mimeType:
+          String(
+            attachment?.mimeType ||
+            "application/octet-stream"
+          )
+            .trim()
+            .slice(
+              0,
+              150
+            ),
+
+        attachmentType:
+          ALLOWED_ATTACHMENT_TYPES.has(
+            attachmentType
+          )
+            ? attachmentType
+            : "file",
+
+        resourceType:
+          ALLOWED_RESOURCE_TYPES.has(
+            resourceType
+          )
+            ? resourceType
+            : "raw",
+
+        size:
+          Math.max(
+            0,
+            Number(
+              attachment?.size ||
+              0
+            ) || 0
+          ),
+
+        format:
+          String(
+            attachment?.format ||
+            ""
+          )
+            .trim()
+            .slice(
+              0,
+              50
+            ),
+
+        width:
+          Number.isFinite(
+            Number(
+              attachment?.width
+            )
+          )
+            ? Number(
+                attachment.width
+              )
+            : null,
+
+        height:
+          Number.isFinite(
+            Number(
+              attachment?.height
+            )
+          )
+            ? Number(
+                attachment.height
+              )
+            : null,
+
+        duration:
+          Number.isFinite(
+            Number(
+              attachment?.duration
+            )
+          )
+            ? Number(
+                attachment.duration
+              )
+            : null,
+
+        uploadedBy:
+          userId,
+
+        uploadedAt:
+          attachment?.uploadedAt
+            ? new Date(
+                attachment.uploadedAt
+              )
+            : new Date()
+      };
+    })
+    .filter(Boolean);
+}
+
 function canGrade(user, submission) {
   if (!user) return false;
   if (user.role === "admin") return true;
@@ -85,10 +304,16 @@ router.post("/", auth, async (req, res) => {
         req.body.text || ""
       ).trim();
 
-    const fileUrl =
-      String(
-        req.body.fileUrl || ""
-      ).trim();
+const fileUrl =
+  String(
+    req.body.fileUrl || ""
+  ).trim();
+
+const attachments =
+  sanitizeSubmissionAttachments(
+    req.body.attachments,
+    req.user._id
+  );
 
     if (!assignmentId) {
       return res.status(400).json({
@@ -97,13 +322,14 @@ router.post("/", auth, async (req, res) => {
       });
     }
 
-    if (
-      !text &&
-      !fileUrl
-    ) {
+if (
+  !text &&
+  !fileUrl &&
+  !attachments.length
+) {
       return res.status(400).json({
         message:
-          "Write an answer or add a file URL"
+  "Write an answer or attach at least one file"
       });
     }
 
@@ -157,77 +383,116 @@ router.post("/", auth, async (req, res) => {
     let socketEvent;
     let responseStatus;
 
-    if (!existing) {
-      submission =
-        await Submission.create({
-          schoolId:
-            assignment.schoolId,
+if (!existing) {
+  const primaryFileUrl =
+    fileUrl ||
+    attachments[0]?.url ||
+    null;
 
-          classId:
-            assignment.classId ||
-            null,
+  submission =
+    await Submission.create({
+      schoolId:
+        assignment.schoolId,
 
-          assignmentId:
-            assignment._id,
+      classId:
+        assignment.classId ||
+        null,
 
-          studentId:
-            req.user._id,
+      assignmentId:
+        assignment._id,
 
-          teacherId:
-            assignment.teacherId ||
-            null,
+      studentId:
+        req.user._id,
+
+      teacherId:
+        assignment.teacherId ||
+        null,
+
+      text:
+        text || null,
+
+      /*
+        Keep fileUrl for backward compatibility.
+
+        The first uploaded attachment becomes the legacy
+        fileUrl when no manually supplied URL exists.
+      */
+
+      fileUrl:
+        primaryFileUrl,
+
+      /*
+        This is now the real multi-file source.
+      */
+
+      attachments,
+
+      status:
+        "submitted",
+
+      submittedAt:
+        now,
+
+      lastEditedAt:
+        now,
+
+      attemptNumber:
+        1,
+
+      revisionNumber:
+        1,
+
+      submissionHistory: [
+        {
+          revisionNumber:
+            1,
+
+          attemptNumber:
+            1,
 
           text:
             text || null,
 
           fileUrl:
-            fileUrl || null,
+            primaryFileUrl,
+
+          /*
+            Store a snapshot of the files belonging to
+            this exact revision.
+          */
+
+          attachments,
 
           status:
             "submitted",
 
-          submittedAt:
-            now,
+          grade:
+            null,
 
-          lastEditedAt:
-            now,
+          feedback:
+            null,
 
-          attemptNumber:
-            1,
+          changedBy:
+            req.user._id,
 
-          revisionNumber:
-            1,
+          changedByRole:
+            req.user.role,
 
-          submissionHistory: [
-            {
-              revisionNumber: 1,
-              attemptNumber: 1,
-              text:
-                text || null,
-              fileUrl:
-                fileUrl || null,
-              status:
-                "submitted",
-              grade: null,
-              feedback: null,
-              changedBy:
-                req.user._id,
-              changedByRole:
-                req.user.role,
-              action:
-                "submitted",
-              createdAt:
-                now
-            }
-          ]
-        });
+          action:
+            "submitted",
 
-      socketEvent =
-        "submission:new";
+          createdAt:
+            now
+        }
+      ]
+    });
 
-      responseStatus =
-        201;
-    } else {
+  socketEvent =
+    "submission:new";
+
+  responseStatus =
+    201;
+} else {
       const currentStatus =
         String(
           existing.status || ""
@@ -263,115 +528,141 @@ router.post("/", auth, async (req, res) => {
         currentStatus ===
         "returned";
 
-      existing.schoolId =
-        assignment.schoolId;
 
-      existing.classId =
-        assignment.classId ||
-        null;
+const primaryFileUrl =
+  fileUrl ||
+  attachments[0]?.url ||
+  null;
 
-      existing.teacherId =
-        assignment.teacherId ||
-        null;
+existing.schoolId =
+  assignment.schoolId;
 
-      existing.text =
-        text || null;
+existing.classId =
+  assignment.classId ||
+  null;
 
-      existing.fileUrl =
-        fileUrl || null;
+existing.teacherId =
+  assignment.teacherId ||
+  null;
 
-      existing.status =
-        "submitted";
+existing.text =
+  text || null;
 
-      existing.submittedAt =
-        now;
+/*
+  Keep the old field synchronized for backward
+  compatibility with older frontend code.
+*/
 
-      existing.lastEditedAt =
-        now;
+existing.fileUrl =
+  primaryFileUrl;
 
-      existing.reviewedAt =
-        null;
+/*
+  Replace the current submission files with the exact
+  attachment list sent for this revision.
+*/
 
-      existing.returnedAt =
-        null;
+existing.attachments =
+  attachments;
 
-      existing.returnedBy =
-        null;
+existing.status =
+  "submitted";
 
-      existing.returnedReason =
-        "";
+existing.submittedAt =
+  now;
 
-      existing.gradedAt =
-        null;
+existing.lastEditedAt =
+  now;
 
-      existing.lockedAt =
-        null;
+existing.reviewedAt =
+  null;
 
-      existing.locked =
-        false;
+existing.returnedAt =
+  null;
 
-      existing.grade =
-        null;
+existing.returnedBy =
+  null;
 
-      existing.feedback =
-        null;
+existing.returnedReason =
+  "";
 
-      existing.revisionNumber =
-        Math.max(
-          1,
-          Number(
-            existing.revisionNumber ||
-            1
-          )
-        ) + 1;
+existing.gradedAt =
+  null;
 
-      if (isResubmission) {
-        existing.attemptNumber =
-          Math.max(
-            1,
-            Number(
-              existing.attemptNumber ||
-              1
-            )
-          ) + 1;
-      }
+existing.lockedAt =
+  null;
 
-      existing.submissionHistory.push({
-        revisionNumber:
-          existing.revisionNumber,
+existing.locked =
+  false;
 
-        attemptNumber:
-          existing.attemptNumber,
+existing.grade =
+  null;
 
-        text:
-          text || null,
+existing.feedback =
+  null;
 
-        fileUrl:
-          fileUrl || null,
+existing.revisionNumber =
+  Math.max(
+    1,
+    Number(
+      existing.revisionNumber ||
+      1
+    )
+  ) + 1;
 
-        status:
-          "submitted",
+if (isResubmission) {
+  existing.attemptNumber =
+    Math.max(
+      1,
+      Number(
+        existing.attemptNumber ||
+        1
+      )
+    ) + 1;
+}
 
-        grade:
-          null,
+existing.submissionHistory.push({
+  revisionNumber:
+    existing.revisionNumber,
 
-        feedback:
-          null,
+  attemptNumber:
+    existing.attemptNumber,
 
-        changedBy:
-          req.user._id,
+  text:
+    text || null,
 
-        changedByRole:
-          req.user.role,
+  fileUrl:
+    primaryFileUrl,
 
-        action:
-          isResubmission
-            ? "resubmitted"
-            : "updated",
+  /*
+    Save this revision's attachment snapshot rather than
+    referring only to the current submission array.
+  */
 
-        createdAt:
-          now
-      });
+  attachments,
+
+  status:
+    "submitted",
+
+  grade:
+    null,
+
+  feedback:
+    null,
+
+  changedBy:
+    req.user._id,
+
+  changedByRole:
+    req.user.role,
+
+  action:
+    isResubmission
+      ? "resubmitted"
+      : "updated",
+
+  createdAt:
+    now
+});
 
       await existing.save();
 
@@ -603,46 +894,74 @@ router.patch("/:id/review", auth, async (req, res) => {
         )
       ) + 1;
 
-    submission.submissionHistory.push({
-      revisionNumber:
-        submission.revisionNumber,
 
-      attemptNumber:
-        Math.max(
-          1,
-          Number(
-            submission.attemptNumber ||
-            1
-          )
-        ),
+submission.submissionHistory.push({
+  revisionNumber:
+    submission.revisionNumber,
 
-      text:
-        submission.text,
+  attemptNumber:
+    Math.max(
+      1,
+      Number(
+        submission.attemptNumber ||
+        1
+      )
+    ),
 
-      fileUrl:
-        submission.fileUrl,
+  text:
+    submission.text,
 
-      status:
-        requestedStatus,
+  fileUrl:
+    submission.fileUrl,
 
-      grade:
-        submission.grade,
+  /*
+    Preserve the exact files that were present when the
+    teacher returned, reviewed, graded, or locked the work.
 
-      feedback:
-        submission.feedback,
+    Convert Mongoose subdocuments into plain objects before
+    placing them inside the history snapshot.
+  */
 
-      changedBy:
-        req.user._id,
+  attachments:
+    Array.isArray(
+      submission.attachments
+    )
+      ? submission.attachments.map(
+          attachment => {
+            if (
+              attachment &&
+              typeof attachment.toObject ===
+                "function"
+            ) {
+              return attachment.toObject();
+            }
 
-      changedByRole:
-        req.user.role,
+            return attachment;
+          }
+        )
+      : [],
 
-      action:
-        requestedStatus,
+  status:
+    requestedStatus,
 
-      createdAt:
-        now
-    });
+  grade:
+    submission.grade,
+
+  feedback:
+    submission.feedback,
+
+  changedBy:
+    req.user._id,
+
+  changedByRole:
+    req.user.role,
+
+  action:
+    requestedStatus,
+
+  createdAt:
+    now
+});
 
     await submission.save();
 
