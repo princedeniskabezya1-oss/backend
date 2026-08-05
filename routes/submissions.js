@@ -826,11 +826,138 @@ router.patch("/:id/review", auth, async (req, res) => {
           ).trim()
         : submission.grade;
 
-    submission.feedback =
-      feedback || null;
+    /* =====================================================
+   RUBRIC CALCULATION
+===================================================== */
 
-    submission.grade =
-      grade || null;
+const assignment =
+  await Assignment.findById(
+    submission.assignmentId
+  ).lean();
+
+const rubricScores =
+  Array.isArray(
+    req.body.rubricScores
+  )
+    ? req.body.rubricScores
+    : [];
+
+let totalPoints =
+  Number(
+    assignment?.totalPoints ||
+    0
+  );
+
+let earnedPoints = 0;
+
+const normalizedRubric =
+  rubricScores.map(item => {
+
+    const earned =
+      Math.max(
+        0,
+        Number(
+          item.earnedPoints || 0
+        )
+      );
+
+    earnedPoints += earned;
+
+    return {
+
+      rubricId:
+        item.rubricId || null,
+
+      title:
+        String(
+          item.title || ""
+        ),
+
+      description:
+        String(
+          item.description || ""
+        ),
+
+      maxPoints:
+        Number(
+          item.maxPoints || 0
+        ),
+
+      earnedPoints:
+        earned,
+
+      feedback:
+        String(
+          item.feedback || ""
+        ),
+
+      order:
+        Number(
+          item.order || 0
+        )
+
+    };
+
+  });
+
+if(
+  !totalPoints &&
+  normalizedRubric.length
+){
+
+  totalPoints =
+    normalizedRubric.reduce(
+      (
+        sum,
+        criterion
+      ) =>
+        sum +
+        criterion.maxPoints,
+      0
+    );
+
+}
+
+const percentage =
+  totalPoints > 0
+    ? Number(
+        (
+          earnedPoints /
+          totalPoints
+        ) * 100
+      )
+    : 0;
+
+const passed =
+  percentage >=
+  Number(
+    assignment?.passingScore ||
+    60
+  );
+
+submission.feedback =
+  feedback || null;
+
+submission.grade =
+  grade || null;
+
+submission.rubricScores =
+  normalizedRubric;
+
+submission.totalPoints =
+  totalPoints;
+
+submission.earnedPoints =
+  earnedPoints;
+
+submission.percentage =
+  percentage;
+
+submission.passed =
+  passed;
+
+submission.gradedBy =
+  req.user._id;
 
     submission.status =
       requestedStatus;
@@ -949,6 +1076,16 @@ submission.submissionHistory.push({
 
   feedback:
     submission.feedback,
+  rubricScores:
+  normalizedRubric,
+
+totalPoints,
+
+earnedPoints,
+
+percentage,
+
+passed,
 
   changedBy:
     req.user._id,
