@@ -57,12 +57,94 @@ const assignmentSchema = new mongoose.Schema(
       default: null
     },
 
-    status: {
+status: {
+  type: String,
+  enum: [
+    "draft",
+    "published",
+    "archived"
+  ],
+  default: "published",
+  index: true
+},
+
+/* =====================================================
+   GRADING
+===================================================== */
+
+gradingType: {
+  type: String,
+  enum: [
+    "points",
+    "rubric",
+    "pass_fail"
+  ],
+  default: "points"
+},
+
+totalPoints: {
+  type: Number,
+  default: 100,
+  min: 0
+},
+
+passingScore: {
+  type: Number,
+  default: 60,
+  min: 0
+},
+
+allowResubmission: {
+  type: Boolean,
+  default: true
+},
+
+maxAttempts: {
+  type: Number,
+  default: 999,
+  min: 1
+},
+
+showRubricBeforeSubmission: {
+  type: Boolean,
+  default: true
+},
+
+showScoreImmediately: {
+  type: Boolean,
+  default: true
+},
+
+/* =====================================================
+   RUBRIC
+===================================================== */
+
+rubric: [
+  {
+    title: {
       type: String,
-      enum: ["draft", "published", "archived"],
-      default: "published",
-      index: true
+      trim: true,
+      default: ""
+    },
+
+    description: {
+      type: String,
+      trim: true,
+      default: ""
+    },
+
+    points: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+
+    order: {
+      type: Number,
+      default: 0
     }
+  }
+]
   },
   { timestamps: true }
 );
@@ -70,5 +152,14 @@ const assignmentSchema = new mongoose.Schema(
 assignmentSchema.index({ schoolId: 1, createdAt: -1 });
 assignmentSchema.index({ classId: 1, dueDate: 1 });
 assignmentSchema.index({ teacherId: 1, dueDate: 1 });
+
+assignmentSchema.index({
+  gradingType:1
+});
+
+assignmentSchema.index({
+  status:1,
+  gradingType:1
+});
 
 module.exports = mongoose.model("Assignment", assignmentSchema);
