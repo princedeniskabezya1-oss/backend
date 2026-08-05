@@ -16,6 +16,14 @@ const ALLOWED_UPLOAD_ROLES = new Set([
   "school",
   "teacher"
 ]);
+const ALLOWED_STUDENT_RESOURCE_ROLES =
+  new Set([
+    "admin",
+    "school",
+    "teacher",
+    "student",
+    "talent"
+  ]);
 
 const LESSON_COVER_TYPES = new Set([
   "image/jpeg",
@@ -37,6 +45,30 @@ const MAX_LESSON_COVER_SIZE =
 const MAX_LESSON_VIDEO_SIZE =
   50 * 1024 * 1024;
 
+const STUDENT_RESOURCE_TYPES =
+  new Set([
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+
+    "application/pdf",
+
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+
+    "text/plain",
+    "text/csv"
+  ]);
+
+const MAX_STUDENT_RESOURCE_SIZE =
+  20 * 1024 * 1024;
 
 
 /* =========================================================
@@ -122,6 +154,79 @@ function userCanUpload(req) {
   return ALLOWED_UPLOAD_ROLES.has(
     role
   );
+}
+
+function userCanUploadStudentResource(
+  req
+) {
+  const role =
+    String(
+      req.user?.role ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+  return ALLOWED_STUDENT_RESOURCE_ROLES.has(
+    role
+  );
+}
+
+function getStudentResourceAttachmentType(
+  mimeType
+) {
+  const normalizedMimeType =
+    String(
+      mimeType ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+  if (
+    normalizedMimeType.startsWith(
+      "image/"
+    )
+  ) {
+    return "image";
+  }
+
+  if (
+    normalizedMimeType ===
+    "application/pdf"
+  ) {
+    return "pdf";
+  }
+
+  if (
+    normalizedMimeType.includes(
+      "presentation"
+    ) ||
+    normalizedMimeType ===
+    "application/vnd.ms-powerpoint"
+  ) {
+    return "presentation";
+  }
+
+  if (
+    normalizedMimeType.includes(
+      "spreadsheet"
+    ) ||
+    normalizedMimeType ===
+    "application/vnd.ms-excel"
+  ) {
+    return "spreadsheet";
+  }
+
+  if (
+    normalizedMimeType.startsWith(
+      "text/"
+    )
+  ) {
+    return "text";
+  }
+
+  return "document";
 }
 
 function userCanUploadAssignmentFiles(
@@ -924,5 +1029,176 @@ router.post(
   }
 );
 
+/* =========================================================
+   POST /api/uploads/student-resource
+========================================================= */
+
+router.post(
+  "/student-resource",
+  auth,
+  singleFileUpload("resource"),
+  async (
+    req,
+    res
+  ) => {
+    try {
+      if (
+        !userCanUploadStudentResource(
+          req
+        )
+      ) {
+        return res.status(403).json({
+          success:
+            false,
+
+          message:
+            "You are not allowed to upload personal learning resources."
+        });
+      }
+
+      if (!req.file) {
+        return res.status(400).json({
+          success:
+            false,
+
+          message:
+            "Please select a learning resource to upload."
+        });
+      }
+
+      const mimeType =
+        String(
+          req.file.mimetype ||
+          ""
+        )
+          .trim()
+          .toLowerCase();
+
+      if (
+        !STUDENT_RESOURCE_TYPES.has(
+          mimeType
+        )
+      ) {
+        return res.status(400).json({
+          success:
+            false,
+
+          message:
+            "Personal resources must be an image, PDF, Word, PowerPoint, Excel, TXT, or CSV file."
+        });
+      }
+
+      if (
+        req.file.size >
+        MAX_STUDENT_RESOURCE_SIZE
+      ) {
+        return res.status(413).json({
+          success:
+            false,
+
+          message:
+            "Personal learning resources must be 20 MB or smaller."
+        });
+      }
+
+      const userId =
+        getAuthenticatedUserId(
+          req
+        );
+
+      if (!userId) {
+        return res.status(401).json({
+          success:
+            false,
+
+          message:
+            "Your authenticated account could not be identified."
+        });
+      }
+
+      const isImage =
+        mimeType.startsWith(
+          "image/"
+        );
+
+      const result =
+        await uploadBufferToCloudinary(
+          req.file.buffer,
+          {
+            folder:
+              `aift/student-resources/${userId}`,
+
+            resourceType:
+              isImage
+                ? "image"
+                : "raw",
+
+            transformation:
+              isImage
+                ? [
+                    {
+                      width:
+                        1800,
+
+                      height:
+                        1800,
+
+                      crop:
+                        "limit",
+
+                      quality:
+                        "auto",
+
+                      fetch_format:
+                        "auto"
+                    }
+                  ]
+                : []
+          }
+        );
+
+      const response =
+        cloudinaryResponse(
+          result,
+          req.file,
+          isImage
+            ? "image"
+            : "raw"
+        );
+
+      return res.status(201).json({
+        ...response,
+
+        attachmentType:
+          getStudentResourceAttachmentType(
+            mimeType
+          ),
+
+        mimeType,
+
+        uploadedBy:
+          userId,
+
+        uploadedAt:
+          new Date()
+            .toISOString()
+      });
+    } catch (error) {
+      console.error(
+        "Student resource upload error:",
+        error
+      );
+
+      return res.status(500).json({
+        success:
+          false,
+
+        message:
+          error?.message ||
+          "Failed to upload the personal learning resource."
+      });
+    }
+  }
+);
 
 module.exports = router;
