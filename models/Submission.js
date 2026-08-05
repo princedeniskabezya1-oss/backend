@@ -169,6 +169,66 @@ attachments: {
         default: null
       },
 
+      rubricScores: {
+        type: [
+          {
+            rubricId: {
+              type: mongoose.Schema.Types.ObjectId,
+              default: null
+            },
+
+            title: {
+              type: String,
+              trim: true,
+              default: ""
+            },
+
+            maxPoints: {
+              type: Number,
+              min: 0,
+              default: 0
+            },
+
+            earnedPoints: {
+              type: Number,
+              min: 0,
+              default: 0
+            },
+
+            feedback: {
+              type: String,
+              trim: true,
+              default: ""
+            }
+          }
+        ],
+        default: []
+      },
+
+      totalPoints: {
+        type: Number,
+        min: 0,
+        default: 0
+      },
+
+      earnedPoints: {
+        type: Number,
+        min: 0,
+        default: 0
+      },
+
+      percentage: {
+        type: Number,
+        min: 0,
+        max: 100,
+        default: 0
+      },
+
+      passed: {
+        type: Boolean,
+        default: false
+      },
+
       changedBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "User",
@@ -288,6 +348,93 @@ attachments: {
         default: null
       },
 
+      /* =====================================================
+         RUBRIC GRADING
+      ===================================================== */
+
+      rubricScores: {
+        type: [
+          {
+            rubricId: {
+              type: mongoose.Schema.Types.ObjectId,
+              default: null
+            },
+
+            title: {
+              type: String,
+              trim: true,
+              maxlength: 250,
+              default: ""
+            },
+
+            description: {
+              type: String,
+              trim: true,
+              maxlength: 2000,
+              default: ""
+            },
+
+            maxPoints: {
+              type: Number,
+              min: 0,
+              default: 0
+            },
+
+            earnedPoints: {
+              type: Number,
+              min: 0,
+              default: 0
+            },
+
+            feedback: {
+              type: String,
+              trim: true,
+              maxlength: 3000,
+              default: ""
+            },
+
+            order: {
+              type: Number,
+              min: 0,
+              default: 0
+            }
+          }
+        ],
+        default: []
+      },
+
+      totalPoints: {
+        type: Number,
+        min: 0,
+        default: 0
+      },
+
+      earnedPoints: {
+        type: Number,
+        min: 0,
+        default: 0
+      },
+
+      percentage: {
+        type: Number,
+        min: 0,
+        max: 100,
+        default: 0
+      },
+
+      passed: {
+        type: Boolean,
+        default: false,
+        index: true
+      },
+
+      gradedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: null,
+        index: true
+      },
+
       status: {
         type: String,
         enum: [
@@ -338,7 +485,122 @@ attachments: {
 
       gradedAt: {
         type: Date,
-        default: null
+        default: null,
+        index: true
+      },
+
+      /* =====================================================
+         GRADING HISTORY
+      ===================================================== */
+
+      gradingHistory: {
+        type: [
+          {
+            gradedBy: {
+              type: mongoose.Schema.Types.ObjectId,
+              ref: "User",
+              default: null
+            },
+
+            gradedAt: {
+              type: Date,
+              default: Date.now
+            },
+
+            gradingType: {
+              type: String,
+              enum: [
+                "points",
+                "rubric",
+                "pass_fail"
+              ],
+              default: "points"
+            },
+
+            grade: {
+              type: String,
+              trim: true,
+              maxlength: 50,
+              default: null
+            },
+
+            earnedPoints: {
+              type: Number,
+              min: 0,
+              default: 0
+            },
+
+            totalPoints: {
+              type: Number,
+              min: 0,
+              default: 0
+            },
+
+            percentage: {
+              type: Number,
+              min: 0,
+              max: 100,
+              default: 0
+            },
+
+            passed: {
+              type: Boolean,
+              default: false
+            },
+
+            feedback: {
+              type: String,
+              trim: true,
+              maxlength: 5000,
+              default: ""
+            },
+
+            rubricScores: {
+              type: [
+                {
+                  rubricId: {
+                    type: mongoose.Schema.Types.ObjectId,
+                    default: null
+                  },
+
+                  title: {
+                    type: String,
+                    trim: true,
+                    maxlength: 250,
+                    default: ""
+                  },
+
+                  maxPoints: {
+                    type: Number,
+                    min: 0,
+                    default: 0
+                  },
+
+                  earnedPoints: {
+                    type: Number,
+                    min: 0,
+                    default: 0
+                  },
+
+                  feedback: {
+                    type: String,
+                    trim: true,
+                    maxlength: 3000,
+                    default: ""
+                  },
+
+                  order: {
+                    type: Number,
+                    min: 0,
+                    default: 0
+                  }
+                }
+              ],
+              default: []
+            }
+          }
+        ],
+        default: []
       },
 
       lockedAt: {
@@ -410,6 +672,26 @@ submissionSchema.index({
 submissionSchema.index({
   assignmentId: 1,
   status: 1
+});
+submissionSchema.index({
+  assignmentId: 1,
+  percentage: -1
+});
+
+submissionSchema.index({
+  teacherId: 1,
+  gradedAt: -1
+});
+
+submissionSchema.index({
+  schoolId: 1,
+  passed: 1,
+  gradedAt: -1
+});
+
+submissionSchema.index({
+  studentId: 1,
+  percentage: -1
 });
 
 module.exports =
