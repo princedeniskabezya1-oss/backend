@@ -51,6 +51,7 @@ const lessonProgressRoutes = require("./routes/lessonProgress");
 const uploadRoutes = require("./routes/uploads");
 const studentResourceRoutes = require("./routes/studentResources");
 const certificateRoutes = require("./routes/certificates");
+const studentPortfolioRoutes = require("./routes/studentPortfolio");
 const mediaRoutes = require("./routes/media");
 
 const app = express();
@@ -345,6 +346,7 @@ app.use("/api/lesson-progress", lessonProgressRoutes);
 app.use("/api/uploads", uploadRoutes);
 app.use("/api/student-resources", studentResourceRoutes);
 app.use("/api/certificates", certificateRoutes);
+app.use("/api/student-portfolio", studentPortfolioRoutes);
 app.use("/api/media", mediaRoutes);
 /* ============================================
    SOCKET.IO
