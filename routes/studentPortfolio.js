@@ -440,6 +440,471 @@ router.patch(
 
 
 /* =========================================================
+   PROJECT HELPERS
+========================================================= */
+
+function normalizePortfolioProjectPayload(
+  body = {}
+){
+
+  const allowedSourceTypes = [
+    "manual",
+    "resource",
+    "assignment",
+    "certificate",
+    "ai"
+  ];
+
+
+  const sourceType =
+    allowedSourceTypes.includes(
+      String(
+        body.sourceType ||
+        ""
+      )
+        .trim()
+        .toLowerCase()
+    )
+      ? String(
+          body.sourceType
+        )
+          .trim()
+          .toLowerCase()
+      : "manual";
+
+
+  const sourceId =
+    isValidId(
+      body.sourceId
+    )
+      ? body.sourceId
+      : null;
+
+
+  return {
+    title:
+      normalizeString(
+        body.title,
+        150
+      ),
+
+    description:
+      normalizeString(
+        body.description,
+        3000
+      ),
+
+    category:
+      normalizeString(
+        body.category ||
+        "Project",
+        100
+      ),
+
+    imageUrl:
+      normalizeString(
+        body.imageUrl,
+        5000
+      ),
+
+    fileUrl:
+      normalizeString(
+        body.fileUrl,
+        5000
+      ),
+
+    completedAt:
+      body.completedAt
+        ? new Date(
+            body.completedAt
+          )
+        : null,
+
+    featured:
+      body.featured !==
+        false,
+
+    sourceType,
+
+    sourceId,
+
+    order:
+      Number.isFinite(
+        Number(
+          body.order
+        )
+      )
+        ? Number(
+            body.order
+          )
+        : 0
+  };
+
+}
+
+
+/* =========================================================
+   CREATE PROJECT
+========================================================= */
+
+router.post(
+  "/me/projects",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try{
+
+      if (
+        req.user.role !==
+        "student"
+      ){
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Only students can add portfolio projects."
+          });
+
+      }
+
+
+      const project =
+        normalizePortfolioProjectPayload(
+          req.body
+        );
+
+
+      if (!project.title){
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "Project title is required."
+          });
+
+      }
+
+
+      let portfolio =
+        await StudentPortfolio.findOne({
+          studentId:
+            req.user._id
+        });
+
+
+      if (!portfolio){
+
+        portfolio =
+          await StudentPortfolio.create({
+            studentId:
+              req.user._id,
+
+            schoolId:
+              getStudentSchoolId(
+                req.user
+              )
+          });
+
+      }
+
+
+      portfolio.projects.push(
+        project
+      );
+
+
+      await portfolio.save();
+
+
+      const savedProject =
+        portfolio.projects[
+          portfolio.projects.length - 1
+        ];
+
+
+      return res
+        .status(201)
+        .json({
+          project:
+            savedProject,
+
+          portfolio
+        });
+
+    }catch(error){
+
+      console.error(
+        "Create portfolio project failed:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          message:
+            "Could not create portfolio project."
+        });
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   UPDATE PROJECT
+========================================================= */
+
+router.patch(
+  "/me/projects/:projectId",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try{
+
+      if (
+        req.user.role !==
+        "student"
+      ){
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Only students can update portfolio projects."
+          });
+
+      }
+
+
+      if (
+        !isValidId(
+          req.params.projectId
+        )
+      ){
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "Invalid project ID."
+          });
+
+      }
+
+
+      const portfolio =
+        await StudentPortfolio.findOne({
+          studentId:
+            req.user._id
+        });
+
+
+      if (!portfolio){
+
+        return res
+          .status(404)
+          .json({
+            message:
+              "Portfolio not found."
+          });
+
+      }
+
+
+      const project =
+        portfolio.projects.id(
+          req.params.projectId
+        );
+
+
+      if (!project){
+
+        return res
+          .status(404)
+          .json({
+            message:
+              "Portfolio project not found."
+          });
+
+      }
+
+
+      const update =
+        normalizePortfolioProjectPayload(
+          req.body
+        );
+
+
+      if (!update.title){
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "Project title is required."
+          });
+
+      }
+
+
+      project.set(
+        update
+      );
+
+
+      await portfolio.save();
+
+
+      return res.json({
+        project,
+        portfolio
+      });
+
+    }catch(error){
+
+      console.error(
+        "Update portfolio project failed:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          message:
+            "Could not update portfolio project."
+        });
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   DELETE PROJECT
+========================================================= */
+
+router.delete(
+  "/me/projects/:projectId",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try{
+
+      if (
+        req.user.role !==
+        "student"
+      ){
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Only students can remove portfolio projects."
+          });
+
+      }
+
+
+      if (
+        !isValidId(
+          req.params.projectId
+        )
+      ){
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "Invalid project ID."
+          });
+
+      }
+
+
+      const portfolio =
+        await StudentPortfolio.findOne({
+          studentId:
+            req.user._id
+        });
+
+
+      if (!portfolio){
+
+        return res
+          .status(404)
+          .json({
+            message:
+              "Portfolio not found."
+          });
+
+      }
+
+
+      const project =
+        portfolio.projects.id(
+          req.params.projectId
+        );
+
+
+      if (!project){
+
+        return res
+          .status(404)
+          .json({
+            message:
+              "Portfolio project not found."
+          });
+
+      }
+
+
+      project.deleteOne();
+
+
+      await portfolio.save();
+
+
+      return res.json({
+        success:true,
+        portfolio
+      });
+
+    }catch(error){
+
+      console.error(
+        "Delete portfolio project failed:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          message:
+            "Could not remove portfolio project."
+        });
+
+    }
+
+  }
+);
+
+/* =========================================================
    PUBLIC PORTFOLIO
 ========================================================= */
 
