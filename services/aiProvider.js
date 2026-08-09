@@ -298,7 +298,7 @@ function getGeminiModel(){
 
   return String(
     process.env.GEMINI_MODEL ||
-    "gemini-2.5-flash"
+    "gemini-3.5-flash"
   ).trim();
 
 }
