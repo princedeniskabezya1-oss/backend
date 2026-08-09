@@ -563,17 +563,227 @@ performanceMetrics: {
     type: Number,
     default: 0
   },
+
   attendance: {
     type: Number,
     default: 0
   },
+
   csat: {
     type: Number,
     default: 0
   },
+
   responseTime: {
     type: String,
     default: ""
+  }
+},
+
+/* ============================================
+   STUDENT STUDIO SETTINGS
+============================================ */
+studentStudioSettings: {
+
+  /* --------------------------------------------
+     LEARNING PREFERENCES
+  -------------------------------------------- */
+  learning: {
+    defaultClassView: {
+      type: String,
+      enum: [
+        "overview",
+        "lessons",
+        "assignments",
+        "resources"
+      ],
+      default: "overview"
+    },
+
+    autoOpenLastClass: {
+      type: Boolean,
+      default: false
+    },
+
+    rememberLastLesson: {
+      type: Boolean,
+      default: true
+    },
+
+    showCompletedLessons: {
+      type: Boolean,
+      default: true
+    },
+
+    compactClassCards: {
+      type: Boolean,
+      default: false
+    }
+  },
+
+  /* --------------------------------------------
+     NOTIFICATION PREFERENCES
+  -------------------------------------------- */
+  notifications: {
+    assignments: {
+      type: Boolean,
+      default: true
+    },
+
+    assignmentDeadlines: {
+      type: Boolean,
+      default: true
+    },
+
+    grades: {
+      type: Boolean,
+      default: true
+    },
+
+    classAnnouncements: {
+      type: Boolean,
+      default: true
+    },
+
+    teacherMessages: {
+      type: Boolean,
+      default: true
+    },
+
+    classMessages: {
+      type: Boolean,
+      default: true
+    },
+
+    scheduleChanges: {
+      type: Boolean,
+      default: true
+    },
+
+    certificates: {
+      type: Boolean,
+      default: true
+    },
+
+    careerUpdates: {
+      type: Boolean,
+      default: true
+    }
+  },
+
+  /* --------------------------------------------
+     KABEZYA AI PREFERENCES
+  -------------------------------------------- */
+  kabezya: {
+    enabled: {
+      type: Boolean,
+      default: true
+    },
+
+    explanationLevel: {
+      type: String,
+      enum: [
+        "simple",
+        "balanced",
+        "advanced"
+      ],
+      default: "balanced"
+    },
+
+    responseLength: {
+      type: String,
+      enum: [
+        "short",
+        "balanced",
+        "detailed"
+      ],
+      default: "balanced"
+    },
+
+    studySuggestions: {
+      type: Boolean,
+      default: true
+    },
+
+    quizSuggestions: {
+      type: Boolean,
+      default: true
+    },
+
+    grammarAssistance: {
+      type: Boolean,
+      default: true
+    },
+
+    summarizeLessons: {
+      type: Boolean,
+      default: true
+    }
+  },
+
+  /* --------------------------------------------
+     STUDENT PRIVACY
+  -------------------------------------------- */
+  privacy: {
+    showLearningProgress: {
+      type: Boolean,
+      default: true
+    },
+
+    showCertificates: {
+      type: Boolean,
+      default: true
+    },
+
+    showPortfolio: {
+      type: Boolean,
+      default: true
+    },
+
+    showClassActivity: {
+      type: Boolean,
+      default: false
+    },
+
+    allowClassmateMessages: {
+      type: Boolean,
+      default: true
+    },
+
+    allowTeacherMessages: {
+      type: Boolean,
+      default: true
+    }
+  },
+
+  /* --------------------------------------------
+     ACCESSIBILITY
+  -------------------------------------------- */
+  accessibility: {
+    reducedMotion: {
+      type: Boolean,
+      default: false
+    },
+
+    highContrast: {
+      type: Boolean,
+      default: false
+    },
+
+    largerText: {
+      type: Boolean,
+      default: false
+    },
+
+    captionsPreferred: {
+      type: Boolean,
+      default: false
+    },
+
+    keyboardNavigationHints: {
+      type: Boolean,
+      default: true
+    }
   }
 }
   },
