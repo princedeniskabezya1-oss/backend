@@ -594,28 +594,21 @@ async function generateAIResponse({
 
         contents,
 
-        config:{
+config:{
 
-          /*
-            Do not send an empty system instruction.
-          */
-
-          ...(
+  ...(
+    instructions
+      ? {
+          systemInstruction:
             instructions
-              ? {
-                  systemInstruction:
-                    instructions
-                }
-              : {}
-          ),
-
-          temperature:
-            0.35,
-
-          maxOutputTokens:
-            3000
-
         }
+      : {}
+  ),
+
+  maxOutputTokens:
+    3000
+
+}
 
       });
 
