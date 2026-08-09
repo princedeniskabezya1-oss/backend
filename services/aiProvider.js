@@ -86,10 +86,10 @@ function normalizeGeminiError(
     )
   ){
 
-    const normalized =
-      new Error(
-        "Gemini authentication failed. Check the GEMINI_API_KEY configured on the backend."
-      );
+const normalized =
+  new Error(
+    "Kabezya is temporarily unavailable. Please try again shortly."
+  );
 
     normalized.statusCode =
       503;
@@ -121,10 +121,10 @@ function normalizeGeminiError(
     )
   ){
 
-    const normalized =
-      new Error(
-        "AI Learning is temporarily busy or has reached its Gemini quota. Please try again shortly."
-      );
+const normalized =
+  new Error(
+    "Kabezya is currently handling a lot of requests. Please try again shortly."
+  );
 
     normalized.statusCode =
       429;
@@ -147,10 +147,10 @@ function normalizeGeminiError(
     status === 400
   ){
 
-    const normalized =
-      new Error(
-        "Gemini rejected the AI request configuration."
-      );
+const normalized =
+  new Error(
+    "Kabezya could not process that request. Please try again."
+  );
 
     normalized.statusCode =
       502;
@@ -179,10 +179,10 @@ function normalizeGeminiError(
     )
   ){
 
-    const normalized =
-      new Error(
-        "The configured Gemini model is not available."
-      );
+const normalized =
+  new Error(
+    "Kabezya is temporarily unavailable. Please try again shortly."
+  );
 
     normalized.statusCode =
       503;
@@ -201,35 +201,35 @@ function normalizeGeminiError(
     Provider unavailable.
   */
 
-  if (
-    status === 500 ||
-    status === 502 ||
-    status === 503 ||
-    status === 504
-  ){
-
-    const normalized =
-      new Error(
-        "Gemini is temporarily unavailable."
-      );
-
-    normalized.statusCode =
-      503;
-
-    normalized.providerStatus =
-      status;
-
-    normalized.cause =
-      error;
-
-    return normalized;
-  }
-
+if (
+  status === 500 ||
+  status === 502 ||
+  status === 503 ||
+  status === 504
+){
 
   const normalized =
     new Error(
-      "Gemini could not generate the AI response."
+      "Kabezya is having trouble responding right now. Please try again."
     );
+
+  normalized.statusCode =
+    503;
+
+  normalized.providerStatus =
+    status;
+
+  normalized.cause =
+    error;
+
+  return normalized;
+}
+
+
+const normalized =
+  new Error(
+    "Kabezya could not complete that response. Please try again."
+  );
 
   normalized.statusCode =
     502;
