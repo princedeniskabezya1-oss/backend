@@ -562,89 +562,168 @@ router.get("/me", auth, async (req, res) => {
    STUDENT STUDIO SETTINGS
 ============================================ */
 
-const STUDENT_STUDIO_SETTINGS_DEFAULTS = Object.freeze({
-  learning: {
-    defaultClassView: "overview",
-    autoOpenLastClass: false,
-    rememberLastLesson: true,
-    showCompletedLessons: true,
-    compactClassCards: false
-  },
+const STUDENT_STUDIO_SETTINGS_DEFAULTS =
+  Object.freeze({
 
-  notifications: {
-    assignments: true,
-    assignmentDeadlines: true,
-    grades: true,
-    classAnnouncements: true,
-    teacherMessages: true,
-    classMessages: true,
-    scheduleChanges: true,
-    certificates: true,
-    careerUpdates: true
-  },
+    learning: {
 
-  kabezya: {
-    enabled: true,
-    explanationLevel: "balanced",
-    responseLength: "balanced",
-    studySuggestions: true,
-    quizSuggestions: true,
-    grammarAssistance: true,
-    summarizeLessons: true
-  },
+      studyReminders: true,
 
-  privacy: {
-    showLearningProgress: true,
-    showCertificates: true,
-    showPortfolio: true,
-    showClassActivity: false,
-    allowClassmateMessages: true,
-    allowTeacherMessages: true
-  },
+      assignmentReminders: true,
 
-  accessibility: {
-    reducedMotion: false,
-    highContrast: false,
-    largerText: false,
-    captionsPreferred: false,
-    keyboardNavigationHints: true
-  }
-});
+      continueLearning: true,
+
+      autoplayNextLesson: false,
+
+      rememberLastClass: true
+
+    },
 
 
-function mergeStudentStudioSettings(settings = {}) {
+    notifications: {
+
+      assignments: true,
+
+      grades: true,
+
+      announcements: true,
+
+      messages: true,
+
+      certificates: true,
+
+      career: true
+
+    },
+
+
+    ai: {
+
+      personalization: true,
+
+      classContext: true,
+
+      learningHistory: true,
+
+      suggestions: true
+
+    },
+
+
+    privacy: {
+
+      portfolioVisibility:
+        "public",
+
+      profileDiscovery: true,
+
+      activityVisibility: false,
+
+      certificateVisibility: true
+
+    },
+
+
+    accessibility: {
+
+      reducedMotion: false,
+
+      compactInterface: false,
+
+      highContrast: false,
+
+      largerText: false
+
+    }
+
+  });
+
+
+function mergeStudentStudioSettings(
+  settings = {}
+) {
+
   const source =
     settings &&
-    typeof settings === "object"
+    typeof settings === "object" &&
+    !Array.isArray(settings)
       ? settings
       : {};
 
+
   return {
+
     learning: {
-      ...STUDENT_STUDIO_SETTINGS_DEFAULTS.learning,
-      ...(source.learning || {})
+
+      ...STUDENT_STUDIO_SETTINGS_DEFAULTS
+        .learning,
+
+      ...(isPlainSettingsObject(
+        source.learning
+      )
+        ? source.learning
+        : {})
+
     },
+
 
     notifications: {
-      ...STUDENT_STUDIO_SETTINGS_DEFAULTS.notifications,
-      ...(source.notifications || {})
+
+      ...STUDENT_STUDIO_SETTINGS_DEFAULTS
+        .notifications,
+
+      ...(isPlainSettingsObject(
+        source.notifications
+      )
+        ? source.notifications
+        : {})
+
     },
 
-    kabezya: {
-      ...STUDENT_STUDIO_SETTINGS_DEFAULTS.kabezya,
-      ...(source.kabezya || {})
+
+    ai: {
+
+      ...STUDENT_STUDIO_SETTINGS_DEFAULTS
+        .ai,
+
+      ...(isPlainSettingsObject(
+        source.ai
+      )
+        ? source.ai
+        : {})
+
     },
+
 
     privacy: {
-      ...STUDENT_STUDIO_SETTINGS_DEFAULTS.privacy,
-      ...(source.privacy || {})
+
+      ...STUDENT_STUDIO_SETTINGS_DEFAULTS
+        .privacy,
+
+      ...(isPlainSettingsObject(
+        source.privacy
+      )
+        ? source.privacy
+        : {})
+
     },
 
+
     accessibility: {
-      ...STUDENT_STUDIO_SETTINGS_DEFAULTS.accessibility,
-      ...(source.accessibility || {})
+
+      ...STUDENT_STUDIO_SETTINGS_DEFAULTS
+        .accessibility,
+
+      ...(isPlainSettingsObject(
+        source.accessibility
+      )
+        ? source.accessibility
+        : {})
+
     }
+
   };
+
 }
 
 
