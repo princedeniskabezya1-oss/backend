@@ -37,6 +37,56 @@ const SupportConversationMessageSchema =
 
 
 /* =========================================================
+   HUMAN SUPPORT REPLY
+========================================================= */
+
+const SupportReplySchema =
+  new mongoose.Schema(
+    {
+      senderId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        required: true
+      },
+
+      senderType: {
+        type: String,
+        enum: [
+          "student",
+          "support"
+        ],
+        required: true
+      },
+
+      message: {
+        type: String,
+        required: true,
+        trim: true,
+        maxlength: 10000
+      },
+
+      readByStudent: {
+        type: Boolean,
+        default: false
+      },
+
+      readBySupport: {
+        type: Boolean,
+        default: false
+      },
+
+      createdAt: {
+        type: Date,
+        default: Date.now
+      }
+    },
+    {
+      _id: true
+    }
+  );
+
+
+/* =========================================================
    SUPPORT TICKET
 ========================================================= */
 
@@ -150,6 +200,25 @@ const SupportTicketSchema =
         ],
         default: []
       },
+
+
+      /* =====================================================
+         HUMAN SUPPORT CONVERSATION
+
+         This is intentionally separate from the Kabezya
+         conversation above.
+
+         conversation = AI context before escalation
+         replies      = human support conversation
+      ===================================================== */
+
+      replies: {
+        type: [
+          SupportReplySchema
+        ],
+        default: []
+      },
+
 
       /* =====================================================
          SUPPORT WORKFLOW
