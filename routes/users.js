@@ -845,6 +845,7 @@ router.patch(
         });
       }
 
+
       const current =
         mergeStudentStudioSettings(
           user.studentStudioSettings?.toObject
@@ -853,229 +854,194 @@ router.patch(
         );
 
 
-      /* -----------------------------------------
+      /* =========================================
          LEARNING
-      ----------------------------------------- */
+      ========================================= */
 
       if (
         isPlainSettingsObject(
           incoming.learning
         )
       ) {
-        const source =
-          incoming.learning;
-
-        const allowedViews = new Set([
-          "overview",
-          "lessons",
-          "assignments",
-          "resources"
-        ]);
-
-        if (
-          source.defaultClassView !== undefined
-        ) {
-          if (
-            !allowedViews.has(
-              source.defaultClassView
-            )
-          ) {
-            return res.status(400).json({
-              message:
-                "Invalid default class view."
-            });
-          }
-
-          current.learning.defaultClassView =
-            source.defaultClassView;
-        }
 
         [
-          "autoOpenLastClass",
-          "rememberLastLesson",
-          "showCompletedLessons",
-          "compactClassCards"
+          "studyReminders",
+          "assignmentReminders",
+          "continueLearning",
+          "autoplayNextLesson",
+          "rememberLastClass"
         ].forEach(field => {
+
           applyBooleanSetting(
             current.learning,
-            source,
+            incoming.learning,
             field
           );
+
         });
+
       }
 
 
-      /* -----------------------------------------
+      /* =========================================
          NOTIFICATIONS
-      ----------------------------------------- */
+      ========================================= */
 
       if (
         isPlainSettingsObject(
           incoming.notifications
         )
       ) {
+
         [
           "assignments",
-          "assignmentDeadlines",
           "grades",
-          "classAnnouncements",
-          "teacherMessages",
-          "classMessages",
-          "scheduleChanges",
+          "announcements",
+          "messages",
           "certificates",
-          "careerUpdates"
+          "career"
         ].forEach(field => {
+
           applyBooleanSetting(
             current.notifications,
             incoming.notifications,
             field
           );
+
         });
+
       }
 
 
-      /* -----------------------------------------
-         KABEZYA
-      ----------------------------------------- */
+      /* =========================================
+         KABEZYA AI
+      ========================================= */
 
       if (
         isPlainSettingsObject(
-          incoming.kabezya
+          incoming.ai
         )
       ) {
-        const source =
-          incoming.kabezya;
 
-        applyBooleanSetting(
-          current.kabezya,
-          source,
-          "enabled"
-        );
+        [
+          "personalization",
+          "classContext",
+          "learningHistory",
+          "suggestions"
+        ].forEach(field => {
 
-        applyBooleanSetting(
-          current.kabezya,
-          source,
-          "studySuggestions"
-        );
+          applyBooleanSetting(
+            current.ai,
+            incoming.ai,
+            field
+          );
 
-        applyBooleanSetting(
-          current.kabezya,
-          source,
-          "quizSuggestions"
-        );
+        });
 
-        applyBooleanSetting(
-          current.kabezya,
-          source,
-          "grammarAssistance"
-        );
-
-        applyBooleanSetting(
-          current.kabezya,
-          source,
-          "summarizeLessons"
-        );
-
-        if (
-          source.explanationLevel !== undefined
-        ) {
-          const allowed =
-            new Set([
-              "simple",
-              "balanced",
-              "advanced"
-            ]);
-
-          if (
-            !allowed.has(
-              source.explanationLevel
-            )
-          ) {
-            return res.status(400).json({
-              message:
-                "Invalid Kabezya explanation level."
-            });
-          }
-
-          current.kabezya.explanationLevel =
-            source.explanationLevel;
-        }
-
-        if (
-          source.responseLength !== undefined
-        ) {
-          const allowed =
-            new Set([
-              "short",
-              "balanced",
-              "detailed"
-            ]);
-
-          if (
-            !allowed.has(
-              source.responseLength
-            )
-          ) {
-            return res.status(400).json({
-              message:
-                "Invalid Kabezya response length."
-            });
-          }
-
-          current.kabezya.responseLength =
-            source.responseLength;
-        }
       }
 
 
-      /* -----------------------------------------
+      /* =========================================
          PRIVACY
-      ----------------------------------------- */
+      ========================================= */
 
       if (
         isPlainSettingsObject(
           incoming.privacy
         )
       ) {
+
+        const privacy =
+          incoming.privacy;
+
+
+        if (
+          privacy.portfolioVisibility !==
+          undefined
+        ) {
+
+          const allowedVisibility =
+            new Set([
+              "public",
+              "connections",
+              "private"
+            ]);
+
+
+          const visibility =
+            String(
+              privacy.portfolioVisibility
+            )
+              .trim()
+              .toLowerCase();
+
+
+          if (
+            !allowedVisibility.has(
+              visibility
+            )
+          ) {
+
+            return res
+              .status(400)
+              .json({
+                message:
+                  "Invalid portfolio visibility."
+              });
+
+          }
+
+
+          current
+            .privacy
+            .portfolioVisibility =
+            visibility;
+
+        }
+
+
         [
-          "showLearningProgress",
-          "showCertificates",
-          "showPortfolio",
-          "showClassActivity",
-          "allowClassmateMessages",
-          "allowTeacherMessages"
+          "profileDiscovery",
+          "activityVisibility",
+          "certificateVisibility"
         ].forEach(field => {
+
           applyBooleanSetting(
             current.privacy,
-            incoming.privacy,
+            privacy,
             field
           );
+
         });
+
       }
 
 
-      /* -----------------------------------------
+      /* =========================================
          ACCESSIBILITY
-      ----------------------------------------- */
+      ========================================= */
 
       if (
         isPlainSettingsObject(
           incoming.accessibility
         )
       ) {
+
         [
           "reducedMotion",
+          "compactInterface",
           "highContrast",
-          "largerText",
-          "captionsPreferred",
-          "keyboardNavigationHints"
+          "largerText"
         ].forEach(field => {
+
           applyBooleanSetting(
             current.accessibility,
             incoming.accessibility,
             field
           );
+
         });
+
       }
 
 
