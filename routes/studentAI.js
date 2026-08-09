@@ -4,8 +4,10 @@ const express =
 const mongoose =
   require("mongoose");
 
-const OpenAI =
-  require("openai");
+const {
+  generateAIResponse
+} =
+  require("../services/aiProvider");
 
 
 const auth =
@@ -33,69 +35,6 @@ const {
 
 const router =
   express.Router();
-
-
-/* =========================================================
-   OPENAI CLIENT
-========================================================= */
-
-let openAIClient =
-  null;
-
-
-function getOpenAIClient(){
-
-  if (openAIClient){
-    return openAIClient;
-  }
-
-
-  const apiKey =
-    String(
-      process.env.OPENAI_API_KEY ||
-      ""
-    ).trim();
-
-
-  if (!apiKey){
-
-    const error =
-      new Error(
-        "OPENAI_API_KEY is not configured."
-      );
-
-    error.statusCode =
-      503;
-
-    throw error;
-
-  }
-
-
-  openAIClient =
-    new OpenAI({
-      apiKey
-    });
-
-
-  return openAIClient;
-
-}
-
-
-/* =========================================================
-   MODEL CONFIGURATION
-========================================================= */
-
-function getStudentAIModel(){
-
-  return String(
-    process.env.OPENAI_STUDENT_MODEL ||
-    process.env.OPENAI_MODEL ||
-    "gpt-5-mini"
-  ).trim();
-
-}
 
 
 /* =========================================================
@@ -468,177 +407,6 @@ async function enforceStudentAIUsageLimit(
 }
 
 
-/* =========================================================
-   RESPONSE INPUT
-========================================================= */
-
-function convertStudentAIInputForOpenAI(
-  modelInput
-){
-
-  const systemParts =
-    [];
-
-
-  const conversationInput =
-    [];
-
-
-  for (
-    const message
-    of modelInput.input
-  ){
-
-    if (
-      message.role ===
-      "system"
-    ){
-
-      systemParts.push(
-        message.content
-      );
-
-      continue;
-
-    }
-
-
-    conversationInput.push({
-      role:
-        message.role,
-
-      content:
-        message.content
-    });
-
-  }
-
-
-  return {
-    instructions:
-      systemParts
-        .filter(
-          Boolean
-        )
-        .join(
-          "\n\n"
-        ),
-
-    input:
-      conversationInput
-  };
-
-}
-
-
-/* =========================================================
-   CALL OPENAI
-========================================================= */
-
-async function generateStudentAIResponse(
-  modelInput
-){
-
-  const client =
-    getOpenAIClient();
-
-
-  const converted =
-    convertStudentAIInputForOpenAI(
-      modelInput
-    );
-
-
-  const model =
-    getStudentAIModel();
-
-
-  const startedAt =
-    Date.now();
-
-
-  const response =
-    await client.responses.create({
-      model,
-
-      instructions:
-        converted.instructions,
-
-      input:
-        converted.input,
-
-      store:
-        false
-    });
-
-
-  const responseTimeMs =
-    Date.now() -
-    startedAt;
-
-
-  const outputText =
-    normalizeString(
-      response?.output_text,
-      20000
-    );
-
-
-  if (!outputText){
-
-    const error =
-      new Error(
-        "The AI service returned an empty response."
-      );
-
-    error.statusCode =
-      502;
-
-    throw error;
-
-  }
-
-
-  return {
-    text:
-      outputText,
-
-    model:
-      response?.model ||
-      model,
-
-    responseId:
-      response?.id ||
-      "",
-
-    responseTimeMs,
-
-    usage:{
-      inputTokens:
-        Number(
-          response?.usage
-            ?.input_tokens ||
-          0
-        ),
-
-      outputTokens:
-        Number(
-          response?.usage
-            ?.output_tokens ||
-          0
-        ),
-
-      totalTokens:
-        Number(
-          response?.usage
-            ?.total_tokens ||
-          0
-        )
-    }
-  };
-
-}
-
 
 /* =========================================================
    GET RECENT AI CONVERSATIONS
@@ -976,10 +744,22 @@ router.post(
          GENERATE REAL AI RESPONSE
       ===================================================== */
 
-      const generated =
-        await generateStudentAIResponse(
-          modelInput
-        );
+const generated =
+  await generateAIResponse({
+
+    systemInstruction:
+      modelInput.systemInstruction,
+
+    contextText:
+      learningContext.contextText,
+
+    history:
+      modelInput.history,
+
+    message:
+      modelInput.message
+
+  });
 
 
       /* =====================================================
