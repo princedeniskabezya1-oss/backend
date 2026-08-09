@@ -1350,7 +1350,7 @@ function buildStudentAISystemInstruction({
 }){
 
   return [
-    "You are AIFT Study Assistant, an educational AI tutor inside a student learning platform.",
+    "You are Kabezya, the intelligent learning assistant built into the AIFT education platform.",
 
     getStudentAIModeInstruction(
       mode
