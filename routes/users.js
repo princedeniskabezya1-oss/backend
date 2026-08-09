@@ -559,6 +559,493 @@ router.get("/me", auth, async (req, res) => {
 });
 
 /* ============================================
+   STUDENT STUDIO SETTINGS
+============================================ */
+
+const STUDENT_STUDIO_SETTINGS_DEFAULTS = Object.freeze({
+  learning: {
+    defaultClassView: "overview",
+    autoOpenLastClass: false,
+    rememberLastLesson: true,
+    showCompletedLessons: true,
+    compactClassCards: false
+  },
+
+  notifications: {
+    assignments: true,
+    assignmentDeadlines: true,
+    grades: true,
+    classAnnouncements: true,
+    teacherMessages: true,
+    classMessages: true,
+    scheduleChanges: true,
+    certificates: true,
+    careerUpdates: true
+  },
+
+  kabezya: {
+    enabled: true,
+    explanationLevel: "balanced",
+    responseLength: "balanced",
+    studySuggestions: true,
+    quizSuggestions: true,
+    grammarAssistance: true,
+    summarizeLessons: true
+  },
+
+  privacy: {
+    showLearningProgress: true,
+    showCertificates: true,
+    showPortfolio: true,
+    showClassActivity: false,
+    allowClassmateMessages: true,
+    allowTeacherMessages: true
+  },
+
+  accessibility: {
+    reducedMotion: false,
+    highContrast: false,
+    largerText: false,
+    captionsPreferred: false,
+    keyboardNavigationHints: true
+  }
+});
+
+
+function mergeStudentStudioSettings(settings = {}) {
+  const source =
+    settings &&
+    typeof settings === "object"
+      ? settings
+      : {};
+
+  return {
+    learning: {
+      ...STUDENT_STUDIO_SETTINGS_DEFAULTS.learning,
+      ...(source.learning || {})
+    },
+
+    notifications: {
+      ...STUDENT_STUDIO_SETTINGS_DEFAULTS.notifications,
+      ...(source.notifications || {})
+    },
+
+    kabezya: {
+      ...STUDENT_STUDIO_SETTINGS_DEFAULTS.kabezya,
+      ...(source.kabezya || {})
+    },
+
+    privacy: {
+      ...STUDENT_STUDIO_SETTINGS_DEFAULTS.privacy,
+      ...(source.privacy || {})
+    },
+
+    accessibility: {
+      ...STUDENT_STUDIO_SETTINGS_DEFAULTS.accessibility,
+      ...(source.accessibility || {})
+    }
+  };
+}
+
+
+function isPlainSettingsObject(value) {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  );
+}
+
+
+function applyBooleanSetting(
+  target,
+  source,
+  field
+) {
+  if (typeof source[field] === "boolean") {
+    target[field] = source[field];
+  }
+}
+
+
+/* ============================================
+   GET STUDENT STUDIO SETTINGS
+   GET /api/users/me/student-studio-settings
+============================================ */
+
+router.get(
+  "/me/student-studio-settings",
+  auth,
+  async (req, res) => {
+    try {
+      if (
+        !["student", "admin"].includes(
+          String(req.user.role || "").toLowerCase()
+        )
+      ) {
+        return res.status(403).json({
+          message:
+            "Student Studio settings are only available to student accounts."
+        });
+      }
+
+      const user =
+        await User.findById(req.user._id)
+          .select(
+            "_id role studentStudioSettings"
+          )
+          .lean();
+
+      if (!user) {
+        return res.status(404).json({
+          message: "User not found."
+        });
+      }
+
+      return res.json({
+        settings:
+          mergeStudentStudioSettings(
+            user.studentStudioSettings
+          )
+      });
+
+    } catch (error) {
+      console.error(
+        "GET STUDENT STUDIO SETTINGS ERROR:",
+        error
+      );
+
+      return res.status(500).json({
+        message:
+          "Failed to load Student Studio settings."
+      });
+    }
+  }
+);
+
+
+/* ============================================
+   UPDATE STUDENT STUDIO SETTINGS
+   PATCH /api/users/me/student-studio-settings
+============================================ */
+
+router.patch(
+  "/me/student-studio-settings",
+  auth,
+  async (req, res) => {
+    try {
+      if (
+        !["student", "admin"].includes(
+          String(req.user.role || "").toLowerCase()
+        )
+      ) {
+        return res.status(403).json({
+          message:
+            "Student Studio settings are only available to student accounts."
+        });
+      }
+
+      const incoming =
+        isPlainSettingsObject(req.body?.settings)
+          ? req.body.settings
+          : req.body;
+
+      if (!isPlainSettingsObject(incoming)) {
+        return res.status(400).json({
+          message:
+            "A valid settings object is required."
+        });
+      }
+
+      const user =
+        await User.findById(req.user._id);
+
+      if (!user) {
+        return res.status(404).json({
+          message: "User not found."
+        });
+      }
+
+      const current =
+        mergeStudentStudioSettings(
+          user.studentStudioSettings?.toObject
+            ? user.studentStudioSettings.toObject()
+            : user.studentStudioSettings
+        );
+
+
+      /* -----------------------------------------
+         LEARNING
+      ----------------------------------------- */
+
+      if (
+        isPlainSettingsObject(
+          incoming.learning
+        )
+      ) {
+        const source =
+          incoming.learning;
+
+        const allowedViews = new Set([
+          "overview",
+          "lessons",
+          "assignments",
+          "resources"
+        ]);
+
+        if (
+          source.defaultClassView !== undefined
+        ) {
+          if (
+            !allowedViews.has(
+              source.defaultClassView
+            )
+          ) {
+            return res.status(400).json({
+              message:
+                "Invalid default class view."
+            });
+          }
+
+          current.learning.defaultClassView =
+            source.defaultClassView;
+        }
+
+        [
+          "autoOpenLastClass",
+          "rememberLastLesson",
+          "showCompletedLessons",
+          "compactClassCards"
+        ].forEach(field => {
+          applyBooleanSetting(
+            current.learning,
+            source,
+            field
+          );
+        });
+      }
+
+
+      /* -----------------------------------------
+         NOTIFICATIONS
+      ----------------------------------------- */
+
+      if (
+        isPlainSettingsObject(
+          incoming.notifications
+        )
+      ) {
+        [
+          "assignments",
+          "assignmentDeadlines",
+          "grades",
+          "classAnnouncements",
+          "teacherMessages",
+          "classMessages",
+          "scheduleChanges",
+          "certificates",
+          "careerUpdates"
+        ].forEach(field => {
+          applyBooleanSetting(
+            current.notifications,
+            incoming.notifications,
+            field
+          );
+        });
+      }
+
+
+      /* -----------------------------------------
+         KABEZYA
+      ----------------------------------------- */
+
+      if (
+        isPlainSettingsObject(
+          incoming.kabezya
+        )
+      ) {
+        const source =
+          incoming.kabezya;
+
+        applyBooleanSetting(
+          current.kabezya,
+          source,
+          "enabled"
+        );
+
+        applyBooleanSetting(
+          current.kabezya,
+          source,
+          "studySuggestions"
+        );
+
+        applyBooleanSetting(
+          current.kabezya,
+          source,
+          "quizSuggestions"
+        );
+
+        applyBooleanSetting(
+          current.kabezya,
+          source,
+          "grammarAssistance"
+        );
+
+        applyBooleanSetting(
+          current.kabezya,
+          source,
+          "summarizeLessons"
+        );
+
+        if (
+          source.explanationLevel !== undefined
+        ) {
+          const allowed =
+            new Set([
+              "simple",
+              "balanced",
+              "advanced"
+            ]);
+
+          if (
+            !allowed.has(
+              source.explanationLevel
+            )
+          ) {
+            return res.status(400).json({
+              message:
+                "Invalid Kabezya explanation level."
+            });
+          }
+
+          current.kabezya.explanationLevel =
+            source.explanationLevel;
+        }
+
+        if (
+          source.responseLength !== undefined
+        ) {
+          const allowed =
+            new Set([
+              "short",
+              "balanced",
+              "detailed"
+            ]);
+
+          if (
+            !allowed.has(
+              source.responseLength
+            )
+          ) {
+            return res.status(400).json({
+              message:
+                "Invalid Kabezya response length."
+            });
+          }
+
+          current.kabezya.responseLength =
+            source.responseLength;
+        }
+      }
+
+
+      /* -----------------------------------------
+         PRIVACY
+      ----------------------------------------- */
+
+      if (
+        isPlainSettingsObject(
+          incoming.privacy
+        )
+      ) {
+        [
+          "showLearningProgress",
+          "showCertificates",
+          "showPortfolio",
+          "showClassActivity",
+          "allowClassmateMessages",
+          "allowTeacherMessages"
+        ].forEach(field => {
+          applyBooleanSetting(
+            current.privacy,
+            incoming.privacy,
+            field
+          );
+        });
+      }
+
+
+      /* -----------------------------------------
+         ACCESSIBILITY
+      ----------------------------------------- */
+
+      if (
+        isPlainSettingsObject(
+          incoming.accessibility
+        )
+      ) {
+        [
+          "reducedMotion",
+          "highContrast",
+          "largerText",
+          "captionsPreferred",
+          "keyboardNavigationHints"
+        ].forEach(field => {
+          applyBooleanSetting(
+            current.accessibility,
+            incoming.accessibility,
+            field
+          );
+        });
+      }
+
+
+      user.studentStudioSettings =
+        current;
+
+      await user.save({
+        validateModifiedOnly: true
+      });
+
+
+      return res.json({
+        message:
+          "Student Studio settings updated successfully.",
+
+        settings:
+          mergeStudentStudioSettings(
+            user.studentStudioSettings?.toObject
+              ? user.studentStudioSettings.toObject()
+              : user.studentStudioSettings
+          )
+      });
+
+    } catch (error) {
+      console.error(
+        "UPDATE STUDENT STUDIO SETTINGS ERROR:",
+        error
+      );
+
+      if (
+        error?.name ===
+        "ValidationError"
+      ) {
+        return res.status(400).json({
+          message:
+            "One or more Student Studio settings are invalid."
+        });
+      }
+
+      return res.status(500).json({
+        message:
+          "Failed to update Student Studio settings."
+      });
+    }
+  }
+);
+
+
+/* ============================================
    FOLLOWERS / FOLLOWING
 ============================================ */
 router.get("/me/followers", auth, async (req, res) => {
