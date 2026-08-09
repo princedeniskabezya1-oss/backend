@@ -1038,24 +1038,24 @@ const generated =
       }
 
 
-      if (
-        error?.status ===
-        401
-      ){
+if (
+  error?.status === 401 ||
+  error?.status === 403
+){
 
-        console.error(
-          "OpenAI authentication failed. Check OPENAI_API_KEY."
-        );
+  console.error(
+    "Gemini authentication failed. Check GEMINI_API_KEY."
+  );
 
 
-        return res
-          .status(503)
-          .json({
-            message:
-              "AI Learning is temporarily unavailable."
-          });
+  return res
+    .status(503)
+    .json({
+      message:
+        "AI Learning is temporarily unavailable."
+    });
 
-      }
+}
 
 
       return res
