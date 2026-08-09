@@ -5,13 +5,254 @@ const {
 );
 
 
-let geminiClient =
-  null;
+/* =========================================================
+   GEMINI CLIENT
+========================================================= */
 
+let geminiClient = null;
+
+
+/* =========================================================
+   NORMALIZE PROVIDER ERROR
+========================================================= */
+
+function getProviderStatus(error){
+
+  const candidates = [
+    error?.status,
+    error?.statusCode,
+    error?.code,
+    error?.response?.status,
+    error?.error?.code
+  ];
+
+  for (
+    const candidate
+    of candidates
+  ){
+
+    const value =
+      Number(
+        candidate
+      );
+
+    if (
+      Number.isFinite(value) &&
+      value >= 400 &&
+      value <= 599
+    ){
+      return value;
+    }
+
+  }
+
+  return 0;
+}
+
+
+function normalizeGeminiError(
+  error
+){
+
+  const status =
+    getProviderStatus(
+      error
+    );
+
+  const providerMessage =
+    String(
+      error?.message ||
+      error?.error?.message ||
+      error?.response?.data?.error?.message ||
+      ""
+    ).trim();
+
+
+  /*
+    Authentication / invalid API key.
+  */
+
+  if (
+    status === 401 ||
+    status === 403 ||
+    /api[\s_-]*key/i.test(
+      providerMessage
+    ) ||
+    /permission denied/i.test(
+      providerMessage
+    ) ||
+    /unauthenticated/i.test(
+      providerMessage
+    )
+  ){
+
+    const normalized =
+      new Error(
+        "Gemini authentication failed. Check the GEMINI_API_KEY configured on the backend."
+      );
+
+    normalized.statusCode =
+      503;
+
+    normalized.providerStatus =
+      status;
+
+    normalized.cause =
+      error;
+
+    return normalized;
+  }
+
+
+  /*
+    Rate limit / quota.
+  */
+
+  if (
+    status === 429 ||
+    /quota/i.test(
+      providerMessage
+    ) ||
+    /rate limit/i.test(
+      providerMessage
+    ) ||
+    /resource exhausted/i.test(
+      providerMessage
+    )
+  ){
+
+    const normalized =
+      new Error(
+        "AI Learning is temporarily busy or has reached its Gemini quota. Please try again shortly."
+      );
+
+    normalized.statusCode =
+      429;
+
+    normalized.providerStatus =
+      status;
+
+    normalized.cause =
+      error;
+
+    return normalized;
+  }
+
+
+  /*
+    Invalid request / unsupported model configuration.
+  */
+
+  if (
+    status === 400
+  ){
+
+    const normalized =
+      new Error(
+        "Gemini rejected the AI request configuration."
+      );
+
+    normalized.statusCode =
+      502;
+
+    normalized.providerStatus =
+      status;
+
+    normalized.cause =
+      error;
+
+    return normalized;
+  }
+
+
+  /*
+    Model not found.
+  */
+
+  if (
+    status === 404 ||
+    /model.*not found/i.test(
+      providerMessage
+    ) ||
+    /not found.*model/i.test(
+      providerMessage
+    )
+  ){
+
+    const normalized =
+      new Error(
+        "The configured Gemini model is not available."
+      );
+
+    normalized.statusCode =
+      503;
+
+    normalized.providerStatus =
+      status;
+
+    normalized.cause =
+      error;
+
+    return normalized;
+  }
+
+
+  /*
+    Provider unavailable.
+  */
+
+  if (
+    status === 500 ||
+    status === 502 ||
+    status === 503 ||
+    status === 504
+  ){
+
+    const normalized =
+      new Error(
+        "Gemini is temporarily unavailable."
+      );
+
+    normalized.statusCode =
+      503;
+
+    normalized.providerStatus =
+      status;
+
+    normalized.cause =
+      error;
+
+    return normalized;
+  }
+
+
+  const normalized =
+    new Error(
+      "Gemini could not generate the AI response."
+    );
+
+  normalized.statusCode =
+    502;
+
+  normalized.providerStatus =
+    status;
+
+  normalized.cause =
+    error;
+
+  return normalized;
+}
+
+
+/* =========================================================
+   CREATE GEMINI CLIENT
+========================================================= */
 
 function getGeminiClient(){
 
-  if (geminiClient){
+  if (
+    geminiClient
+  ){
     return geminiClient;
   }
 
@@ -23,7 +264,9 @@ function getGeminiClient(){
     ).trim();
 
 
-  if (!apiKey){
+  if (
+    !apiKey
+  ){
 
     const error =
       new Error(
@@ -47,14 +290,23 @@ function getGeminiClient(){
 }
 
 
+/* =========================================================
+   MODEL
+========================================================= */
+
 function getGeminiModel(){
 
   return String(
     process.env.GEMINI_MODEL ||
     "gemini-2.5-flash"
   ).trim();
+
 }
 
+
+/* =========================================================
+   BUILD GEMINI CONTENTS
+========================================================= */
 
 function buildGeminiContents({
   history = [],
@@ -77,7 +329,22 @@ function buildGeminiContents({
     }
 
 
+    const text =
+      String(
+        item.content ||
+        ""
+      ).trim();
+
+
+    if (
+      !text
+    ){
+      continue;
+    }
+
+
     contents.push({
+
       role:
         item.role ===
           "assistant"
@@ -86,35 +353,145 @@ function buildGeminiContents({
 
       parts:[
         {
-          text:
-            String(
-              item.content ||
-              ""
-            )
+          text
         }
       ]
+
     });
+
+  }
+
+
+  const currentMessage =
+    String(
+      message ||
+      ""
+    ).trim();
+
+
+  if (
+    !currentMessage
+  ){
+
+    const error =
+      new Error(
+        "AI message is required."
+      );
+
+    error.statusCode =
+      400;
+
+    throw error;
   }
 
 
   contents.push({
-    role:"user",
+
+    role:
+      "user",
 
     parts:[
       {
         text:
-          String(
-            message ||
-            ""
-          )
+          currentMessage
       }
     ]
+
   });
 
 
   return contents;
 }
 
+
+/* =========================================================
+   EXTRACT RESPONSE TEXT
+========================================================= */
+
+function extractGeminiText(
+  response
+){
+
+  /*
+    Current @google/genai SDK exposes response.text.
+  */
+
+  const directText =
+    typeof response?.text ===
+      "string"
+      ? response.text.trim()
+      : "";
+
+
+  if (
+    directText
+  ){
+    return directText;
+  }
+
+
+  /*
+    Defensive fallback for candidate-based responses.
+  */
+
+  const candidates =
+    Array.isArray(
+      response?.candidates
+    )
+      ? response.candidates
+      : [];
+
+
+  const parts = [];
+
+
+  for (
+    const candidate
+    of candidates
+  ){
+
+    const contentParts =
+      Array.isArray(
+        candidate?.content?.parts
+      )
+        ? candidate.content.parts
+        : [];
+
+
+    for (
+      const part
+      of contentParts
+    ){
+
+      const text =
+        String(
+          part?.text ||
+          ""
+        ).trim();
+
+
+      if (
+        text
+      ){
+        parts.push(
+          text
+        );
+      }
+
+    }
+
+  }
+
+
+  return parts
+    .join("\n")
+    .trim();
+}
+
+
+/* =========================================================
+   GENERATE AI RESPONSE
+========================================================= */
 
 async function generateAIResponse({
   systemInstruction = "",
@@ -131,23 +508,65 @@ async function generateAIResponse({
     getGeminiModel();
 
 
-  const instructions =
-    [
-      String(
-        systemInstruction ||
-        ""
-      ).trim(),
+  if (
+    !model
+  ){
 
-      contextText
-        ? [
-            "AIFT VERIFIED COURSE MATERIAL",
-            "",
-            String(
-              contextText
-            ).trim()
-          ].join("\n")
-        : ""
-    ]
+    const error =
+      new Error(
+        "GEMINI_MODEL is not configured."
+      );
+
+    error.statusCode =
+      503;
+
+    throw error;
+  }
+
+
+  const instructionParts = [];
+
+
+  const baseInstruction =
+    String(
+      systemInstruction ||
+      ""
+    ).trim();
+
+
+  if (
+    baseInstruction
+  ){
+    instructionParts.push(
+      baseInstruction
+    );
+  }
+
+
+  const verifiedContext =
+    String(
+      contextText ||
+      ""
+    ).trim();
+
+
+  if (
+    verifiedContext
+  ){
+
+    instructionParts.push(
+      [
+        "AIFT VERIFIED COURSE MATERIAL",
+        "",
+        verifiedContext
+      ].join("\n")
+    );
+
+  }
+
+
+  const instructions =
+    instructionParts
       .filter(Boolean)
       .join("\n\n");
 
@@ -163,33 +582,109 @@ async function generateAIResponse({
     Date.now();
 
 
-  const response =
-    await client.models.generateContent({
-      model,
+  let response;
 
-      contents,
 
-      config:{
-        systemInstruction:
-          instructions,
+  try{
 
-        temperature:
-          0.35,
+    response =
+      await client.models.generateContent({
 
-        maxOutputTokens:
-          3000
+        model,
+
+        contents,
+
+        config:{
+
+          /*
+            Do not send an empty system instruction.
+          */
+
+          ...(
+            instructions
+              ? {
+                  systemInstruction:
+                    instructions
+                }
+              : {}
+          ),
+
+          temperature:
+            0.35,
+
+          maxOutputTokens:
+            3000
+
+        }
+
+      });
+
+  }catch(error){
+
+    /*
+      Log the provider error on the server only.
+
+      Never send API keys or raw provider objects
+      back to the browser.
+    */
+
+    console.error(
+      "Gemini generateContent failed:",
+      {
+        status:
+          getProviderStatus(
+            error
+          ),
+
+        name:
+          error?.name ||
+          "",
+
+        message:
+          error?.message ||
+          ""
       }
-    });
+    );
+
+
+    throw normalizeGeminiError(
+      error
+    );
+
+  }
 
 
   const text =
-    String(
-      response?.text ||
-      ""
-    ).trim();
+    extractGeminiText(
+      response
+    );
 
 
-  if (!text){
+  if (
+    !text
+  ){
+
+    console.error(
+      "Gemini returned no usable text:",
+      {
+        model,
+
+        finishReason:
+          response
+            ?.candidates
+            ?.[0]
+            ?.finishReason ||
+          "",
+
+        candidateCount:
+          Array.isArray(
+            response?.candidates
+          )
+            ? response.candidates.length
+            : 0
+      }
+    );
+
 
     const error =
       new Error(
@@ -203,7 +698,13 @@ async function generateAIResponse({
   }
 
 
+  const usageMetadata =
+    response?.usageMetadata ||
+    {};
+
+
   return {
+
     text,
 
     model,
@@ -213,30 +714,38 @@ async function generateAIResponse({
       startedAt,
 
     usage:{
+
       inputTokens:
         Number(
-          response?.usageMetadata
-            ?.promptTokenCount ||
+          usageMetadata
+            .promptTokenCount ||
           0
         ),
 
       outputTokens:
         Number(
-          response?.usageMetadata
-            ?.candidatesTokenCount ||
+          usageMetadata
+            .candidatesTokenCount ||
           0
         ),
 
       totalTokens:
         Number(
-          response?.usageMetadata
-            ?.totalTokenCount ||
+          usageMetadata
+            .totalTokenCount ||
           0
         )
+
     }
+
   };
+
 }
 
+
+/* =========================================================
+   EXPORTS
+========================================================= */
 
 module.exports = {
   generateAIResponse,
