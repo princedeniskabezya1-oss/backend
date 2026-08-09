@@ -877,5 +877,551 @@ router.get(
 );
 
 
+/* =========================================================
+   STUDENT REPLY TO SUPPORT TICKET
+
+   POST /api/support/tickets/:id/replies
+========================================================= */
+
+router.post(
+  "/tickets/:id/replies",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try{
+
+      /* =====================================================
+         VALIDATE TICKET ID
+      ===================================================== */
+
+      if (
+        !isValidObjectId(
+          req.params.id
+        )
+      ){
+
+        return res
+          .status(400)
+          .json({
+            success:false,
+            message:
+              "Invalid support ticket ID."
+          });
+
+      }
+
+
+      /* =====================================================
+         VALIDATE MESSAGE
+      ===================================================== */
+
+      const message =
+        safeString(
+          req.body.message,
+          10000
+        );
+
+
+      if (!message){
+
+        return res
+          .status(400)
+          .json({
+            success:false,
+            message:
+              "Please enter a message."
+          });
+
+      }
+
+
+      /* =====================================================
+         LOAD TICKET
+      ===================================================== */
+
+      const ticket =
+        await SupportTicket.findById(
+          req.params.id
+        );
+
+
+      if (!ticket){
+
+        return res
+          .status(404)
+          .json({
+            success:false,
+            message:
+              "Support ticket not found."
+          });
+
+      }
+
+
+      /* =====================================================
+         SECURITY — OWNER ONLY
+
+         A student must never be able to reply to another
+         student's ticket simply by changing the ticket ID.
+      ===================================================== */
+
+      if (
+        String(
+          ticket.userId
+        ) !==
+        String(
+          req.user._id
+        )
+      ){
+
+        return res
+          .status(403)
+          .json({
+            success:false,
+            message:
+              "You are not allowed to reply to this support ticket."
+          });
+
+      }
+
+
+      /* =====================================================
+         CLOSED TICKET
+      ===================================================== */
+
+      if (
+        ticket.status ===
+        "closed"
+      ){
+
+        return res
+          .status(409)
+          .json({
+            success:false,
+            message:
+              "This support request is closed."
+          });
+
+      }
+
+
+      /* =====================================================
+         ADD STUDENT REPLY
+      ===================================================== */
+
+      ticket.replies.push({
+
+        senderId:
+          req.user._id,
+
+        senderType:
+          "student",
+
+        message,
+
+        readByStudent:
+          true,
+
+        readBySupport:
+          false,
+
+        createdAt:
+          new Date()
+
+      });
+
+
+      /*
+        If support was waiting for the student,
+        their reply returns the request to the
+        active support queue.
+      */
+
+      if (
+        ticket.status ===
+        "waiting_for_student"
+      ){
+
+        ticket.status =
+          "open";
+
+      }
+
+
+      /*
+        If a previously resolved ticket receives
+        another message, reopen it.
+
+        This makes the support experience much
+        friendlier than silently accepting a reply
+        on a resolved ticket.
+      */
+
+      if (
+        ticket.status ===
+        "resolved"
+      ){
+
+        ticket.status =
+          "open";
+
+        ticket.resolvedAt =
+          null;
+
+      }
+
+
+      ticket.lastActivityAt =
+        new Date();
+
+
+      await ticket.save();
+
+
+      const newReply =
+        ticket.replies[
+          ticket.replies.length - 1
+        ];
+
+
+      return res
+        .status(201)
+        .json({
+
+          success:true,
+
+          message:
+            "Your reply was sent.",
+
+          reply:
+            newReply,
+
+          ticket:{
+            id:
+              ticket._id,
+
+            ticketNumber:
+              ticket.ticketNumber,
+
+            status:
+              ticket.status,
+
+            lastActivityAt:
+              ticket.lastActivityAt
+          }
+
+        });
+
+
+    }catch(error){
+
+      console.error(
+        "POST /api/support/tickets/:id/replies error:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          success:false,
+          message:
+            "Your reply could not be sent."
+        });
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   ADMIN / SUPPORT REPLY
+
+   POST /api/support/admin/tickets/:id/replies
+========================================================= */
+
+router.post(
+  "/admin/tickets/:id/replies",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try{
+
+      /* =====================================================
+         ADMIN ACCESS
+      ===================================================== */
+
+      if (
+        !isSupportAdmin(req)
+      ){
+
+        return res
+          .status(403)
+          .json({
+            success:false,
+            message:
+              "Admin access required."
+          });
+
+      }
+
+
+      /* =====================================================
+         VALIDATE TICKET ID
+      ===================================================== */
+
+      if (
+        !isValidObjectId(
+          req.params.id
+        )
+      ){
+
+        return res
+          .status(400)
+          .json({
+            success:false,
+            message:
+              "Invalid support ticket ID."
+          });
+
+      }
+
+
+      /* =====================================================
+         VALIDATE MESSAGE
+      ===================================================== */
+
+      const message =
+        safeString(
+          req.body.message,
+          10000
+        );
+
+
+      if (!message){
+
+        return res
+          .status(400)
+          .json({
+            success:false,
+            message:
+              "Reply message is required."
+          });
+
+      }
+
+
+      /* =====================================================
+         LOAD TICKET
+      ===================================================== */
+
+      const ticket =
+        await SupportTicket.findById(
+          req.params.id
+        );
+
+
+      if (!ticket){
+
+        return res
+          .status(404)
+          .json({
+            success:false,
+            message:
+              "Support ticket not found."
+          });
+
+      }
+
+
+      if (
+        ticket.status ===
+        "closed"
+      ){
+
+        return res
+          .status(409)
+          .json({
+            success:false,
+            message:
+              "This support ticket is closed."
+          });
+
+      }
+
+
+      /* =====================================================
+         ADD SUPPORT REPLY
+      ===================================================== */
+
+      ticket.replies.push({
+
+        senderId:
+          req.user._id,
+
+        senderType:
+          "support",
+
+        message,
+
+        readByStudent:
+          false,
+
+        readBySupport:
+          true,
+
+        createdAt:
+          new Date()
+
+      });
+
+
+      /* =====================================================
+         ASSIGN TICKET
+
+         First admin/support person who replies becomes
+         the assigned support representative.
+      ===================================================== */
+
+      if (
+        !ticket.assignedTo
+      ){
+
+        ticket.assignedTo =
+          req.user._id;
+
+      }
+
+
+      /* =====================================================
+         STATUS
+      ===================================================== */
+
+      const requestedStatus =
+        safeString(
+          req.body.status,
+          50
+        )
+          .toLowerCase();
+
+
+      if (
+        requestedStatus &&
+        VALID_STATUSES.has(
+          requestedStatus
+        )
+      ){
+
+        ticket.status =
+          requestedStatus;
+
+      }else{
+
+        ticket.status =
+          "waiting_for_student";
+
+      }
+
+
+      if (
+        ticket.status ===
+        "resolved"
+      ){
+
+        ticket.resolvedAt =
+          new Date();
+
+      }else{
+
+        ticket.resolvedAt =
+          null;
+
+      }
+
+
+      if (
+        ticket.status ===
+        "closed"
+      ){
+
+        ticket.closedAt =
+          new Date();
+
+      }
+
+
+      ticket.lastActivityAt =
+        new Date();
+
+
+      await ticket.save();
+
+
+      const newReply =
+        ticket.replies[
+          ticket.replies.length - 1
+        ];
+
+
+      return res
+        .status(201)
+        .json({
+
+          success:true,
+
+          message:
+            "Support reply sent.",
+
+          reply:
+            newReply,
+
+          ticket:{
+            id:
+              ticket._id,
+
+            ticketNumber:
+              ticket.ticketNumber,
+
+            status:
+              ticket.status,
+
+            assignedTo:
+              ticket.assignedTo,
+
+            lastActivityAt:
+              ticket.lastActivityAt
+          }
+
+        });
+
+
+    }catch(error){
+
+      console.error(
+        "POST /api/support/admin/tickets/:id/replies error:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          success:false,
+          message:
+            "Support reply could not be sent."
+        });
+
+    }
+
+  }
+);
+
 module.exports =
   router;
