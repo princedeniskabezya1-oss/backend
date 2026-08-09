@@ -1023,24 +1023,33 @@ const generated =
       }
 
 
-      if (
-        error?.status ===
-        429
-      ){
-
-        return res
-          .status(429)
-          .json({
-            message:
-              "AI Learning is busy right now. Please try again shortly."
-          });
-
-      }
+const providerStatus =
+  Number(
+    error?.status ||
+    error?.statusCode ||
+    error?.code ||
+    0
+  );
 
 
 if (
-  error?.status === 401 ||
-  error?.status === 403
+  providerStatus ===
+    429
+){
+
+  return res
+    .status(429)
+    .json({
+      message:
+        "AI Learning is busy right now. Please try again shortly."
+    });
+
+}
+
+
+if (
+  providerStatus === 401 ||
+  providerStatus === 403
 ){
 
   console.error(
@@ -1058,12 +1067,35 @@ if (
 }
 
 
-      return res
-        .status(500)
-        .json({
-          message:
-            "AIFT could not generate the learning response."
-        });
+/*
+  Keep the browser response safe while preserving
+  enough information in Render logs to diagnose
+  provider failures.
+*/
+
+console.error(
+  "Unhandled Student AI provider failure:",
+  {
+    status:
+      providerStatus,
+
+    name:
+      error?.name ||
+      "",
+
+    message:
+      error?.message ||
+      ""
+  }
+);
+
+
+return res
+  .status(500)
+  .json({
+    message:
+      "AIFT could not generate the learning response."
+  });
 
     }
 
