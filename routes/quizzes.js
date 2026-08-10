@@ -72,31 +72,107 @@ function getUserSchoolIds(user) {
 }
 
 
-function canManageSchool(user, schoolId) {
-  if (!user || !schoolId) {
-    return false;
-  }
-
-  const role =
-    normalizeRole(user.role);
-
-  if (role === "admin") {
-    return true;
-  }
-
+function canManageSchool(
+  user,
+  schoolId
+) {
   if (
-    ![
-      "school",
-      "teacher"
-    ].includes(role)
+    !user ||
+    !schoolId
   ) {
     return false;
   }
 
-  return getUserSchoolIds(user)
-    .includes(
-      normalizeObjectId(schoolId)
+  const role =
+    normalizeRole(
+      user.role
     );
+
+  if (
+    role === "admin"
+  ) {
+    return true;
+  }
+
+  if (
+    role !== "school"
+  ) {
+    return false;
+  }
+
+  return getUserSchoolIds(
+    user
+  ).includes(
+    normalizeObjectId(
+      schoolId
+    )
+  );
+}
+
+
+/* ============================================
+   ASSIGNED CLASS INSTRUCTION PERMISSION
+============================================ */
+
+function canManageAssignedClass(
+  user,
+  classDoc
+) {
+  if (
+    !user ||
+    !classDoc
+  ) {
+    return false;
+  }
+
+  const role =
+    normalizeRole(
+      user.role
+    );
+
+  const userId =
+    normalizeObjectId(
+      user._id
+    );
+
+  const classSchoolId =
+    normalizeObjectId(
+      classDoc.schoolId
+    );
+
+  const classTeacherId =
+    normalizeObjectId(
+      classDoc.teacherId
+    );
+
+  if (
+    role === "admin"
+  ) {
+    return true;
+  }
+
+  if (
+    role === "school"
+  ) {
+    return getUserSchoolIds(
+      user
+    ).includes(
+      classSchoolId
+    );
+  }
+
+  if (
+    role === "teacher"
+  ) {
+    return (
+      Boolean(userId) &&
+      Boolean(classTeacherId) &&
+      userId ===
+        classTeacherId
+    );
+  }
+
+  return false;
 }
 
 
@@ -128,25 +204,44 @@ function isStudentEnrolled(user, classDoc) {
 }
 
 
-function canViewClass(user, classDoc) {
-  if (!user || !classDoc) {
+function canViewClass(
+  user,
+  classDoc
+) {
+  if (
+    !user ||
+    !classDoc
+  ) {
     return false;
   }
 
   const role =
-    normalizeRole(user.role);
+    normalizeRole(
+      user.role
+    );
 
-  if (role === "admin") {
+  if (
+    role === "admin"
+  ) {
     return true;
   }
 
   if (
-    canManageSchool(
+    role === "school"
+  ) {
+    return canManageSchool(
       user,
       classDoc.schoolId
-    )
+    );
+  }
+
+  if (
+    role === "teacher"
   ) {
-    return true;
+    return canManageAssignedClass(
+      user,
+      classDoc
+    );
   }
 
   return isStudentEnrolled(
@@ -390,14 +485,14 @@ router.post(
       }
 
       if (
-        !canManageSchool(
+        !canManageAssignedClass(
           req.user,
-          classDoc.schoolId
+          classDoc
         )
       ) {
         return res.status(403).json({
           message:
-            "Not allowed to create quizzes"
+            "Not allowed to create quizzes for this class"
         });
       }
 
@@ -503,15 +598,27 @@ router.patch(
         });
       }
 
+      const classDoc =
+        await Class.findById(
+          quiz.classId
+        );
+
+      if (!classDoc) {
+        return res.status(404).json({
+          message:
+            "Class not found"
+        });
+      }
+
       if (
-        !canManageSchool(
+        !canManageAssignedClass(
           req.user,
-          quiz.schoolId
+          classDoc
         )
       ) {
         return res.status(403).json({
           message:
-            "Not allowed to update quiz"
+            "Not allowed to update this quiz"
         });
       }
 
@@ -584,15 +691,27 @@ router.delete(
         });
       }
 
+      const classDoc =
+        await Class.findById(
+          quiz.classId
+        );
+
+      if (!classDoc) {
+        return res.status(404).json({
+          message:
+            "Class not found"
+        });
+      }
+
       if (
-        !canManageSchool(
+        !canManageAssignedClass(
           req.user,
-          quiz.schoolId
+          classDoc
         )
       ) {
         return res.status(403).json({
           message:
-            "Not allowed to delete quiz"
+            "Not allowed to delete this quiz"
         });
       }
 
@@ -689,16 +808,31 @@ router.get(
         }
 
         if (
-          role !== "student" &&
-          !canManageSchool(
-            req.user,
-            quiz.schoolId
-          )
+          role !== "student"
         ) {
-          return res.status(403).json({
-            message:
-              "Not allowed to view quiz submissions"
-          });
+          const classDoc =
+            await Class.findById(
+              quiz.classId
+            );
+
+          if (!classDoc) {
+            return res.status(404).json({
+              message:
+                "Class not found"
+            });
+          }
+
+          if (
+            !canManageAssignedClass(
+              req.user,
+              classDoc
+            )
+          ) {
+            return res.status(403).json({
+              message:
+                "Not allowed to view quiz submissions for this class"
+            });
+          }
         }
 
         query.quizId =
