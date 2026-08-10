@@ -73,90 +73,185 @@ function getUserSchoolId(user) {
 }
 
 
-function canManageSchool(user, schoolId) {
-  if (!user || !schoolId) {
-    return false;
-  }
-
-  const role = normalizeRole(user.role);
-
-  if (role === "admin") {
-    return true;
-  }
-
-  const normalizedSchoolId =
-    normalizeObjectId(schoolId);
-
-  const belongsToSchool =
-    getUserSchoolIds(user)
-      .includes(normalizedSchoolId);
-
-  if (role === "school") {
-    return belongsToSchool;
-  }
-
-  if (role === "teacher") {
-    return belongsToSchool;
-  }
-
-  return false;
-}
-
-
-function canManageAssignment(user, assignment) {
-  if (!user || !assignment) {
-    return false;
-  }
-
-  const role = normalizeRole(user.role);
-
-  if (role === "admin") {
-    return true;
-  }
-
+function canManageSchool(
+  user,
+  schoolId
+) {
   if (
-    !canManageSchool(
-      user,
-      assignment.schoolId
-    )
+    !user ||
+    !schoolId
   ) {
     return false;
   }
 
-  /*
-    School accounts can manage every assignment belonging
-    to their school.
-  */
-  if (role === "school") {
+  const role =
+    normalizeRole(
+      user.role
+    );
+
+  if (role === "admin") {
     return true;
   }
 
-  /*
-    Teachers can manage assignments belonging to their school.
+  if (role !== "school") {
+    return false;
+  }
 
-    When the assignment has a specific teacher, only that
-    teacher may modify it. Assignments with no teacher remain
-    manageable by school-linked teachers.
-  */
-  if (role === "teacher") {
-    const assignmentTeacherId =
+  return getUserSchoolIds(user)
+    .includes(
       normalizeObjectId(
-        assignment.teacherId
+        schoolId
+      )
+    );
+}
+
+
+/* ============================================
+   ASSIGNED CLASS PERMISSION
+============================================ */
+
+function canManageAssignedClass(
+  user,
+  classDoc
+) {
+  if (
+    !user ||
+    !classDoc
+  ) {
+    return false;
+  }
+
+  const role =
+    normalizeRole(
+      user.role
+    );
+
+  const userId =
+    normalizeObjectId(
+      user._id
+    );
+
+  const classSchoolId =
+    normalizeObjectId(
+      classDoc.schoolId
+    );
+
+  const classTeacherId =
+    normalizeObjectId(
+      classDoc.teacherId
+    );
+
+  if (role === "admin") {
+    return true;
+  }
+
+  if (role === "school") {
+    return getUserSchoolIds(user)
+      .includes(
+        classSchoolId
       );
+  }
 
-    if (!assignmentTeacherId) {
-      return true;
-    }
-
+  if (role === "teacher") {
     return (
-      assignmentTeacherId ===
-      normalizeObjectId(user._id)
+      Boolean(userId) &&
+      Boolean(classTeacherId) &&
+      userId ===
+        classTeacherId
     );
   }
 
   return false;
 }
 
+
+/* ============================================
+   ASSIGNMENT PERMISSION
+============================================ */
+
+async function canManageAssignment(
+  user,
+  assignment
+) {
+  if (
+    !user ||
+    !assignment
+  ) {
+    return false;
+  }
+
+  const role =
+    normalizeRole(
+      user.role
+    );
+
+  if (role === "admin") {
+    return true;
+  }
+
+  /*
+    School owner may manage assignments
+    belonging to its own school.
+  */
+  if (role === "school") {
+    return canManageSchool(
+      user,
+      assignment.schoolId
+    );
+  }
+
+  if (role !== "teacher") {
+    return false;
+  }
+
+  /*
+    Class-based assignments are controlled by
+    the teacher currently assigned to that class.
+
+    This remains secure even if teacherId on an
+    old assignment is missing or outdated.
+  */
+  if (assignment.classId) {
+    const classDoc =
+      await Class.findById(
+        assignment.classId
+      )
+        .select(
+          "schoolId teacherId"
+        )
+        .lean();
+
+    if (!classDoc) {
+      return false;
+    }
+
+    return canManageAssignedClass(
+      user,
+      classDoc
+    );
+  }
+
+  /*
+    Legacy assignment with no class:
+
+    Only its explicitly assigned teacher may
+    manage it.
+  */
+  const assignmentTeacherId =
+    normalizeObjectId(
+      assignment.teacherId
+    );
+
+  return (
+    Boolean(
+      assignmentTeacherId
+    ) &&
+    assignmentTeacherId ===
+      normalizeObjectId(
+        user._id
+      )
+  );
+}
 /* ============================================
    GET ASSIGNMENTS
 ============================================ */
@@ -252,43 +347,111 @@ router.post("/", auth, async (req, res) => {
     } = req.body;
 
     const role =
-      normalizeRole(req.user.role);
+      normalizeRole(
+        req.user.role
+      );
 
-    const finalSchoolId =
-      role === "school"
-        ? getUserSchoolId(req.user)
-        : schoolId || getUserSchoolId(req.user);
-
-    if (!finalSchoolId) {
-      return res.status(400).json({ message: "School ID is required" });
+    if (
+      !String(
+        title ||
+        ""
+      ).trim()
+    ) {
+      return res.status(400).json({
+        message:
+          "Assignment title is required"
+      });
     }
 
-    if (!canManageSchool(req.user, finalSchoolId)) {
-      return res.status(403).json({ message: "Not allowed to create assignment" });
-    }
+    let classDoc =
+      null;
 
-    if (!title) {
-      return res.status(400).json({ message: "Assignment title is required" });
-    }
+    let finalSchoolId =
+      null;
 
-    let classDoc = null;
+
+    /* ============================================
+       CLASS ASSIGNMENT
+    ============================================ */
 
     if (classId) {
-      classDoc = await Class.findById(classId);
+
+      classDoc =
+        await Class.findById(
+          classId
+        );
 
       if (!classDoc) {
-        return res.status(404).json({ message: "Class not found" });
+        return res.status(404).json({
+          message:
+            "Class not found"
+        });
       }
 
-      if (String(classDoc.schoolId) !== String(finalSchoolId)) {
-        return res.status(403).json({ message: "Class does not belong to this school" });
+      if (
+        !canManageAssignedClass(
+          req.user,
+          classDoc
+        )
+      ) {
+        return res.status(403).json({
+          message:
+            "Not allowed to create assignments for this class"
+        });
       }
+
+      /*
+        Never trust schoolId supplied by the
+        frontend when a real class exists.
+      */
+      finalSchoolId =
+        classDoc.schoolId;
+
+    } else {
+
+      /*
+        Assignments without a class are ownership-level
+        school records.
+
+        Teachers should normally create work from an
+        assigned class inside Class Builder.
+      */
+
+      finalSchoolId =
+        role === "school"
+          ? getUserSchoolId(
+              req.user
+            )
+          : schoolId ||
+            getUserSchoolId(
+              req.user
+            );
+
+      if (!finalSchoolId) {
+        return res.status(400).json({
+          message:
+            "School ID is required"
+        });
+      }
+
+      if (
+        !canManageSchool(
+          req.user,
+          finalSchoolId
+        )
+      ) {
+        return res.status(403).json({
+          message:
+            "A teacher must create assignments inside an assigned class."
+        });
+      }
+
     }
 
     const assignment = await Assignment.create({
       schoolId: finalSchoolId,
       classId: classId || null,
-          teacherId:
+      teacherId:
         role === "teacher"
           ? req.user._id
           : (
@@ -333,9 +496,15 @@ router.patch("/:id", auth, async (req, res) => {
       return res.status(404).json({ message: "Assignment not found" });
     }
 
-    if (!canManageAssignment(req.user, assignment)) {
+    if (
+      !await canManageAssignment(
+        req.user,
+        assignment
+      )
+    ) {
       return res.status(403).json({
-        message: "Not allowed to update assignment"
+        message:
+          "Not allowed to update this assignment"
       });
     }
 
@@ -484,13 +653,14 @@ router.delete("/:id", auth, async (req, res) => {
     }
 
     if (
-      !canManageAssignment(
+      !await canManageAssignment(
         req.user,
         assignment
       )
     ) {
       return res.status(403).json({
-        message: "Not allowed to delete assignment"
+        message:
+          "Not allowed to delete this assignment"
       });
     }
 
