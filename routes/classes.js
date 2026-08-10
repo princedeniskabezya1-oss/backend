@@ -87,34 +87,135 @@ function getUserSchoolId(user) {
   );
 }
 
-function canManageSchool(user, schoolId) {
-  if (!user || !schoolId) {
+function canManageSchool(
+  user,
+  schoolId
+) {
+  if (
+    !user ||
+    !schoolId
+  ) {
     return false;
   }
 
   const role =
-    normalizeRole(user.role);
+    normalizeRole(
+      user.role
+    );
 
+  /*
+    ADMIN
+
+    Platform administrators may manage
+    school-owned class resources.
+  */
   if (role === "admin") {
     return true;
   }
 
+  /*
+    SCHOOL OWNER
+
+    Only the owning school account receives
+    school-level management permission.
+
+    Teachers are intentionally NOT included
+    here. Teacher instructional permissions
+    are handled separately.
+  */
+  if (role !== "school") {
+    return false;
+  }
+
   const normalizedSchoolId =
-    normalizeObjectId(schoolId);
+    normalizeObjectId(
+      schoolId
+    );
 
-  const belongsToSchool =
-    getUserSchoolIds(user)
-      .includes(
-        normalizedSchoolId
-      );
+  return getUserSchoolIds(user)
+    .includes(
+      normalizedSchoolId
+    );
+}
 
+
+/* ============================================
+   ASSIGNED CLASS INSTRUCTION PERMISSION
+============================================ */
+
+function canManageAssignedClass(
+  user,
+  classDoc
+) {
+  if (
+    !user ||
+    !classDoc
+  ) {
+    return false;
+  }
+
+  const role =
+    normalizeRole(
+      user.role
+    );
+
+  const userId =
+    normalizeObjectId(
+      user._id
+    );
+
+  const classSchoolId =
+    normalizeObjectId(
+      classDoc.schoolId
+    );
+
+  const classTeacherId =
+    normalizeObjectId(
+      classDoc.teacherId
+    );
+
+
+  /*
+    ADMIN
+
+    Administrators retain full instructional
+    access across classes.
+  */
+  if (role === "admin") {
+    return true;
+  }
+
+
+  /*
+    SCHOOL
+
+    The owning school can manage the complete
+    instructional content of its class.
+  */
   if (role === "school") {
-    return belongsToSchool;
+    return getUserSchoolIds(user)
+      .includes(
+        classSchoolId
+      );
   }
 
+
+  /*
+    TEACHER
+
+    A teacher receives instructional access
+    ONLY when explicitly assigned to this class.
+
+    Being linked to the same school is not enough.
+  */
   if (role === "teacher") {
-    return belongsToSchool;
+    return (
+      Boolean(userId) &&
+      Boolean(classTeacherId) &&
+      userId === classTeacherId
+    );
   }
+
 
   return false;
 }
@@ -152,34 +253,58 @@ function canViewClassBuilder(
           .filter(Boolean)
       : [];
 
+  /*
+    ADMIN
+
+    Administrators may inspect every class builder.
+  */
   if (role === "admin") {
     return true;
   }
 
-  if (
-    role === "school" &&
-    getUserSchoolIds(user)
-      .includes(classSchoolId)
-  ) {
-    return true;
+  /*
+    SCHOOL
+
+    A school account may access builders belonging
+    to that school.
+  */
+  if (role === "school") {
+    return getUserSchoolIds(user)
+      .includes(classSchoolId);
   }
 
-  if (
-    role === "teacher" &&
-    (
-      classTeacherId === userId ||
-      getUserSchoolIds(user)
-        .includes(classSchoolId)
-    )
-  ) {
-    return true;
+  /*
+    TEACHER
+
+    Teachers may only access a class builder when
+    they are the teacher explicitly assigned to
+    that class.
+
+    Belonging to the same school alone does NOT
+    grant builder access.
+  */
+  if (role === "teacher") {
+    return (
+      Boolean(userId) &&
+      Boolean(classTeacherId) &&
+      classTeacherId === userId
+    );
   }
 
-  if (
-    role === "student" &&
-    studentIds.includes(userId)
-  ) {
-    return true;
+  /*
+    STUDENT
+
+    Students may access class learning information
+    only when they are enrolled in the class.
+
+    Write permissions are handled separately by
+    the protected mutation routes.
+  */
+  if (role === "student") {
+    return (
+      Boolean(userId) &&
+      studentIds.includes(userId)
+    );
   }
 
   return false;
@@ -2201,14 +2326,14 @@ router.patch("/:id/builder", auth, async (req, res) => {
     }
 
     if (
-      !canManageSchool(
+      !canManageAssignedClass(
         req.user,
-        classDoc.schoolId
+        classDoc
       )
     ) {
       return res.status(403).json({
         message:
-          "Not allowed to update class builder"
+          "Not allowed to update this class builder"
       });
     }
 
@@ -2434,6 +2559,26 @@ router.patch("/:id/builder", auth, async (req, res) => {
       req.body.teacherId !==
       undefined
     ) {
+
+      /*
+        Only the owning school or an admin may
+        assign, replace, or remove a teacher.
+
+        An assigned teacher may edit instructional
+        content, but may not change class ownership.
+      */
+      if (
+        !canManageSchool(
+          req.user,
+          classDoc.schoolId
+        )
+      ) {
+        return res.status(403).json({
+          message:
+            "Only the school or an administrator can change the assigned teacher."
+        });
+      }
+
       const nextTeacherId =
         normalizeNullableObjectId(
           req.body.teacherId
@@ -2472,40 +2617,40 @@ router.patch("/:id/builder", auth, async (req, res) => {
           });
         }
 
-if (
-  teacherRole !==
-  "admin"
-) {
-  const teacherSchoolIds = [
-    ...getUserSchoolIds(
-      teacher
-    ),
+        if (
+          teacherRole !==
+          "admin"
+        ) {
+          const teacherSchoolIds = [
+            ...getUserSchoolIds(
+              teacher
+            ),
 
-    normalizeObjectId(
-      teacher.companyId
-    )
-  ].filter(Boolean);
+            normalizeObjectId(
+              teacher.companyId
+            )
+          ].filter(Boolean);
 
-  const uniqueTeacherSchoolIds =
-    [
-      ...new Set(
-        teacherSchoolIds
-      )
-    ];
+          const uniqueTeacherSchoolIds =
+            [
+              ...new Set(
+                teacherSchoolIds
+              )
+            ];
 
-  if (
-    !uniqueTeacherSchoolIds.includes(
-      normalizeObjectId(
-        classDoc.schoolId
-      )
-    )
-  ) {
-    return res.status(403).json({
-      message:
-        "Teacher is not linked to this school"
-    });
-  }
-}
+          if (
+            !uniqueTeacherSchoolIds.includes(
+              normalizeObjectId(
+                classDoc.schoolId
+              )
+            )
+          ) {
+            return res.status(403).json({
+              message:
+                "Teacher is not linked to this school"
+            });
+          }
+        }
       }
 
       classDoc.teacherId =
@@ -2881,9 +3026,15 @@ router.patch("/:id/builder/lesson/:lessonId", auth, async (req, res) => {
       });
     }
 
-    if (!canManageSchool(req.user, classDoc.schoolId)) {
+    if (
+      !canManageAssignedClass(
+        req.user,
+        classDoc
+      )
+    ) {
       return res.status(403).json({
-        message: "Not allowed to update lesson"
+        message:
+          "Not allowed to update this lesson"
       });
     }
 
@@ -2944,9 +3095,15 @@ router.patch("/:id/builder/quiz/:quizId", auth, async (req, res) => {
       });
     }
 
-    if (!canManageSchool(req.user, classDoc.schoolId)) {
+    if (
+      !canManageAssignedClass(
+        req.user,
+        classDoc
+      )
+    ) {
       return res.status(403).json({
-        message: "Not allowed to update quiz"
+        message:
+          "Not allowed to update this quiz"
       });
     }
 
