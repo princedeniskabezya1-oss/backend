@@ -4,12 +4,151 @@ const router = express.Router();
 const auth = require("../middleware/auth");
 const Submission = require("../models/Submission");
 const Assignment = require("../models/Assignment");
+const Class = require("../models/Class");
 
-function canViewSchool(user, schoolId) {
-  if (!user) return false;
-  if (user.role === "admin") return true;
-  if (user.role === "school" && String(user._id) === String(schoolId)) return true;
-  if (["teacher", "student"].includes(user.role) && String(user.schoolId || user.linkedSchoolId) === String(schoolId)) return true;
+function normalizeRole(value) {
+  const role =
+    String(value || "")
+      .trim()
+      .toLowerCase();
+
+  const aliases = {
+    administrator: "admin",
+    instructor: "teacher",
+    faculty: "teacher",
+    learner: "student"
+  };
+
+  return aliases[role] || role;
+}
+
+
+function normalizeObjectId(value) {
+  if (!value) {
+    return "";
+  }
+
+  if (
+    typeof value === "object" &&
+    value._id
+  ) {
+    return String(value._id);
+  }
+
+  return String(value);
+}
+
+
+function getUserSchoolIds(user) {
+  if (!user) {
+    return [];
+  }
+
+  const role =
+    normalizeRole(user.role);
+
+  const values = [
+    user.schoolId,
+    user.linkedSchoolId
+  ];
+
+  if (role === "school") {
+    values.push(user._id);
+  }
+
+  return [
+    ...new Set(
+      values
+        .map(normalizeObjectId)
+        .filter(Boolean)
+    )
+  ];
+}
+
+
+function canViewSchool(
+  user,
+  schoolId
+) {
+  if (
+    !user ||
+    !schoolId
+  ) {
+    return false;
+  }
+
+  const role =
+    normalizeRole(
+      user.role
+    );
+
+  if (role === "admin") {
+    return true;
+  }
+
+  return getUserSchoolIds(user)
+    .includes(
+      normalizeObjectId(
+        schoolId
+      )
+    );
+}
+
+
+/* ============================================
+   ASSIGNED CLASS ACCESS
+============================================ */
+
+function canManageAssignedClass(
+  user,
+  classDoc
+) {
+  if (
+    !user ||
+    !classDoc
+  ) {
+    return false;
+  }
+
+  const role =
+    normalizeRole(
+      user.role
+    );
+
+  const userId =
+    normalizeObjectId(
+      user._id
+    );
+
+  const classSchoolId =
+    normalizeObjectId(
+      classDoc.schoolId
+    );
+
+  const classTeacherId =
+    normalizeObjectId(
+      classDoc.teacherId
+    );
+
+  if (role === "admin") {
+    return true;
+  }
+
+  if (role === "school") {
+    return getUserSchoolIds(user)
+      .includes(
+        classSchoolId
+      );
+  }
+
+  if (role === "teacher") {
+    return (
+      Boolean(userId) &&
+      Boolean(classTeacherId) &&
+      userId === classTeacherId
+    );
+  }
+
   return false;
 }
 
@@ -232,62 +371,407 @@ function sanitizeSubmissionAttachments(
     .filter(Boolean);
 }
 
-function canGrade(user, submission) {
-  if (!user) return false;
-  if (user.role === "admin") return true;
-  if (user.role === "school" && String(user._id) === String(submission.schoolId)) return true;
-  if (user.role === "teacher" && String(user._id) === String(submission.teacherId)) return true;
-  return false;
+async function canGrade(
+  user,
+  submission
+) {
+  if (
+    !user ||
+    !submission
+  ) {
+    return false;
+  }
+
+  const role =
+    normalizeRole(
+      user.role
+    );
+
+  if (role === "admin") {
+    return true;
+  }
+
+  if (role === "school") {
+    return getUserSchoolIds(user)
+      .includes(
+        normalizeObjectId(
+          submission.schoolId
+        )
+      );
+  }
+
+  if (role !== "teacher") {
+    return false;
+  }
+
+  /*
+    Prefer the actual class assignment.
+
+    This prevents an old/stale submission.teacherId
+    from giving access after a teacher has been
+    replaced on the class.
+  */
+  if (submission.classId) {
+    const classDoc =
+      await Class.findById(
+        submission.classId
+      )
+        .select(
+          "schoolId teacherId"
+        )
+        .lean();
+
+    if (!classDoc) {
+      return false;
+    }
+
+    return canManageAssignedClass(
+      user,
+      classDoc
+    );
+  }
+
+  /*
+    Legacy submission without a class.
+  */
+  return (
+    normalizeObjectId(
+      submission.teacherId
+    ) ===
+    normalizeObjectId(
+      user._id
+    )
+  );
 }
 
 /* ============================================
    GET SUBMISSIONS
 ============================================ */
-router.get("/", auth, async (req, res) => {
-  try {
-    const user = req.user;
 
-    const schoolId =
-      req.query.schoolId ||
-      user.schoolId ||
-      user.linkedSchoolId ||
-      user._id;
+router.get(
+  "/",
+  auth,
+  async (req, res) => {
+    try {
 
-    const query = {};
+      const user =
+        req.user;
 
-    if (user.role === "admin") {
-      if (req.query.schoolId) query.schoolId = req.query.schoolId;
-    } else if (user.role === "school") {
-      query.schoolId = user._id;
-    } else if (user.role === "teacher") {
-      query.$or = [
-        { teacherId: user._id },
-        { schoolId: user.schoolId || user.linkedSchoolId }
-      ];
-    } else if (user.role === "student") {
-      query.studentId = user._id;
-    } else {
-      query.schoolId = schoolId;
+      const role =
+        normalizeRole(
+          user.role
+        );
+
+      const query = {};
+
+
+      /* ========================================
+         ADMIN
+      ======================================== */
+
+      if (role === "admin") {
+
+        if (
+          req.query.schoolId
+        ) {
+          query.schoolId =
+            req.query.schoolId;
+        }
+
+      }
+
+
+      /* ========================================
+         SCHOOL
+      ======================================== */
+
+      else if (
+        role === "school"
+      ) {
+
+        query.schoolId =
+          user._id;
+
+      }
+
+
+      /* ========================================
+         TEACHER
+
+         Teacher only sees submissions from
+         classes currently assigned to them.
+      ======================================== */
+
+      else if (
+        role === "teacher"
+      ) {
+
+        const assignedClasses =
+          await Class.find({
+            teacherId:
+              user._id
+          })
+            .select("_id")
+            .lean();
+
+
+        const assignedClassIds =
+          assignedClasses.map(
+            item =>
+              item._id
+          );
+
+
+        /*
+          Also retain explicitly teacher-owned
+          legacy submissions that may not have
+          classId.
+        */
+
+        query.$or = [
+          {
+            classId: {
+              $in:
+                assignedClassIds
+            }
+          },
+          {
+            classId:null,
+            teacherId:
+              user._id
+          }
+        ];
+
+      }
+
+
+      /* ========================================
+         STUDENT
+      ======================================== */
+
+      else if (
+        role === "student"
+      ) {
+
+        query.studentId =
+          user._id;
+
+      }
+
+
+      else {
+
+        return res.status(403).json({
+          message:
+            "Not allowed to view submissions"
+        });
+
+      }
+
+
+      /* ========================================
+         OPTIONAL FILTERS
+      ======================================== */
+
+      if (
+        req.query.assignmentId
+      ) {
+
+        query.assignmentId =
+          req.query.assignmentId;
+
+      }
+
+
+      if (
+        req.query.classId
+      ) {
+
+        /*
+          Teacher classId filters must still
+          refer to one of their assigned classes.
+        */
+
+        if (
+          role === "teacher"
+        ) {
+
+          const classDoc =
+            await Class.findById(
+              req.query.classId
+            )
+              .select(
+                "schoolId teacherId"
+              )
+              .lean();
+
+
+          if (!classDoc) {
+
+            return res.status(404).json({
+              message:
+                "Class not found"
+            });
+
+          }
+
+
+          if (
+            !canManageAssignedClass(
+              user,
+              classDoc
+            )
+          ) {
+
+            return res.status(403).json({
+              message:
+                "Not allowed to view submissions for this class"
+            });
+
+          }
+
+
+          /*
+            Replace the broader $or with the
+            explicitly authorized class filter.
+          */
+
+          delete query.$or;
+
+        }
+
+
+        if (
+          role === "student"
+        ) {
+
+          const classDoc =
+            await Class.findOne({
+              _id:
+                req.query.classId,
+
+              studentIds:
+                user._id
+            })
+              .select("_id")
+              .lean();
+
+
+          if (!classDoc) {
+
+            return res.status(403).json({
+              message:
+                "Not enrolled in this class"
+            });
+
+          }
+
+        }
+
+
+        query.classId =
+          req.query.classId;
+
+      }
+
+
+      /*
+        Student ID filters must never let a
+        student request another student's work.
+      */
+
+      if (
+        req.query.studentId &&
+        role !== "student"
+      ) {
+
+        query.studentId =
+          req.query.studentId;
+
+      }
+
+
+      /*
+        Teachers cannot use teacherId query
+        to inspect another teacher's records.
+      */
+
+      if (
+        req.query.teacherId
+      ) {
+
+        if (
+          role === "teacher" &&
+          normalizeObjectId(
+            req.query.teacherId
+          ) !==
+          normalizeObjectId(
+            user._id
+          )
+        ) {
+
+          return res.status(403).json({
+            message:
+              "Not allowed to view another teacher's submissions"
+          });
+
+        }
+
+
+        query.teacherId =
+          role === "teacher"
+            ? user._id
+            : req.query.teacherId;
+
+      }
+
+
+      const submissions =
+        await Submission.find(
+          query
+        )
+          .populate(
+            "assignmentId",
+            "title dueDate"
+          )
+          .populate(
+            "classId",
+            "title subject classCode"
+          )
+          .populate(
+            "studentId",
+            "name email profileImage course"
+          )
+          .populate(
+            "teacherId",
+            "name email profileImage subject"
+          )
+          .sort({
+            submittedAt:-1,
+            createdAt:-1
+          });
+
+
+      return res.json(
+        submissions
+      );
+
+    } catch (err) {
+
+      console.error(
+        "GET /api/submissions error:",
+        err
+      );
+
+
+      return res.status(500).json({
+        message:
+          "Failed to load submissions"
+      });
+
     }
-
-    if (req.query.assignmentId) query.assignmentId = req.query.assignmentId;
-    if (req.query.classId) query.classId = req.query.classId;
-    if (req.query.studentId) query.studentId = req.query.studentId;
-    if (req.query.teacherId) query.teacherId = req.query.teacherId;
-
-    const submissions = await Submission.find(query)
-      .populate("assignmentId", "title dueDate")
-      .populate("classId", "title subject classCode")
-      .populate("studentId", "name email profileImage course")
-      .populate("teacherId", "name email profileImage subject")
-      .sort({ submittedAt: -1, createdAt: -1 });
-
-    res.json(submissions);
-  } catch (err) {
-    console.error("GET /api/submissions error:", err);
-    res.status(500).json({ message: "Failed to load submissions" });
   }
-});
+);
 
 /* ============================================
    CREATE / SUBMIT ASSIGNMENT
@@ -770,7 +1254,7 @@ router.patch("/:id/review", auth, async (req, res) => {
     }
 
     if (
-      !canGrade(
+      !await canGrade(
         req.user,
         submission
       )
@@ -1200,8 +1684,17 @@ router.delete("/:id", auth, async (req, res) => {
 
     const isOwner = String(submission.studentId) === String(req.user._id);
 
-    if (!isOwner && !canGrade(req.user, submission)) {
-      return res.status(403).json({ message: "Not allowed to delete submission" });
+     if (
+      !isOwner &&
+      !await canGrade(
+        req.user,
+        submission
+      )
+    ) {
+      return res.status(403).json({
+        message:
+          "Not allowed to delete submission"
+      });
     }
 
     await submission.deleteOne();
