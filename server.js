@@ -3,6 +3,10 @@ const messageRoutes = require("./routes/messages");
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
+
+const User = require("./models/User");
+
 require("dotenv").config();
 
 const authRoutes = require("./routes/auth");
@@ -405,123 +409,385 @@ const io = new Server(server, {
 
 const onlineUsers = new Map();
 
+
 io.on("connection", socket => {
   console.log("User connected:", socket.id);
 
-socket.on("join", payload => {
 
-  /*
-    Backwards compatibility.
+  /* ============================================
+     AUTHENTICATED PRIVATE SOCKET ROOM
+  ============================================ */
 
-    Older frontend versions still send:
+  socket.on(
+    "join",
+    async payload => {
 
-    socket.emit("join", userId)
+      try {
 
-    while the upgraded frontend sends:
+        /* ========================================
+           NORMALIZE CLIENT PAYLOAD
+        ======================================== */
 
-    socket.emit("join", {
-        userId,
-        role
-    })
+        const joinData =
+          payload &&
+          typeof payload === "object"
+            ? payload
+            : {
+                userId: payload
+              };
 
-  */
 
-  const joinData =
-    typeof payload === "object"
-      ? payload
-      : {
-          userId: payload
-        };
+        /* ========================================
+           GET AUTHENTICATION TOKEN
 
-  if (!joinData.userId) {
-    return;
-  }
+           Prefer the Socket.IO handshake token.
 
-  const userId =
-    String(joinData.userId);
+           joinData.token remains supported during
+           frontend migration.
+        ======================================== */
 
-  socket.userId =
-    userId;
+        const token =
+          String(
+            socket.handshake
+              ?.auth
+              ?.token ||
+            joinData.token ||
+            ""
+          )
+            .trim();
 
-  socket.userRole =
-    String(
-      joinData.role || ""
-    ).toLowerCase();
 
-  /*
-    Existing private room.
+        if (!token) {
 
-    Messages
+          console.warn(
+            "Socket join rejected: missing token",
+            {
+              socketId:
+                socket.id
+            }
+          );
 
-    Notifications
 
-    Calls
+          socket.emit(
+            "socketAuthError",
+            {
+              message:
+                "Authentication is required for realtime access."
+            }
+          );
 
-    etc.
-  */
 
-  socket.join(userId);
+          return;
+        }
 
-  /*
-    New analytics room.
 
-    Only schools and admins join it.
+        /* ========================================
+           VERIFY JWT
+        ======================================== */
 
-    Students never receive analytics.
+        let decoded;
 
-    Teachers never receive analytics.
 
-  */
+        try {
 
-  if (
-    socket.userRole === "school" ||
-    socket.userRole === "admin"
-  ) {
+          decoded =
+            jwt.verify(
+              token,
+              process.env.JWT_SECRET
+            );
 
-    socket.join(
-      schoolAnalyticsRoom(
-        userId
-      )
-    );
+        } catch (error) {
 
-  }
+          console.warn(
+            "Socket join rejected: invalid token",
+            {
+              socketId:
+                socket.id,
 
-  onlineUsers.set(userId, {
+              message:
+                error.message
+            }
+          );
 
-    socketId:
-      socket.id,
 
-    lastSeen:
-      new Date(),
+          socket.emit(
+            "socketAuthError",
+            {
+              message:
+                "Realtime authentication failed."
+            }
+          );
 
-    online:true
 
-  });
+          return;
+        }
 
-  io.emit("userOnline", {
 
-    userId,
+        const authenticatedUserId =
+          String(
+            decoded?.id ||
+            decoded?._id ||
+            ""
+          )
+            .trim();
 
-    online:true
 
-  });
+        if (!authenticatedUserId) {
 
-  console.log(
+          socket.emit(
+            "socketAuthError",
+            {
+              message:
+                "Realtime authentication is invalid."
+            }
+          );
 
-    "Socket joined:",
 
-    {
+          return;
+        }
 
-      userId,
 
-      role:
-        socket.userRole
+        /* ========================================
+           LOAD AUTHORITATIVE USER
+
+           IMPORTANT:
+           Do not trust userId or role supplied by
+           the browser.
+
+           JWT + MongoDB determine the real user.
+        ======================================== */
+
+        const user =
+          await User.findById(
+            authenticatedUserId
+          )
+            .select(
+              "_id role status isBlockedByEmployer"
+            )
+            .lean();
+
+
+        if (!user) {
+
+          socket.emit(
+            "socketAuthError",
+            {
+              message:
+                "Realtime user account was not found."
+            }
+          );
+
+
+          return;
+        }
+
+
+        /* ========================================
+           ACCOUNT ACCESS CHECKS
+
+           Match middleware/auth.js behavior.
+        ======================================== */
+
+        if (
+          user.status ===
+          "suspended"
+        ) {
+
+          socket.emit(
+            "socketAuthError",
+            {
+              message:
+                "Account suspended."
+            }
+          );
+
+
+          return;
+        }
+
+
+        if (
+          user.isBlockedByEmployer ===
+          true
+        ) {
+
+          socket.emit(
+            "socketAuthError",
+            {
+              message:
+                "Realtime access is restricted for this account."
+            }
+          );
+
+
+          return;
+        }
+
+
+        /* ========================================
+           AUTHORITATIVE SOCKET IDENTITY
+        ======================================== */
+
+        const userId =
+          String(
+            user._id
+          );
+
+
+        const userRole =
+          String(
+            user.role ||
+            ""
+          )
+            .trim()
+            .toLowerCase();
+
+
+        socket.userId =
+          userId;
+
+
+        socket.userRole =
+          userRole;
+
+
+        socket.data.userId =
+          userId;
+
+
+        socket.data.userRole =
+          userRole;
+
+
+        /* ========================================
+           PRIVATE USER ROOM
+
+           Used by:
+           - messages
+           - notifications
+           - calls
+           - submissions
+           - grading
+           - realtime teacher updates
+        ======================================== */
+
+        socket.join(
+          userId
+        );
+
+
+        /* ========================================
+           SCHOOL ANALYTICS ROOM
+
+           Preserve your existing behavior.
+
+           Teachers and students do not join the
+           school analytics room.
+        ======================================== */
+
+        if (
+          userRole ===
+            "school" ||
+          userRole ===
+            "admin"
+        ) {
+
+          socket.join(
+            schoolAnalyticsRoom(
+              userId
+            )
+          );
+
+        }
+
+
+        /* ========================================
+           ONLINE PRESENCE
+        ======================================== */
+
+        onlineUsers.set(
+          userId,
+          {
+            socketId:
+              socket.id,
+
+            lastSeen:
+              new Date(),
+
+            online:
+              true
+          }
+        );
+
+
+        io.emit(
+          "userOnline",
+          {
+            userId,
+
+            online:
+              true
+          }
+        );
+
+
+        /* ========================================
+           CONFIRM SUCCESSFUL AUTHENTICATED JOIN
+
+           Teacher Studio Part 19 can listen for
+           this event.
+        ======================================== */
+
+        socket.emit(
+          "socketReady",
+          {
+            userId,
+
+            role:
+              userRole
+          }
+        );
+
+
+        console.log(
+          "Authenticated socket joined:",
+          {
+            socketId:
+              socket.id,
+
+            userId,
+
+            role:
+              userRole
+          }
+        );
+
+      } catch (error) {
+
+        console.error(
+          "Socket join failed:",
+          {
+            socketId:
+              socket.id,
+
+            message:
+              error.message
+          }
+        );
+
+
+        socket.emit(
+          "socketAuthError",
+          {
+            message:
+              "Realtime authentication could not be completed."
+          }
+        );
+
+      }
 
     }
-
   );
-
-});
 
   socket.on("typing", ({ to }) => {
     if (!to || !socket.userId) return;
