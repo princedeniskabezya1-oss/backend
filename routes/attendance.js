@@ -350,13 +350,30 @@ function buildDateFilter(query) {
   return undefined;
 }
 
-async function populateAttendance(query) {
+function populateAttendance(query) {
+
   return query
-    .populate("studentId", "name email profileImage avatar course role")
-    .populate("teacherId", "name email profileImage avatar subject role")
-    .populate("classId", "title name subject classCode students teacherId")
-    .populate("scheduleId", "date time meetingLink classId teacherId")
-    .populate("markedBy", "name email role");
+    .populate(
+      "studentId",
+      "name email profileImage avatar course role"
+    )
+    .populate(
+      "teacherId",
+      "name email profileImage avatar subject role"
+    )
+    .populate(
+      "classId",
+      "title name subject classCode studentIds teacherId schoolId"
+    )
+    .populate(
+      "scheduleId",
+      "date time meetingLink classId teacherId"
+    )
+    .populate(
+      "markedBy",
+      "name email role"
+    );
+
 }
 
 /* GET /api/attendance */
