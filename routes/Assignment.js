@@ -566,26 +566,17 @@ router.get("/", auth, async (req, res) => {
     } else if (role === "school") {
       query.schoolId =
         getUserSchoolId(user);
-    } else if (role === "teacher") {
-      const teacherSchoolIds =
-        getUserSchoolIds(user);
+} else if (role === "teacher") {
 
-      if (!teacherSchoolIds.length) {
-        return res.status(403).json({
-          message: "Teacher is not linked to a school"
-        });
-      }
+  /*
+    Teachers may only load assignments that belong to them.
 
-      query.$or = [
-        {
-          teacherId: user._id
-        },
-        {
-          schoolId: {
-            $in: teacherSchoolIds
-          }
-        }
-      ];
+    Do NOT return every assignment from the teacher's school.
+    School users retain school-wide visibility.
+  */
+
+  query.teacherId =
+    user._id;
     } else if (role === "student") {
       const studentSchoolIds =
         getUserSchoolIds(user);
