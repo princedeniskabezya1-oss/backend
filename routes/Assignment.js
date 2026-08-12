@@ -2,9 +2,299 @@ const express = require("express");
 const router = express.Router();
 
 const auth = require("../middleware/auth");
+const upload = require("../middleware/upload");
+const cloudinary = require("../config/cloudinary");
+
 const Assignment = require("../models/Assignment");
 const Submission = require("../models/Submission");
 const Class = require("../models/Class");
+
+
+/* ============================================
+   ASSIGNMENT FILE UPLOAD CONFIG
+============================================ */
+
+const ASSIGNMENT_MAX_FILE_SIZE =
+  100 * 1024 * 1024;
+
+
+const ASSIGNMENT_ALLOWED_EXTENSIONS =
+  new Set([
+    "jpg",
+    "jpeg",
+    "png",
+    "gif",
+    "webp",
+
+    "mp4",
+    "webm",
+    "mov",
+    "m4v",
+
+    "mp3",
+    "wav",
+    "m4a",
+    "ogg",
+
+    "pdf",
+
+    "doc",
+    "docx",
+
+    "ppt",
+    "pptx",
+
+    "xls",
+    "xlsx",
+
+    "csv",
+    "txt",
+    "rtf",
+
+    "zip"
+  ]);
+
+
+/* ============================================
+   FILE EXTENSION
+============================================ */
+
+function getAssignmentFileExtension(
+  fileName
+) {
+
+  const value =
+    String(
+      fileName ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+
+  if (
+    !value.includes(".")
+  ) {
+
+    return "";
+
+  }
+
+
+  return value
+    .split(".")
+    .pop()
+    .trim();
+
+}
+
+
+/* ============================================
+   VALIDATE ASSIGNMENT ATTACHMENT
+============================================ */
+
+function validateAssignmentAttachment(
+  file
+) {
+
+  if (!file) {
+
+    return true;
+
+  }
+
+
+  if (
+    Number(file.size || 0) >
+    ASSIGNMENT_MAX_FILE_SIZE
+  ) {
+
+    const error =
+      new Error(
+        "Assignment attachment exceeds the 100 MB limit."
+      );
+
+
+    error.status =
+      413;
+
+
+    throw error;
+
+  }
+
+
+  const extension =
+    getAssignmentFileExtension(
+      file.originalname
+    );
+
+
+  if (
+    !ASSIGNMENT_ALLOWED_EXTENSIONS.has(
+      extension
+    )
+  ) {
+
+    const error =
+      new Error(
+        "This attachment type is not supported."
+      );
+
+
+    error.status =
+      400;
+
+
+    throw error;
+
+  }
+
+
+  return true;
+
+}
+
+
+/* ============================================
+   UPLOAD ASSIGNMENT ATTACHMENT TO CLOUDINARY
+============================================ */
+
+function uploadAssignmentAttachment(
+  file
+) {
+
+  return new Promise(
+    (
+      resolve,
+      reject
+    ) => {
+
+      if (!file) {
+
+        resolve(null);
+
+        return;
+
+      }
+
+
+      try {
+
+        validateAssignmentAttachment(
+          file
+        );
+
+      } catch (error) {
+
+        reject(error);
+
+        return;
+
+      }
+
+
+      const extension =
+        getAssignmentFileExtension(
+          file.originalname
+        );
+
+
+      const originalBaseName =
+        String(
+          file.originalname ||
+          "assignment-file"
+        )
+          .replace(
+            /\.[^/.]+$/,
+            ""
+          )
+          .replace(
+            /[^a-zA-Z0-9_-]+/g,
+            "-"
+          )
+          .replace(
+            /^[-_]+|[-_]+$/g,
+            ""
+          )
+          .slice(
+            0,
+            80
+          ) ||
+        "assignment-file";
+
+
+      const uploadStream =
+        cloudinary
+          .uploader
+          .upload_stream(
+            {
+              folder:
+                "aift_assignments",
+
+              resource_type:
+                "auto",
+
+              use_filename:
+                true,
+
+              unique_filename:
+                true,
+
+              filename_override:
+                `${originalBaseName}.${extension}`
+            },
+            (
+              error,
+              result
+            ) => {
+
+              if (error) {
+
+                reject(error);
+
+                return;
+
+              }
+
+
+              resolve({
+                url:
+                  result.secure_url,
+
+                publicId:
+                  result.public_id,
+
+                resourceType:
+                  result.resource_type,
+
+                format:
+                  result.format ||
+                  extension ||
+                  null,
+
+                bytes:
+                  result.bytes ||
+                  Number(file.size || 0),
+
+                originalName:
+                  file.originalname ||
+                  null
+              });
+
+            }
+          );
+
+
+      uploadStream.end(
+        file.buffer
+      );
+
+    }
+  );
+
+}
+
 
 /* ============================================
    ASSIGNMENT ACCESS HELPERS
@@ -333,308 +623,897 @@ router.get("/", auth, async (req, res) => {
 /* ============================================
    CREATE ASSIGNMENT
 ============================================ */
-router.post("/", auth, async (req, res) => {
-  try {
-    const {
-      schoolId,
-      classId,
-      teacherId,
-      title,
-      instructions,
-      description,
-      dueDate,
-      attachmentUrl
-    } = req.body;
 
-    const role =
-      normalizeRole(
-        req.user.role
-      );
+router.post(
+  "/",
+  auth,
+  upload.single(
+    "attachment"
+  ),
+  async (
+    req,
+    res
+  ) => {
 
-    if (
-      !String(
-        title ||
-        ""
-      ).trim()
-    ) {
-      return res.status(400).json({
-        message:
-          "Assignment title is required"
-      });
-    }
+    try {
 
-    let classDoc =
-      null;
-
-    let finalSchoolId =
-      null;
+      const {
+        schoolId,
+        classId,
+        teacherId,
+        title,
+        instructions,
+        description,
+        dueDate,
+        status
+      } =
+        req.body;
 
 
-    /* ============================================
-       CLASS ASSIGNMENT
-    ============================================ */
-
-    if (classId) {
-
-      classDoc =
-        await Class.findById(
-          classId
+      const role =
+        normalizeRole(
+          req.user.role
         );
 
-      if (!classDoc) {
-        return res.status(404).json({
-          message:
-            "Class not found"
-        });
-      }
 
-      if (
-        !canManageAssignedClass(
-          req.user,
-          classDoc
+      /* ========================================
+         BASIC VALIDATION
+      ======================================== */
+
+      const cleanTitle =
+        String(
+          title ||
+          ""
         )
-      ) {
-        return res.status(403).json({
-          message:
-            "Not allowed to create assignments for this class"
-        });
+          .trim();
+
+
+      if (!cleanTitle) {
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "Assignment title is required"
+          });
+
       }
 
-      /*
-        Never trust schoolId supplied by the
-        frontend when a real class exists.
-      */
-      finalSchoolId =
-        classDoc.schoolId;
 
-    } else {
+      /* ========================================
+         CLASS + SCHOOL AUTHORIZATION
+      ======================================== */
 
-      /*
-        Assignments without a class are ownership-level
-        school records.
+      let classDoc =
+        null;
 
-        Teachers should normally create work from an
-        assigned class inside Class Builder.
-      */
 
-      finalSchoolId =
-        role === "school"
-          ? getUserSchoolId(
-              req.user
+      let finalSchoolId =
+        null;
+
+
+      if (classId) {
+
+        classDoc =
+          await Class.findById(
+            classId
+          );
+
+
+        if (!classDoc) {
+
+          return res
+            .status(404)
+            .json({
+              message:
+                "Class not found"
+            });
+
+        }
+
+
+        if (
+          !canManageAssignedClass(
+            req.user,
+            classDoc
+          )
+        ) {
+
+          return res
+            .status(403)
+            .json({
+              message:
+                "Not allowed to create assignments for this class"
+            });
+
+        }
+
+
+        /*
+          Never trust schoolId from the browser when a real
+          class exists.
+
+          The class decides which school owns the assignment.
+        */
+
+        finalSchoolId =
+          classDoc.schoolId;
+
+      } else {
+
+        finalSchoolId =
+          role ===
+            "school"
+            ? getUserSchoolId(
+                req.user
+              )
+            : schoolId ||
+              getUserSchoolId(
+                req.user
+              );
+
+
+        if (!finalSchoolId) {
+
+          return res
+            .status(400)
+            .json({
+              message:
+                "School ID is required"
+            });
+
+        }
+
+
+        if (
+          !canManageSchool(
+            req.user,
+            finalSchoolId
+          )
+        ) {
+
+          return res
+            .status(403)
+            .json({
+              message:
+                "A teacher must create assignments inside an assigned class."
+            });
+
+        }
+
+      }
+
+
+      /* ========================================
+         FILE VALIDATION
+      ======================================== */
+
+      if (req.file) {
+
+        validateAssignmentAttachment(
+          req.file
+        );
+
+      }
+
+
+      /* ========================================
+         CLOUDINARY UPLOAD
+      ======================================== */
+
+      let uploadedAttachment =
+        null;
+
+
+      if (req.file) {
+
+        uploadedAttachment =
+          await uploadAssignmentAttachment(
+            req.file
+          );
+
+      }
+
+
+      /* ========================================
+         NORMALIZE STATUS
+      ======================================== */
+
+      const requestedStatus =
+        String(
+          status ||
+          "draft"
+        )
+          .trim()
+          .toLowerCase();
+
+
+      const finalStatus =
+        [
+          "draft",
+          "published",
+          "closed"
+        ].includes(
+          requestedStatus
+        )
+          ? requestedStatus
+          : "draft";
+
+
+      /* ========================================
+         CREATE ASSIGNMENT
+      ======================================== */
+
+      const assignment =
+        await Assignment.create({
+
+          schoolId:
+            finalSchoolId,
+
+          classId:
+            classId ||
+            null,
+
+          teacherId:
+            role ===
+              "teacher"
+              ? req.user._id
+              : (
+                  teacherId ||
+                  classDoc?.teacherId ||
+                  null
+                ),
+
+          title:
+            cleanTitle,
+
+          instructions:
+            instructions ||
+            description ||
+            null,
+
+          description:
+            description ||
+            instructions ||
+            null,
+
+          dueDate:
+            dueDate ||
+            null,
+
+          status:
+            finalStatus,
+
+          attachmentUrl:
+            uploadedAttachment?.url ||
+            null
+
+        });
+
+
+      /* ========================================
+         POPULATE RESPONSE
+      ======================================== */
+
+      const populated =
+        await Assignment
+          .findById(
+            assignment._id
+          )
+          .populate(
+            "classId",
+            "title subject classCode"
+          )
+          .populate(
+            "teacherId",
+            "name email profileImage subject"
+          );
+
+
+      /* ========================================
+         REALTIME
+      ======================================== */
+
+      const io =
+        req.app.get(
+          "io"
+        );
+
+
+      if (io) {
+
+        io
+          .to(
+            String(
+              finalSchoolId
             )
-          : schoolId ||
-            getUserSchoolId(
-              req.user
+          )
+          .emit(
+            "assignment:new",
+            populated
+          );
+
+
+        if (
+          populated.teacherId?._id
+        ) {
+
+          io
+            .to(
+              String(
+                populated.teacherId._id
+              )
+            )
+            .emit(
+              "assignment:new",
+              populated
             );
 
-      if (!finalSchoolId) {
-        return res.status(400).json({
-          message:
-            "School ID is required"
-        });
+        }
+
       }
+
+
+      return res
+        .status(201)
+        .json(
+          populated
+        );
+
+    } catch (err) {
+
+      console.error(
+        "POST /api/assignments error:",
+        err
+      );
+
 
       if (
-        !canManageSchool(
-          req.user,
-          finalSchoolId
-        )
+        Number(
+          err?.status
+        ) ===
+        413
       ) {
-        return res.status(403).json({
+
+        return res
+          .status(413)
+          .json({
+            message:
+              err.message ||
+              "Assignment attachment is too large"
+          });
+
+      }
+
+
+      if (
+        Number(
+          err?.status
+        ) ===
+        400
+      ) {
+
+        return res
+          .status(400)
+          .json({
+            message:
+              err.message ||
+              "Invalid assignment attachment"
+          });
+
+      }
+
+
+      return res
+        .status(500)
+        .json({
           message:
-            "A teacher must create assignments inside an assigned class."
+            "Failed to create assignment",
+
+          error:
+            err.message
         });
-      }
 
     }
 
-    const assignment = await Assignment.create({
-      schoolId: finalSchoolId,
-      classId: classId || null,
-      teacherId:
-        role === "teacher"
-          ? req.user._id
-          : (
-              teacherId ||
-              classDoc?.teacherId ||
-              null
-            ),
-      title,
-      instructions: instructions || description || null,
-      description: description || instructions || null,
-      dueDate: dueDate || null,
-      attachmentUrl: attachmentUrl || null
-    });
-
-    const populated = await Assignment.findById(assignment._id)
-      .populate("classId", "title subject classCode")
-      .populate("teacherId", "name email profileImage subject");
-
-    const io = req.app.get("io");
-    if (io) {
-      io.to(String(finalSchoolId)).emit("assignment:new", populated);
-      if (populated.teacherId?._id) {
-        io.to(String(populated.teacherId._id)).emit("assignment:new", populated);
-      }
-    }
-
-    res.status(201).json(populated);
-  } catch (err) {
-    console.error("POST /api/assignments error:", err);
-    res.status(500).json({ message: "Failed to create assignment" });
   }
-});
+);
+
 
 /* ============================================
    UPDATE ASSIGNMENT
 ============================================ */
-router.patch("/:id", auth, async (req, res) => {
-  try {
-    const assignment = await Assignment.findById(req.params.id);
 
-    if (!assignment) {
-      return res.status(404).json({ message: "Assignment not found" });
-    }
+router.patch(
+  "/:id",
+  auth,
+  upload.single(
+    "attachment"
+  ),
+  async (
+    req,
+    res
+  ) => {
 
-    if (
-      !await canManageAssignment(
-        req.user,
-        assignment
-      )
-    ) {
-      return res.status(403).json({
-        message:
-          "Not allowed to update this assignment"
-      });
-    }
+    try {
 
-    const role =
-      normalizeRole(req.user.role);
+      /* ========================================
+         FIND ASSIGNMENT
+      ======================================== */
 
-    const fields = [
-      "classId",
-      "title",
-      "instructions",
-      "description",
-      "dueDate",
-      "attachmentUrl",
-      "status"
-    ];
-
-    /*
-      School and admin accounts may reassign the teacher.
-
-      Teachers cannot transfer an assignment to a different
-      teacher through a crafted request.
-    */
-    if (
-      role === "school" ||
-      role === "admin"
-    ) {
-      fields.push("teacherId");
-    }
-
-    fields.forEach(field => {
-      if (req.body[field] !== undefined) {
-        const value =
-          req.body[field];
-
-        assignment[field] =
-          value === "" ||
-          value === null
-            ? null
-            : value;
-      }
-    });
-
-    if (role === "teacher") {
-      assignment.teacherId =
-        req.user._id;
-    }
-
-        if (assignment.classId) {
-      const classDoc =
-        await Class.findById(
-          assignment.classId
+      const assignment =
+        await Assignment.findById(
+          req.params.id
         );
 
-      if (!classDoc) {
-        return res.status(404).json({
-          message: "Class not found"
-        });
+
+      if (!assignment) {
+
+        return res
+          .status(404)
+          .json({
+            message:
+              "Assignment not found"
+          });
+
       }
+
+
+      /* ========================================
+         PERMISSION
+      ======================================== */
 
       if (
-        normalizeObjectId(classDoc.schoolId) !==
-        normalizeObjectId(assignment.schoolId)
-      ) {
-        return res.status(403).json({
-          message: "Class does not belong to this school"
-        });
-      }
-
-      if (
-        role === "teacher" &&
-        classDoc.teacherId &&
-        normalizeObjectId(classDoc.teacherId) !==
-        normalizeObjectId(req.user._id)
-      ) {
-        return res.status(403).json({
-          message: "Not allowed to assign work to this class"
-        });
-      }
-    }
-
-    await assignment.save();
-
-    const populated =
-      await Assignment.findById(
-        assignment._id
-      )
-        .populate(
-          "classId",
-          "title subject classCode"
+        !await canManageAssignment(
+          req.user,
+          assignment
         )
-        .populate(
-          "teacherId",
-          "name email profileImage subject"
+      ) {
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Not allowed to update this assignment"
+          });
+
+      }
+
+
+      const role =
+        normalizeRole(
+          req.user.role
         );
 
-    const io =
-      req.app.get("io");
 
-    if (io) {
-      io
-        .to(
+      /* ========================================
+         CLASS CHANGE
+      ======================================== */
+
+      if (
+        req.body.classId !==
+        undefined
+      ) {
+
+        const requestedClassId =
           String(
-            assignment.schoolId
+            req.body.classId ||
+            ""
           )
+            .trim();
+
+
+        if (!requestedClassId) {
+
+          assignment.classId =
+            null;
+
+        } else {
+
+          const classDoc =
+            await Class.findById(
+              requestedClassId
+            );
+
+
+          if (!classDoc) {
+
+            return res
+              .status(404)
+              .json({
+                message:
+                  "Class not found"
+              });
+
+          }
+
+
+          if (
+            !canManageAssignedClass(
+              req.user,
+              classDoc
+            )
+          ) {
+
+            return res
+              .status(403)
+              .json({
+                message:
+                  "Not allowed to assign work to this class"
+              });
+
+          }
+
+
+          assignment.classId =
+            classDoc._id;
+
+
+          /*
+            Class is authoritative for the school's ownership.
+          */
+
+          assignment.schoolId =
+            classDoc.schoolId;
+
+
+          if (
+            role ===
+            "teacher"
+          ) {
+
+            assignment.teacherId =
+              req.user._id;
+
+          }
+
+        }
+
+      }
+
+
+      /* ========================================
+         TITLE
+      ======================================== */
+
+      if (
+        req.body.title !==
+        undefined
+      ) {
+
+        assignment.title =
+          String(
+            req.body.title ||
+            ""
+          )
+            .trim();
+
+      }
+
+
+      if (!assignment.title) {
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "Assignment title is required"
+          });
+
+      }
+
+
+      /* ========================================
+         INSTRUCTIONS
+      ======================================== */
+
+      if (
+        req.body.instructions !==
+        undefined
+      ) {
+
+        assignment.instructions =
+          req.body.instructions ||
+          null;
+
+      }
+
+
+      if (
+        req.body.description !==
+        undefined
+      ) {
+
+        assignment.description =
+          req.body.description ||
+          null;
+
+      }
+
+
+      /* ========================================
+         DUE DATE
+      ======================================== */
+
+      if (
+        req.body.dueDate !==
+        undefined
+      ) {
+
+        assignment.dueDate =
+          req.body.dueDate ||
+          null;
+
+      }
+
+
+      /* ========================================
+         STATUS
+      ======================================== */
+
+      if (
+        req.body.status !==
+        undefined
+      ) {
+
+        const requestedStatus =
+          String(
+            req.body.status ||
+            ""
+          )
+            .trim()
+            .toLowerCase();
+
+
+        if (
+          ![
+            "draft",
+            "published",
+            "closed"
+          ].includes(
+            requestedStatus
+          )
+        ) {
+
+          return res
+            .status(400)
+            .json({
+              message:
+                "Invalid assignment status"
+            });
+
+        }
+
+
+        assignment.status =
+          requestedStatus;
+
+      }
+
+
+      /* ========================================
+         SCHOOL / ADMIN TEACHER REASSIGNMENT
+      ======================================== */
+
+      if (
+        (
+          role ===
+            "school" ||
+          role ===
+            "admin"
+        ) &&
+        req.body.teacherId !==
+          undefined
+      ) {
+
+        assignment.teacherId =
+          req.body.teacherId ||
+          null;
+
+      }
+
+
+      /* ========================================
+         REMOVE EXISTING ATTACHMENT
+      ======================================== */
+
+      const removeAttachment =
+        String(
+          req.body.removeAttachment ||
+          ""
         )
-        .emit(
-          "assignment:updated",
-          populated
+          .trim()
+          .toLowerCase() ===
+        "true";
+
+
+      if (removeAttachment) {
+
+        assignment.attachmentUrl =
+          null;
+
+      }
+
+
+      /* ========================================
+         VALIDATE NEW FILE
+      ======================================== */
+
+      if (req.file) {
+
+        validateAssignmentAttachment(
+          req.file
         );
 
-      if (populated.teacherId?._id) {
+      }
+
+
+      /* ========================================
+         REPLACE WITH NEW DEVICE FILE
+      ======================================== */
+
+      if (req.file) {
+
+        const uploadedAttachment =
+          await uploadAssignmentAttachment(
+            req.file
+          );
+
+
+        assignment.attachmentUrl =
+          uploadedAttachment?.url ||
+          null;
+
+      }
+
+
+      /* ========================================
+         ENSURE TEACHER OWNERSHIP
+      ======================================== */
+
+      if (
+        role ===
+        "teacher"
+      ) {
+
+        assignment.teacherId =
+          req.user._id;
+
+      }
+
+
+      /* ========================================
+         SAVE
+      ======================================== */
+
+      await assignment.save();
+
+
+      /* ========================================
+         POPULATE
+      ======================================== */
+
+      const populated =
+        await Assignment
+          .findById(
+            assignment._id
+          )
+          .populate(
+            "classId",
+            "title subject classCode"
+          )
+          .populate(
+            "teacherId",
+            "name email profileImage subject"
+          );
+
+
+      /* ========================================
+         REALTIME
+      ======================================== */
+
+      const io =
+        req.app.get(
+          "io"
+        );
+
+
+      if (io) {
+
         io
           .to(
             String(
-              populated.teacherId._id
+              assignment.schoolId
             )
           )
           .emit(
             "assignment:updated",
             populated
           );
+
+
+        if (
+          populated.teacherId?._id
+        ) {
+
+          io
+            .to(
+              String(
+                populated.teacherId._id
+              )
+            )
+            .emit(
+              "assignment:updated",
+              populated
+            );
+
+        }
+
       }
+
+
+      return res.json(
+        populated
+      );
+
+    } catch (err) {
+
+      console.error(
+        "PATCH /api/assignments/:id error:",
+        err
+      );
+
+
+      if (
+        Number(
+          err?.status
+        ) ===
+        413
+      ) {
+
+        return res
+          .status(413)
+          .json({
+            message:
+              err.message ||
+              "Assignment attachment is too large"
+          });
+
+      }
+
+
+      if (
+        Number(
+          err?.status
+        ) ===
+        400
+      ) {
+
+        return res
+          .status(400)
+          .json({
+            message:
+              err.message ||
+              "Invalid assignment attachment"
+          });
+
+      }
+
+
+      return res
+        .status(500)
+        .json({
+          message:
+            "Failed to update assignment",
+
+          error:
+            err.message
+        });
+
     }
 
-    return res.json(populated);
-  } catch (err) {
-    console.error("PATCH /api/assignments/:id error:", err);
-    res.status(500).json({ message: "Failed to update assignment" });
   }
-});
+);
 
 /* ============================================
    DELETE ASSIGNMENT
