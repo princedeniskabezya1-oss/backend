@@ -27,7 +27,7 @@ const agentSessionRoutes = require("./routes/agentSessions");
 
 const classRoutes = require("./routes/classes");
 const projectRoutes = require("./routes/projects");
-const assignmentRoutes = require("./routes/assignments");
+const assignmentRoutes = require("./routes/Assignment");
 const submissionRoutes = require("./routes/submissions");
 const opportunityRoutes = require("./routes/opportunities");
 const schoolCompanyPartnershipRoutes = require("./routes/schoolCompanyPartnerships");
