@@ -30,19 +30,19 @@ const assignmentSchema = new mongoose.Schema(
       maxlength: 160
     },
 
-    instructions: {
-      type: String,
-      trim: true,
-      maxlength: 5000,
-      default: null
-    },
+instructions: {
+  type: String,
+  trim: true,
+  maxlength: 12000,
+  default: null
+},
 
-    description: {
-      type: String,
-      trim: true,
-      maxlength: 5000,
-      default: null
-    },
+description: {
+  type: String,
+  trim: true,
+  maxlength: 12000,
+  default: null
+},
 
     dueDate: {
       type: Date,
@@ -59,12 +59,16 @@ const assignmentSchema = new mongoose.Schema(
 
 status: {
   type: String,
+
   enum: [
     "draft",
     "published",
+    "closed",
     "archived"
   ],
+
   default: "published",
+
   index: true
 },
 
