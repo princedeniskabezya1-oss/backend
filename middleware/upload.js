@@ -8,46 +8,97 @@ const MAX_UPLOAD_SIZE =
   100 * 1024 * 1024;
 
 const ALLOWED_MIME_TYPES =
-  new Set([
-    /* Images */
-    "image/jpeg",
-    "image/jpg",
-    "image/png",
-    "image/webp",
-    "image/gif",
-    "image/svg+xml",
+new Set([
 
-    /* Videos */
-    "video/mp4",
-    "video/webm",
-    "video/quicktime",
+  /* ============================================
+     IMAGES
+  ============================================ */
 
-    /* Audio */
-    "audio/mpeg",
-    "audio/mp3",
-    "audio/wav",
-    "audio/x-wav",
-    "audio/ogg",
-    "audio/mp4",
-    "audio/aac",
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "image/svg+xml",
 
-    /* Documents */
-    "application/pdf",
-    "application/msword",
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 
-    /* PowerPoint */
-    "application/vnd.ms-powerpoint",
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  /* ============================================
+     VIDEOS
+  ============================================ */
 
-    /* Excel */
-    "application/vnd.ms-excel",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
+  "video/x-m4v",
 
-    /* Plain text */
-    "text/plain",
-    "text/csv"
-  ]);
+
+  /* ============================================
+     AUDIO
+  ============================================ */
+
+  "audio/mpeg",
+  "audio/mp3",
+  "audio/wav",
+  "audio/x-wav",
+  "audio/ogg",
+  "audio/mp4",
+  "audio/aac",
+  "audio/x-m4a",
+
+
+  /* ============================================
+     PDF
+  ============================================ */
+
+  "application/pdf",
+
+
+  /* ============================================
+     WORD
+  ============================================ */
+
+  "application/msword",
+
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+
+
+  /* ============================================
+     POWERPOINT
+  ============================================ */
+
+  "application/vnd.ms-powerpoint",
+
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+
+
+  /* ============================================
+     EXCEL
+  ============================================ */
+
+  "application/vnd.ms-excel",
+
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+
+
+  /* ============================================
+     TEXT / CSV / RTF
+  ============================================ */
+
+  "text/plain",
+  "text/csv",
+  "application/csv",
+  "application/rtf",
+  "text/rtf",
+
+
+  /* ============================================
+     ZIP
+  ============================================ */
+
+  "application/zip",
+  "application/x-zip-compressed"
+
+]);
 
 /* =========================================================
    MEMORY STORAGE
