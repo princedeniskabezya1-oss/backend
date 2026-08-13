@@ -441,10 +441,74 @@ function canReadQuestion(
   }
 
 
-  return canAccessSchool(
-    user,
-    question.schoolId
-  );
+  const role =
+    normalizeRole(
+      user.role
+    );
+
+
+  /* =====================================================
+     ADMIN
+  ===================================================== */
+
+  if (
+    role ===
+    "admin"
+  ) {
+
+    return true;
+
+  }
+
+
+  /* =====================================================
+     MUST BELONG TO QUESTION'S SCHOOL
+  ===================================================== */
+
+  if (
+    !canAccessSchool(
+      user,
+      question.schoolId
+    )
+  ) {
+
+    return false;
+
+  }
+
+
+  /* =====================================================
+     SCHOOL
+  ===================================================== */
+
+  if (
+    role ===
+    "school"
+  ) {
+
+    return true;
+
+  }
+
+
+  /* =====================================================
+     TEACHER
+  ===================================================== */
+
+  if (
+    role ===
+    "teacher"
+  ) {
+
+    return sameId(
+      question.createdBy,
+      user._id
+    );
+
+  }
+
+
+  return false;
 
 }
 
@@ -807,10 +871,32 @@ function normalizeQuestionBloom(
 /* =========================================================
    GET /api/question-bank
 
-   SECURITY:
-   - auth required
-   - non-admin users cannot query arbitrary schools
-   - teacher/school results are constrained server-side
+   ACCESS MODEL
+   ---------------------------------------------------------
+
+   ADMIN
+     May view Question Bank items across all schools.
+     Optional schoolId filters the result.
+
+   SCHOOL
+     May view every Question Bank item belonging to itself,
+     including questions created by all teachers in that School.
+
+   TEACHER
+     May view ONLY questions created by that authenticated
+     teacher, and only inside a School the teacher is actually
+     linked to.
+
+   IMPORTANT
+   ---------------------------------------------------------
+
+   The browser cannot widen teacher scope by changing:
+
+     schoolId
+     createdBy
+     teacherId
+
+   Teacher ownership always comes from req.user._id.
 ========================================================= */
 
 router.get(
@@ -840,12 +926,13 @@ router.get(
         );
 
 
-      const query = {};
+      const query =
+        {};
 
 
-      /* ---------------------------------------------------
-         SCHOOL SCOPE
-      --------------------------------------------------- */
+      /* =====================================================
+         ADMIN
+      ===================================================== */
 
       if (
         role ===
@@ -863,9 +950,7 @@ router.get(
           ) {
 
             return res
-              .status(
-                400
-              )
+              .status(400)
               .json({
                 message:
                   "Invalid schoolId"
@@ -879,7 +964,32 @@ router.get(
 
         }
 
-      } else {
+      }
+
+
+      /* =====================================================
+         SCHOOL
+      ===================================================== */
+
+      else if (
+        role ===
+        "school"
+      ) {
+
+        query.schoolId =
+          req.user._id;
+
+      }
+
+
+      /* =====================================================
+         TEACHER
+      ===================================================== */
+
+      else if (
+        role ===
+        "teacher"
+      ) {
 
         const userSchoolIds =
           getUserSchoolIds(
@@ -892,15 +1002,23 @@ router.get(
         ) {
 
           return res
-            .status(
-              403
-            )
+            .status(403)
             .json({
               message:
-                "Your account is not linked to a school"
+                "Your teacher account is not linked to a school"
             });
 
         }
+
+
+        /*
+          Teacher ownership is authoritative.
+
+          Never accept createdBy from req.query.
+        */
+
+        query.createdBy =
+          req.user._id;
 
 
         if (
@@ -915,9 +1033,7 @@ router.get(
           ) {
 
             return res
-              .status(
-                403
-              )
+              .status(403)
               .json({
                 message:
                   "Not allowed to access this school's question bank"
@@ -941,9 +1057,25 @@ router.get(
       }
 
 
-      /* ---------------------------------------------------
-         FILTERS
-      --------------------------------------------------- */
+      /* =====================================================
+         OTHER ROLES
+      ===================================================== */
+
+      else {
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Not allowed to access Question Bank"
+          });
+
+      }
+
+
+      /* =====================================================
+         CATEGORY
+      ===================================================== */
 
       if (
         category
@@ -957,6 +1089,10 @@ router.get(
       }
 
 
+      /* =====================================================
+         DIFFICULTY
+      ===================================================== */
+
       if (
         difficulty
       ) {
@@ -969,6 +1105,10 @@ router.get(
       }
 
 
+      /* =====================================================
+         TYPE
+      ===================================================== */
+
       if (
         type
       ) {
@@ -980,6 +1120,10 @@ router.get(
 
       }
 
+
+      /* =====================================================
+         ARCHIVED
+      ===================================================== */
 
       if (
         archived !==
@@ -994,6 +1138,10 @@ router.get(
 
       }
 
+
+      /* =====================================================
+         SEARCH
+      ===================================================== */
 
       if (
         search
@@ -1012,27 +1160,30 @@ router.get(
           query.$or = [
 
             {
-              title: {
+              title:{
                 $regex:
                   searchValue,
+
                 $options:
                   "i"
               }
             },
 
             {
-              question: {
+              question:{
                 $regex:
                   searchValue,
+
                 $options:
                   "i"
               }
             },
 
             {
-              tags: {
+              tags:{
                 $regex:
                   searchValue,
+
                 $options:
                   "i"
               }
@@ -1072,9 +1223,7 @@ router.get(
 
 
       return res
-        .status(
-          500
-        )
+        .status(500)
         .json({
           message:
             "Failed to load question bank"
