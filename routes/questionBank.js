@@ -1,50 +1,113 @@
 "use strict";
 
-const express = require("express");
-const router = express.Router();
+const express =
+  require("express");
 
-const mongoose = require("mongoose");
+const mongoose =
+  require("mongoose");
 
-const auth = require("../middleware/auth");
-const QuestionBank = require("../models/QuestionBank");
+const auth =
+  require("../middleware/auth");
+
+const QuestionBank =
+  require("../models/QuestionBank");
+
+
+const router =
+  express.Router();
 
 
 /* =========================================================
    QUESTION BANK
-   PRODUCTION SECURITY REPLACEMENT
+   PRODUCTION ROUTE
 
-   SECURITY MODEL
+   ACCESS MODEL
    ---------------------------------------------------------
+
    ADMIN
-   - May read/manage questions across schools.
-   - schoolId may be supplied when creating.
+   - Can read all Question Bank items.
+   - Can create for any valid School.
+   - Can edit/delete any Question Bank item.
 
    SCHOOL
-   - May read/manage all questions belonging to itself.
-   - Cannot operate on another school's questions.
+   - Can read every Question Bank item belonging to itself.
+   - Can create for itself.
+   - Can edit/delete every Question Bank item belonging to it.
 
    TEACHER
-   - May read questions belonging to the school they are
-     actually linked to.
-   - May create questions for that school.
-   - May update/delete only questions they created.
+   - Can read only questions they personally created.
+   - Can create only inside a School linked to their account.
+   - Can edit/delete only questions they personally created.
 
-   CLIENT MUST NOT CONTROL
+   IMPORTANT
    ---------------------------------------------------------
+
+   The client NEVER controls:
    - createdBy
-   - another user's school scope
+   - arbitrary School ownership
+
+   createdBy always comes from req.user._id.
 ========================================================= */
+
+
+/* =========================================================
+   CONSTANTS
+========================================================= */
+
+const QUESTION_TYPES =
+  new Set([
+    "multiple_choice",
+    "checkbox",
+    "true_false",
+    "essay",
+    "short_answer",
+    "matching",
+    "ordering",
+    "fill_blank",
+    "coding"
+  ]);
+
+
+const QUESTION_DIFFICULTIES =
+  new Set([
+    "easy",
+    "medium",
+    "hard"
+  ]);
+
+
+const QUESTION_BLOOM_LEVELS =
+  new Set([
+    "remember",
+    "understand",
+    "apply",
+    "analyze",
+    "evaluate",
+    "create"
+  ]);
+
+
+const ATTACHMENT_TYPES =
+  new Set([
+    "image",
+    "video",
+    "audio",
+    "file"
+  ]);
 
 
 /* =========================================================
    ROLE NORMALIZATION
 ========================================================= */
 
-function normalizeRole(value) {
+function normalizeRole(
+  value
+){
 
   const role =
     String(
-      value || ""
+      value ||
+      ""
     )
       .trim()
       .toLowerCase();
@@ -65,7 +128,9 @@ function normalizeRole(value) {
 
 
   return (
-    aliases[role] ||
+    aliases[
+      role
+    ] ||
     role
   );
 
@@ -76,30 +141,34 @@ function normalizeRole(value) {
    ID NORMALIZATION
 ========================================================= */
 
-function normalizeId(value) {
+function normalizeId(
+  value
+){
 
-  if (
+  if(
     value === null ||
     value === undefined
-  ) {
+  ){
+
     return "";
+
   }
 
 
-  if (
+  if(
     typeof value ===
     "string"
-  ) {
+  ){
 
     return value.trim();
 
   }
 
 
-  if (
+  if(
     typeof value ===
     "number"
-  ) {
+  ){
 
     return String(
       value
@@ -108,12 +177,12 @@ function normalizeId(value) {
   }
 
 
-  if (
+  if(
     typeof value ===
       "object" &&
     value._id !==
       undefined
-  ) {
+  ){
 
     return normalizeId(
       value._id
@@ -122,12 +191,12 @@ function normalizeId(value) {
   }
 
 
-  if (
+  if(
     typeof value ===
       "object" &&
     value.id !==
       undefined
-  ) {
+  ){
 
     return normalizeId(
       value.id
@@ -147,12 +216,16 @@ function normalizeId(value) {
    ID COMPARISON
 ========================================================= */
 
-function sameId(first, second) {
+function sameId(
+  first,
+  second
+){
 
   const firstId =
     normalizeId(
       first
     );
+
 
   const secondId =
     normalizeId(
@@ -171,18 +244,43 @@ function sameId(first, second) {
 
 
 /* =========================================================
+   OBJECT ID VALIDATION
+========================================================= */
+
+function isValidObjectId(
+  value
+){
+
+  const id =
+    normalizeId(
+      value
+    );
+
+
+  return Boolean(
+    id &&
+    mongoose.Types.ObjectId
+      .isValid(
+        id
+      )
+  );
+
+}
+
+
+/* =========================================================
    SAFE STRING
 ========================================================= */
 
 function safeString(
   value,
   fallback = ""
-) {
+){
 
-  if (
+  if(
     value === null ||
     value === undefined
-  ) {
+  ){
 
     return fallback;
 
@@ -210,7 +308,7 @@ function safeString(
 function safeNumber(
   value,
   fallback = 0
-) {
+){
 
   const number =
     Number(
@@ -228,72 +326,129 @@ function safeNumber(
 
 
 /* =========================================================
-   PICK ALLOWED FIELDS
+   SAFE BOOLEAN
 ========================================================= */
 
-function pick(
-  obj,
-  fields
-) {
+function safeBoolean(
+  value,
+  fallback = false
+){
 
-  const out = {};
+  if(
+    typeof value ===
+    "boolean"
+  ){
+
+    return value;
+
+  }
 
 
-  fields.forEach(
-    field => {
+  if(
+    typeof value ===
+    "string"
+  ){
 
-      if (
-        obj[field] !==
-        undefined
-      ) {
+    const normalized =
+      value
+        .trim()
+        .toLowerCase();
 
-        out[field] =
-          obj[field];
 
-      }
+    if(
+      normalized ===
+        "true"
+    ){
+
+      return true;
 
     }
-  );
 
 
-  return out;
+    if(
+      normalized ===
+        "false"
+    ){
+
+      return false;
+
+    }
+
+  }
+
+
+  if(
+    value ===
+    1
+  ){
+
+    return true;
+
+  }
+
+
+  if(
+    value ===
+    0
+  ){
+
+    return false;
+
+  }
+
+
+  return fallback;
 
 }
 
 
 /* =========================================================
-   VALID OBJECT ID
+   SAFE ARRAY
 ========================================================= */
 
-function isValidObjectId(value) {
+function normalizeArray(
+  value
+){
 
-  return mongoose.Types.ObjectId
-    .isValid(
-      normalizeId(
-        value
-      )
-    );
+  return Array.isArray(
+    value
+  )
+    ? value
+    : [];
+
+}
+
+
+/* =========================================================
+   ESCAPE REGEX
+========================================================= */
+
+function escapeRegex(
+  value
+){
+
+  return String(
+    value ||
+    ""
+  ).replace(
+    /[.*+?^${}()|[\]\\]/g,
+    "\\$&"
+  );
 
 }
 
 
 /* =========================================================
    USER SCHOOL IDS
-
-   Supports the school relationships already used elsewhere
-   in AIFT:
-     school account -> own _id
-     teacher -> schoolId / linkedSchoolId
-
-   Both may exist during migration, so return all valid
-   authorized IDs rather than guessing which field is newer.
 ========================================================= */
 
-function getUserSchoolIds(user) {
+function getUserSchoolIds(
+  user
+){
 
-  if (
+  if(
     !user
-  ) {
+  ){
 
     return [];
 
@@ -310,10 +465,14 @@ function getUserSchoolIds(user) {
     new Set();
 
 
-  if (
+  /*
+    School account owns itself.
+  */
+
+  if(
     role ===
     "school"
-  ) {
+  ){
 
     const ownId =
       normalizeId(
@@ -321,9 +480,9 @@ function getUserSchoolIds(user) {
       );
 
 
-    if (
+    if(
       ownId
-    ) {
+    ){
 
       ids.add(
         ownId
@@ -333,6 +492,10 @@ function getUserSchoolIds(user) {
 
   }
 
+
+  /*
+    Teacher migration compatibility.
+  */
 
   [
     user.schoolId,
@@ -347,9 +510,9 @@ function getUserSchoolIds(user) {
           );
 
 
-        if (
+        if(
           id
-        ) {
+        ){
 
           ids.add(
             id
@@ -361,6 +524,42 @@ function getUserSchoolIds(user) {
     );
 
 
+  /*
+    Optional multi-school compatibility.
+  */
+
+  if(
+    Array.isArray(
+      user.schoolIds
+    )
+  ){
+
+    user.schoolIds
+      .forEach(
+        value => {
+
+          const id =
+            normalizeId(
+              value
+            );
+
+
+          if(
+            id
+          ){
+
+            ids.add(
+              id
+            );
+
+          }
+
+        }
+      );
+
+  }
+
+
   return Array.from(
     ids
   );
@@ -370,22 +569,17 @@ function getUserSchoolIds(user) {
 
 /* =========================================================
    SCHOOL ACCESS
-
-   Admin is unrestricted.
-
-   School/teacher access is limited to a school ID actually
-   associated with their authenticated account.
 ========================================================= */
 
 function canAccessSchool(
   user,
   schoolId
-) {
+){
 
-  if (
+  if(
     !user ||
     !schoolId
-  ) {
+  ){
 
     return false;
 
@@ -398,10 +592,10 @@ function canAccessSchool(
     );
 
 
-  if (
+  if(
     role ===
     "admin"
-  ) {
+  ){
 
     return true;
 
@@ -412,9 +606,9 @@ function canAccessSchool(
     user
   )
     .some(
-      id =>
+      authorizedSchoolId =>
         sameId(
-          id,
+          authorizedSchoolId,
           schoolId
         )
     );
@@ -423,18 +617,18 @@ function canAccessSchool(
 
 
 /* =========================================================
-   QUESTION READ ACCESS
+   READ ACCESS
 ========================================================= */
 
 function canReadQuestion(
   user,
   question
-) {
+){
 
-  if (
+  if(
     !user ||
     !question
-  ) {
+  ){
 
     return false;
 
@@ -451,10 +645,10 @@ function canReadQuestion(
      ADMIN
   ===================================================== */
 
-  if (
+  if(
     role ===
     "admin"
-  ) {
+  ){
 
     return true;
 
@@ -462,15 +656,15 @@ function canReadQuestion(
 
 
   /* =====================================================
-     MUST BELONG TO QUESTION'S SCHOOL
+     SCHOOL BOUNDARY
   ===================================================== */
 
-  if (
+  if(
     !canAccessSchool(
       user,
       question.schoolId
     )
-  ) {
+  ){
 
     return false;
 
@@ -481,10 +675,10 @@ function canReadQuestion(
      SCHOOL
   ===================================================== */
 
-  if (
+  if(
     role ===
     "school"
-  ) {
+  ){
 
     return true;
 
@@ -493,12 +687,14 @@ function canReadQuestion(
 
   /* =====================================================
      TEACHER
+
+     Teachers only read their own reusable questions.
   ===================================================== */
 
-  if (
+  if(
     role ===
     "teacher"
-  ) {
+  ){
 
     return sameId(
       question.createdBy,
@@ -514,31 +710,18 @@ function canReadQuestion(
 
 
 /* =========================================================
-   QUESTION WRITE ACCESS
-
-   ADMIN:
-     any question.
-
-   SCHOOL:
-     any question inside its own school.
-
-   TEACHER:
-     questions inside their school, but only when the teacher
-     created that question.
-
-   This prevents one teacher from silently modifying another
-   teacher's reusable assessment content.
+   WRITE ACCESS
 ========================================================= */
 
 function canManageQuestion(
   user,
   question
-) {
+){
 
-  if (
+  if(
     !user ||
     !question
-  ) {
+  ){
 
     return false;
 
@@ -551,42 +734,42 @@ function canManageQuestion(
     );
 
 
-  if (
+  if(
     role ===
     "admin"
-  ) {
+  ){
 
     return true;
 
   }
 
 
-  if (
+  if(
     !canAccessSchool(
       user,
       question.schoolId
     )
-  ) {
+  ){
 
     return false;
 
   }
 
 
-  if (
+  if(
     role ===
     "school"
-  ) {
+  ){
 
     return true;
 
   }
 
 
-  if (
+  if(
     role ===
     "teacher"
-  ) {
+  ){
 
     return sameId(
       question.createdBy,
@@ -602,38 +785,39 @@ function canManageQuestion(
 
 
 /* =========================================================
-   RESOLVE CREATE SCHOOL ID
-
-   Teachers/schools do not get to choose arbitrary ownership.
-
-   ADMIN:
-     schoolId must be supplied.
-
-   SCHOOL:
-     own authenticated account ID.
-
-   TEACHER:
-     authenticated linked school.
-
-   If a teacher is linked to multiple schools and the request
-   includes schoolId, it must be one of those authorized IDs.
+   RESOLVE SCHOOL FOR CREATE
 ========================================================= */
 
 function resolveCreateSchoolId(
   user,
   requestedSchoolId
-) {
+){
+
+  if(
+    !user
+  ){
+
+    return "";
+
+  }
+
 
   const role =
     normalizeRole(
-      user?.role
+      user.role
     );
 
 
-  if (
+  /* =====================================================
+     ADMIN
+
+     Admin must explicitly specify a School.
+  ===================================================== */
+
+  if(
     role ===
     "admin"
-  ) {
+  ){
 
     const schoolId =
       normalizeId(
@@ -641,68 +825,114 @@ function resolveCreateSchoolId(
       );
 
 
-    return schoolId;
+    return isValidObjectId(
+      schoolId
+    )
+      ? schoolId
+      : "";
 
   }
 
 
-  const authorizedSchoolIds =
-    getUserSchoolIds(
-      user
+  /* =====================================================
+     SCHOOL
+
+     School always creates under itself.
+  ===================================================== */
+
+  if(
+    role ===
+    "school"
+  ){
+
+    return normalizeId(
+      user._id
     );
 
+  }
 
-  if (
-    !authorizedSchoolIds.length
-  ) {
+
+  /* =====================================================
+     TEACHER
+  ===================================================== */
+
+  if(
+    role ===
+    "teacher"
+  ){
+
+    const authorizedSchoolIds =
+      getUserSchoolIds(
+        user
+      );
+
+
+    if(
+      !authorizedSchoolIds.length
+    ){
+
+      return "";
+
+    }
+
+
+    const requested =
+      normalizeId(
+        requestedSchoolId
+      );
+
+
+    /*
+      If Class Builder supplied schoolId, validate it against
+      the authenticated teacher's School relationships.
+    */
+
+    if(
+      requested
+    ){
+
+      const matched =
+        authorizedSchoolIds
+          .find(
+            schoolId =>
+              sameId(
+                schoolId,
+                requested
+              )
+          );
+
+
+      return (
+        matched ||
+        ""
+      );
+
+    }
+
+
+    /*
+      If the teacher belongs to exactly one School, deriving
+      ownership is unambiguous.
+    */
+
+    if(
+      authorizedSchoolIds.length ===
+      1
+    ){
+
+      return authorizedSchoolIds[
+        0
+      ];
+
+    }
+
+
+    /*
+      Multi-School teacher must identify which authorized
+      School this reusable question belongs to.
+    */
 
     return "";
-
-  }
-
-
-  const requested =
-    normalizeId(
-      requestedSchoolId
-    );
-
-
-  if (
-    requested
-  ) {
-
-    const matched =
-      authorizedSchoolIds
-        .find(
-          schoolId =>
-            sameId(
-              schoolId,
-              requested
-            )
-        );
-
-
-    return (
-      matched ||
-      ""
-    );
-
-  }
-
-
-  /*
-    A normal teacher currently belongs to one school.
-
-    If only one authorized school exists, deriving it is
-    unambiguous.
-  */
-
-  if (
-    authorizedSchoolIds.length ===
-    1
-  ) {
-
-    return authorizedSchoolIds[0];
 
   }
 
@@ -713,78 +943,6 @@ function resolveCreateSchoolId(
 
 
 /* =========================================================
-   NORMALIZE ARRAY
-========================================================= */
-
-function normalizeArray(value) {
-
-  return Array.isArray(
-    value
-  )
-    ? value
-    : [];
-
-}
-
-
-/* =========================================================
-   NORMALIZE POINTS
-========================================================= */
-
-function normalizeQuestionPoints(value) {
-
-  return Math.max(
-    0,
-    safeNumber(
-      value,
-      1
-    )
-  );
-
-}
-
-
-/* =========================================================
-   SUPPORTED QUESTION TYPES
-========================================================= */
-
-const QUESTION_TYPES =
-  new Set([
-    "multiple_choice",
-    "true_false",
-    "short_answer",
-    "essay"
-  ]);
-
-
-/* =========================================================
-   SUPPORTED DIFFICULTIES
-========================================================= */
-
-const QUESTION_DIFFICULTIES =
-  new Set([
-    "easy",
-    "medium",
-    "hard"
-  ]);
-
-
-/* =========================================================
-   SUPPORTED BLOOM LEVELS
-========================================================= */
-
-const QUESTION_BLOOM_LEVELS =
-  new Set([
-    "remember",
-    "understand",
-    "apply",
-    "analyze",
-    "evaluate",
-    "create"
-  ]);
-
-
-/* =========================================================
    NORMALIZE QUESTION TYPE
 ========================================================= */
 
@@ -792,7 +950,7 @@ function normalizeQuestionType(
   value,
   fallback =
     "multiple_choice"
-) {
+){
 
   const type =
     safeString(
@@ -802,12 +960,11 @@ function normalizeQuestionType(
       .toLowerCase();
 
 
-  return QUESTION_TYPES
-    .has(
-      type
-    )
-      ? type
-      : fallback;
+  return QUESTION_TYPES.has(
+    type
+  )
+    ? type
+    : fallback;
 
 }
 
@@ -820,7 +977,7 @@ function normalizeQuestionDifficulty(
   value,
   fallback =
     "medium"
-) {
+){
 
   const difficulty =
     safeString(
@@ -830,25 +987,24 @@ function normalizeQuestionDifficulty(
       .toLowerCase();
 
 
-  return QUESTION_DIFFICULTIES
-    .has(
-      difficulty
-    )
-      ? difficulty
-      : fallback;
+  return QUESTION_DIFFICULTIES.has(
+    difficulty
+  )
+    ? difficulty
+    : fallback;
 
 }
 
 
 /* =========================================================
-   NORMALIZE BLOOM LEVEL
+   NORMALIZE BLOOM
 ========================================================= */
 
 function normalizeQuestionBloom(
   value,
   fallback =
     "remember"
-) {
+){
 
   const bloom =
     safeString(
@@ -858,648 +1014,93 @@ function normalizeQuestionBloom(
       .toLowerCase();
 
 
-  return QUESTION_BLOOM_LEVELS
-    .has(
-      bloom
-    )
-      ? bloom
-      : fallback;
+  return QUESTION_BLOOM_LEVELS.has(
+    bloom
+  )
+    ? bloom
+    : fallback;
 
 }
 
 
 /* =========================================================
-   GET /api/question-bank
-
-   ACCESS MODEL
-   ---------------------------------------------------------
-
-   ADMIN
-     May view Question Bank items across all schools.
-     Optional schoolId filters the result.
-
-   SCHOOL
-     May view every Question Bank item belonging to itself,
-     including questions created by all teachers in that School.
-
-   TEACHER
-     May view ONLY questions created by that authenticated
-     teacher, and only inside a School the teacher is actually
-     linked to.
-
-   IMPORTANT
-   ---------------------------------------------------------
-
-   The browser cannot widen teacher scope by changing:
-
-     schoolId
-     createdBy
-     teacherId
-
-   Teacher ownership always comes from req.user._id.
+   NORMALIZE POINTS
 ========================================================= */
 
-router.get(
-  "/",
-  auth,
-  async (
-    req,
-    res
-  ) => {
-
-    try {
-
-      const {
-        schoolId,
-        category,
-        difficulty,
-        type,
-        search,
-        archived
-      } =
-        req.query;
-
-
-      const role =
-        normalizeRole(
-          req.user.role
-        );
-
-
-      const query =
-        {};
-
-
-      /* =====================================================
-         ADMIN
-      ===================================================== */
-
-      if (
-        role ===
-        "admin"
-      ) {
-
-        if (
-          schoolId
-        ) {
-
-          if (
-            !isValidObjectId(
-              schoolId
-            )
-          ) {
-
-            return res
-              .status(400)
-              .json({
-                message:
-                  "Invalid schoolId"
-              });
-
-          }
-
-
-          query.schoolId =
-            schoolId;
-
-        }
-
-      }
-
-
-      /* =====================================================
-         SCHOOL
-      ===================================================== */
-
-      else if (
-        role ===
-        "school"
-      ) {
-
-        query.schoolId =
-          req.user._id;
-
-      }
-
-
-      /* =====================================================
-         TEACHER
-      ===================================================== */
-
-      else if (
-        role ===
-        "teacher"
-      ) {
-
-        const userSchoolIds =
-          getUserSchoolIds(
-            req.user
-          );
-
-
-        if (
-          !userSchoolIds.length
-        ) {
-
-          return res
-            .status(403)
-            .json({
-              message:
-                "Your teacher account is not linked to a school"
-            });
-
-        }
-
-
-        /*
-          Teacher ownership is authoritative.
-
-          Never accept createdBy from req.query.
-        */
-
-        query.createdBy =
-          req.user._id;
-
-
-        if (
-          schoolId
-        ) {
-
-          if (
-            !canAccessSchool(
-              req.user,
-              schoolId
-            )
-          ) {
-
-            return res
-              .status(403)
-              .json({
-                message:
-                  "Not allowed to access this school's question bank"
-              });
-
-          }
-
-
-          query.schoolId =
-            schoolId;
-
-        } else {
-
-          query.schoolId = {
-            $in:
-              userSchoolIds
-          };
-
-        }
-
-      }
-
-
-      /* =====================================================
-         OTHER ROLES
-      ===================================================== */
-
-      else {
-
-        return res
-          .status(403)
-          .json({
-            message:
-              "Not allowed to access Question Bank"
-          });
-
-      }
-
-
-      /* =====================================================
-         CATEGORY
-      ===================================================== */
-
-      if (
-        category
-      ) {
-
-        query.category =
-          String(
-            category
-          );
-
-      }
-
-
-      /* =====================================================
-         DIFFICULTY
-      ===================================================== */
-
-      if (
-        difficulty
-      ) {
-
-        query.difficulty =
-          normalizeQuestionDifficulty(
-            difficulty
-          );
-
-      }
-
-
-      /* =====================================================
-         TYPE
-      ===================================================== */
-
-      if (
-        type
-      ) {
-
-        query.type =
-          normalizeQuestionType(
-            type
-          );
-
-      }
-
-
-      /* =====================================================
-         ARCHIVED
-      ===================================================== */
-
-      if (
-        archived !==
-        undefined
-      ) {
-
-        query.archived =
-          String(
-            archived
-          ).toLowerCase() ===
-          "true";
-
-      }
-
-
-      /* =====================================================
-         SEARCH
-      ===================================================== */
-
-      if (
-        search
-      ) {
-
-        const searchValue =
-          safeString(
-            search
-          );
-
-
-        if (
-          searchValue
-        ) {
-
-          query.$or = [
-
-            {
-              title:{
-                $regex:
-                  searchValue,
-
-                $options:
-                  "i"
-              }
-            },
-
-            {
-              question:{
-                $regex:
-                  searchValue,
-
-                $options:
-                  "i"
-              }
-            },
-
-            {
-              tags:{
-                $regex:
-                  searchValue,
-
-                $options:
-                  "i"
-              }
-            }
-
-          ];
-
-        }
-
-      }
-
-
-      const questions =
-        await QuestionBank
-          .find(
-            query
-          )
-          .sort({
-            updatedAt:
-              -1
-          })
-          .lean();
-
-
-      return res.json(
-        questions
-      );
-
-    } catch (
-      err
-    ) {
-
-      console.error(
-        "GET question bank error:",
-        err
-      );
-
-
-      return res
-        .status(500)
-        .json({
-          message:
-            "Failed to load question bank"
-        });
-
-    }
-
-  }
-);
+function normalizeQuestionPoints(
+  value,
+  fallback = 1
+){
+
+  return Math.max(
+    0,
+    safeNumber(
+      value,
+      fallback
+    )
+  );
+
+}
 
 
 /* =========================================================
-   GET /api/question-bank/:id
+   NORMALIZE TAGS
 ========================================================= */
 
-router.get(
-  "/:id",
-  auth,
-  async (
-    req,
-    res
-  ) => {
+function normalizeQuestionTags(
+  value
+){
 
-    try {
-
-      if (
-        !isValidObjectId(
-          req.params.id
+  return [
+    ...new Set(
+      normalizeArray(
+        value
+      )
+        .map(
+          item =>
+            safeString(
+              item
+            )
         )
-      ) {
-
-        return res
-          .status(
-            400
-          )
-          .json({
-            message:
-              "Invalid question ID"
-          });
-
-      }
-
-
-      const question =
-        await QuestionBank
-          .findById(
-            req.params.id
-          )
-          .lean();
-
-
-      if (
-        !question
-      ) {
-
-        return res
-          .status(
-            404
-          )
-          .json({
-            message:
-              "Question not found"
-          });
-
-      }
-
-
-      if (
-        !canReadQuestion(
-          req.user,
-          question
+        .filter(
+          Boolean
         )
-      ) {
+    )
+  ];
 
-        return res
-          .status(
-            403
-          )
-          .json({
-            message:
-              "Not allowed to view this question"
-          });
-
-      }
-
-
-      return res.json(
-        question
-      );
-
-    } catch (
-      err
-    ) {
-
-      console.error(
-        "GET question error:",
-        err
-      );
-
-
-      return res
-        .status(
-          500
-        )
-        .json({
-          message:
-            "Failed to load question"
-        });
-
-    }
-
-  }
-);
+}
 
 
 /* =========================================================
-   POST /api/question-bank
+   NORMALIZE QUESTION OPTIONS
 
-   OWNERSHIP
-   ---------------------------------------------------------
+   Matches models/QuestionBank.js:
 
-   createdBy ALWAYS comes from req.user._id.
-
-   The browser cannot assign ownership.
-
-   ADMIN
-     May create for an authorized supplied School.
-
-   SCHOOL
-     Creates for itself.
-
-   TEACHER
-     Creates only inside a School actually linked to the
-     authenticated teacher.
+   {
+     id:String,
+     text:String,
+     isCorrect:Boolean
+   }
 ========================================================= */
 
-router.post(
-  "/",
-  auth,
-  async (
-    req,
-    res
-  ) => {
+function normalizeQuestionOptions(
+  value
+){
 
-    try {
-
-      /* =====================================================
-         BASIC INPUT
-      ===================================================== */
-
-      const title =
-        safeString(
-          req.body.title
-        );
-
-
-      const questionText =
-        safeString(
-          req.body.question
-        );
-
-
-      if (
-        !title ||
-        !questionText
-      ) {
-
-        return res
-          .status(400)
-          .json({
-            message:
-              "title and question are required"
-          });
-
-      }
-
-
-      /* =====================================================
-         SCHOOL
-      ===================================================== */
-
-      const schoolId =
-        resolveCreateSchoolId(
-          req.user,
-          req.body.schoolId
-        );
-
-
-      if (
-        !schoolId
-      ) {
-
-        return res
-          .status(403)
-          .json({
-            message:
-              "A valid authorized school is required"
-          });
-
-      }
-
-
-      if (
-        !isValidObjectId(
-          schoolId
-        )
-      ) {
-
-        return res
-          .status(400)
-          .json({
-            message:
-              "Invalid schoolId"
-          });
-
-      }
-
-
-      if (
-        !canAccessSchool(
-          req.user,
-          schoolId
-        )
-      ) {
-
-        return res
-          .status(403)
-          .json({
-            message:
-              "Not allowed to create questions for this school"
-          });
-
-      }
-
-
-      /* =====================================================
-         OPTIONS
-
-         Normalize the Class Builder option format before
-         sending it into Mongoose.
-
-         Browser format:
-           {
-             id,
-             text,
-             isCorrect
-           }
-
-         Database format:
-           {
-             text,
-             isCorrect
-           }
-
-         Local UI IDs must never become ownership/database
-         identifiers.
-      ===================================================== */
-
-const options =
-  normalizeArray(
-    req.body.options
+  return normalizeArray(
+    value
   )
     .map(
-      (
-        option,
-        index
-      ) => {
+      option => {
 
         /* =================================================
-           LEGACY STRING OPTION
+           LEGACY STRING SUPPORT
         ================================================= */
 
-        if (
+        if(
           typeof option ===
           "string"
-        ) {
+        ){
 
           const text =
             safeString(
@@ -1507,9 +1108,9 @@ const options =
             );
 
 
-          if (
+          if(
             !text
-          ) {
+          ){
 
             return null;
 
@@ -1527,8 +1128,7 @@ const options =
             text,
 
             isCorrect:
-              index ===
-              0
+              false
 
           };
 
@@ -1536,7 +1136,7 @@ const options =
 
 
         /* =================================================
-           CLASS BUILDER OPTION
+           OBJECT OPTION
         ================================================= */
 
         const text =
@@ -1545,9 +1145,9 @@ const options =
           );
 
 
-        if (
+        if(
           !text
-        ) {
+        ){
 
           return null;
 
@@ -1568,8 +1168,9 @@ const options =
           text,
 
           isCorrect:
-            Boolean(
-              option?.isCorrect
+            safeBoolean(
+              option?.isCorrect,
+              false
             )
 
         };
@@ -1580,597 +1181,625 @@ const options =
       Boolean
     );
 
-
-      const type =
-        normalizeQuestionType(
-          req.body.type
-        );
+}
 
 
-      /* =====================================================
-         MULTIPLE-CHOICE VALIDATION
-      ===================================================== */
+/* =========================================================
+   NORMALIZE ATTACHMENTS
 
-      if (
-        type ===
-        "multiple_choice"
-      ) {
+   Matches models/QuestionBank.js:
 
-        if (
-          options.length <
-          2
-        ) {
+   {
+     type:image|video|audio|file,
+     url:String,
+     name:String
+   }
+========================================================= */
 
-          return res
-            .status(400)
-            .json({
-              message:
-                "Multiple-choice questions require at least two options"
-            });
+function normalizeQuestionAttachments(
+  value
+){
 
-        }
+  return normalizeArray(
+    value
+  )
+    .map(
+      attachment => {
 
-
-        if (
-          !options.some(
-            option =>
-              option.isCorrect ===
-              true
+        const type =
+          safeString(
+            attachment?.type
           )
-        ) {
+            .toLowerCase();
 
-          return res
-            .status(400)
-            .json({
-              message:
-                "Select the correct answer before saving the question"
-            });
+
+        const url =
+          safeString(
+            attachment?.url
+          );
+
+
+        const name =
+          safeString(
+            attachment?.name
+          );
+
+
+        if(
+          !ATTACHMENT_TYPES.has(
+            type
+          )
+        ){
+
+          return null;
 
         }
 
-      }
+
+        /*
+          Attachment schema allows empty url, but there is
+          little value storing an entirely empty attachment.
+        */
+
+        if(
+          !url &&
+          !name
+        ){
+
+          return null;
+
+        }
 
 
-      /* =====================================================
-         CREATE
-      ===================================================== */
-
-      const item =
-        await QuestionBank.create({
-
-          schoolId,
-
-          /*
-            Authoritative authenticated ownership.
-          */
-
-          createdBy:
-            req.user._id,
-
-          title,
-
-          question:
-            questionText,
+        return {
 
           type,
 
-          options,
+          url,
 
-          explanation:
-            safeString(
-              req.body.explanation
-            ),
+          name
 
-          points:
-            normalizeQuestionPoints(
-              req.body.points
-            ),
-
-          difficulty:
-            normalizeQuestionDifficulty(
-              req.body.difficulty
-            ),
-
-          bloom:
-            normalizeQuestionBloom(
-              req.body.bloom
-            ),
-
-          category:
-            safeString(
-              req.body.category,
-              "General"
-            ),
-
-          tags:
-            normalizeArray(
-              req.body.tags
-            )
-              .map(
-                tag =>
-                  safeString(
-                    tag
-                  )
-              )
-              .filter(
-                Boolean
-              ),
-
-          attachments:
-            normalizeArray(
-              req.body.attachments
-            ),
-
-          aiGenerated:
-            Boolean(
-              req.body.aiGenerated
-            ),
-
-          archived:
-            false
-
-        });
-
-
-      return res
-        .status(201)
-        .json(
-          item
-        );
-
-    } catch (
-      err
-    ) {
-
-      /*
-        Keep the complete error in Render logs.
-      */
-
-      console.error(
-        "POST /api/question-bank error:",
-        {
-          name:
-            err?.name,
-
-          code:
-            err?.code,
-
-          message:
-            err?.message,
-
-          errors:
-            err?.errors,
-
-          stack:
-            err?.stack
-        }
-      );
-
-
-      /* =====================================================
-         MONGOOSE VALIDATION
-      ===================================================== */
-
-      if (
-        err?.name ===
-        "ValidationError"
-      ) {
-
-        const firstError =
-          Object.values(
-            err.errors ||
-            {}
-          )[0];
-
-
-        return res
-          .status(400)
-          .json({
-            message:
-              firstError?.message ||
-              err.message ||
-              "Question validation failed"
-          });
+        };
 
       }
+    )
+    .filter(
+      Boolean
+    );
+
+}
 
 
-      /* =====================================================
-         CAST ERROR
-      ===================================================== */
+/* =========================================================
+   VALIDATE OPTIONS FOR QUESTION TYPE
+========================================================= */
 
-      if (
-        err?.name ===
-        "CastError"
-      ) {
+function validateQuestionOptions(
+  type,
+  options
+){
 
-        return res
-          .status(400)
-          .json({
-            message:
-              `Invalid ${err.path || "question"} value`
-          });
+  /* =====================================================
+     MULTIPLE CHOICE
+  ===================================================== */
 
-      }
+  if(
+    type ===
+    "multiple_choice"
+  ){
 
+    if(
+      options.length <
+      2
+    ){
 
-      /* =====================================================
-         DUPLICATE INDEX
-      ===================================================== */
+      return {
+        valid:
+          false,
 
-      if (
-        err?.code ===
-        11000
-      ) {
+        message:
+          "Multiple-choice questions require at least two answer options."
+      };
 
-        return res
-          .status(409)
-          .json({
-            message:
-              "A Question Bank item with this unique value already exists"
-          });
-
-      }
+    }
 
 
-      /* =====================================================
-         UNKNOWN SERVER ERROR
-      ===================================================== */
+    const correctCount =
+      options.filter(
+        option =>
+          option.isCorrect ===
+          true
+      ).length;
 
-      return res
-        .status(500)
-        .json({
-          message:
-            "Failed to create question"
-        });
+
+    if(
+      correctCount !==
+      1
+    ){
+
+      return {
+        valid:
+          false,
+
+        message:
+          "Multiple-choice questions require exactly one correct answer."
+      };
 
     }
 
   }
-);
 
-/* =========================================================
-   PATCH /api/question-bank/:id
-
-   schoolId and createdBy cannot be modified here.
-========================================================= */
-
-router.patch(
-  "/:id",
-  auth,
-  async (
-    req,
-    res
-  ) => {
-
-    try {
-
-      if (
-        !isValidObjectId(
-          req.params.id
-        )
-      ) {
-
-        return res
-          .status(
-            400
-          )
-          .json({
-            message:
-              "Invalid question ID"
-          });
-
-      }
-
-
-      const question =
-        await QuestionBank
-          .findById(
-            req.params.id
-          );
-
-
-      if (
-        !question
-      ) {
-
-        return res
-          .status(
-            404
-          )
-          .json({
-            message:
-              "Question not found"
-          });
-
-      }
-
-
-      if (
-        !canManageQuestion(
-          req.user,
-          question
-        )
-      ) {
-
-        return res
-          .status(
-            403
-          )
-          .json({
-            message:
-              "Not allowed to update this question"
-          });
-
-      }
-
-
-      const updates =
-        pick(
-          req.body,
-          [
-            "title",
-            "question",
-            "type",
-            "options",
-            "explanation",
-            "points",
-            "difficulty",
-            "bloom",
-            "category",
-            "tags",
-            "attachments",
-            "archived"
-          ]
-        );
-
-
-      /* ---------------------------------------------------
-         FIELD NORMALIZATION
-      --------------------------------------------------- */
-
-      if (
-        updates.title !==
-        undefined
-      ) {
-
-        updates.title =
-          safeString(
-            updates.title
-          );
-
-
-        if (
-          !updates.title
-        ) {
-
-          return res
-            .status(
-              400
-            )
-            .json({
-              message:
-                "Question title cannot be empty"
-            });
-
-        }
-
-      }
-
-
-      if (
-        updates.question !==
-        undefined
-      ) {
-
-        updates.question =
-          safeString(
-            updates.question
-          );
-
-
-        if (
-          !updates.question
-        ) {
-
-          return res
-            .status(
-              400
-            )
-            .json({
-              message:
-                "Question text cannot be empty"
-            });
-
-        }
-
-      }
-
-
-      if (
-        updates.type !==
-        undefined
-      ) {
-
-        updates.type =
-          normalizeQuestionType(
-            updates.type,
-            question.type ||
-            "multiple_choice"
-          );
-
-      }
-
-
-      if (
-        updates.options !==
-        undefined
-      ) {
-
-        updates.options =
-          normalizeArray(
-            updates.options
-          );
-
-      }
-
-
-      if (
-        updates.explanation !==
-        undefined
-      ) {
-
-        updates.explanation =
-          safeString(
-            updates.explanation
-          );
-
-      }
-
-
-      if (
-        updates.points !==
-        undefined
-      ) {
-
-        updates.points =
-          normalizeQuestionPoints(
-            updates.points
-          );
-
-      }
-
-
-      if (
-        updates.difficulty !==
-        undefined
-      ) {
-
-        updates.difficulty =
-          normalizeQuestionDifficulty(
-            updates.difficulty,
-            question.difficulty ||
-            "medium"
-          );
-
-      }
-
-
-      if (
-        updates.bloom !==
-        undefined
-      ) {
-
-        updates.bloom =
-          normalizeQuestionBloom(
-            updates.bloom,
-            question.bloom ||
-            "remember"
-          );
-
-      }
-
-
-      if (
-        updates.category !==
-        undefined
-      ) {
-
-        updates.category =
-          safeString(
-            updates.category,
-            "General"
-          );
-
-      }
-
-
-      if (
-        updates.tags !==
-        undefined
-      ) {
-
-        updates.tags =
-          normalizeArray(
-            updates.tags
-          );
-
-      }
-
-
-      if (
-        updates.attachments !==
-        undefined
-      ) {
-
-        updates.attachments =
-          normalizeArray(
-            updates.attachments
-          );
-
-      }
-
-
-      if (
-        updates.archived !==
-        undefined
-      ) {
-
-        updates.archived =
-          Boolean(
-            updates.archived
-          );
-
-      }
-
-
-      Object.entries(
-        updates
-      )
-        .forEach(
-          ([
-            field,
-            value
-          ]) => {
-
-            question[field] =
-              value;
-
-          }
-        );
-
-
-      /*
-        If the schema uses timestamps:true, Mongoose maintains
-        updatedAt automatically.
-
-        Setting it explicitly also keeps compatibility with
-        the existing model if timestamps are manually defined.
-      */
-
-      question.updatedAt =
-        new Date();
-
-
-      await question.save();
-
-
-      return res.json(
-        question
-      );
-
-} catch (
-  err
-) {
 
   /* =====================================================
-     FULL SERVER DIAGNOSTIC
-
-     This appears in Render logs.
+     CHECKBOX / MULTI-SELECT
   ===================================================== */
 
+  if(
+    type ===
+    "checkbox"
+  ){
+
+    if(
+      options.length <
+      2
+    ){
+
+      return {
+        valid:
+          false,
+
+        message:
+          "Checkbox questions require at least two answer options."
+      };
+
+    }
+
+
+    if(
+      !options.some(
+        option =>
+          option.isCorrect ===
+          true
+      )
+    ){
+
+      return {
+        valid:
+          false,
+
+        message:
+          "Checkbox questions require at least one correct answer."
+      };
+
+    }
+
+  }
+
+
+  /* =====================================================
+     TRUE / FALSE
+  ===================================================== */
+
+  if(
+    type ===
+    "true_false"
+  ){
+
+    if(
+      options.length
+    ){
+
+      const correctCount =
+        options.filter(
+          option =>
+            option.isCorrect ===
+            true
+        ).length;
+
+
+      if(
+        correctCount !==
+        1
+      ){
+
+        return {
+          valid:
+            false,
+
+          message:
+            "True/False questions require exactly one correct answer."
+        };
+
+      }
+
+    }
+
+  }
+
+
+  return {
+    valid:
+      true,
+
+    message:
+      ""
+  };
+
+}
+
+
+/* =========================================================
+   CREATE VERSION SNAPSHOT
+========================================================= */
+
+function appendQuestionVersion(
+  question,
+  userId
+){
+
+  if(
+    !question
+  ){
+
+    return;
+
+  }
+
+
+  const versions =
+    Array.isArray(
+      question.versions
+    )
+      ? question.versions
+      : [];
+
+
+  const lastVersion =
+    versions.length
+      ? Math.max(
+          ...versions
+            .map(
+              item =>
+                safeNumber(
+                  item?.version,
+                  0
+                )
+            )
+        )
+      : 0;
+
+
+  versions.push({
+
+    version:
+      lastVersion +
+      1,
+
+    updatedAt:
+      new Date(),
+
+    updatedBy:
+      userId
+
+  });
+
+
+  /*
+    Prevent unbounded metadata growth.
+  */
+
+  question.versions =
+    versions.slice(
+      -100
+    );
+
+}
+
+
+/* =========================================================
+   BUILD SAFE UPDATE OBJECT
+========================================================= */
+
+function buildQuestionUpdates(
+  body,
+  currentQuestion
+){
+
+  const updates =
+    {};
+
+
+  /* =====================================================
+     TITLE
+  ===================================================== */
+
+  if(
+    body.title !==
+    undefined
+  ){
+
+    const title =
+      safeString(
+        body.title
+      );
+
+
+    if(
+      !title
+    ){
+
+      const error =
+        new Error(
+          "Question title cannot be empty."
+        );
+
+      error.statusCode =
+        400;
+
+      throw error;
+
+    }
+
+
+    updates.title =
+      title;
+
+  }
+
+
+  /* =====================================================
+     QUESTION TEXT
+  ===================================================== */
+
+  if(
+    body.question !==
+    undefined
+  ){
+
+    const questionText =
+      safeString(
+        body.question
+      );
+
+
+    if(
+      !questionText
+    ){
+
+      const error =
+        new Error(
+          "Question text cannot be empty."
+        );
+
+      error.statusCode =
+        400;
+
+      throw error;
+
+    }
+
+
+    updates.question =
+      questionText;
+
+  }
+
+
+  /* =====================================================
+     TYPE
+  ===================================================== */
+
+  if(
+    body.type !==
+    undefined
+  ){
+
+    updates.type =
+      normalizeQuestionType(
+        body.type,
+        currentQuestion?.type ||
+        "multiple_choice"
+      );
+
+  }
+
+
+  /* =====================================================
+     OPTIONS
+  ===================================================== */
+
+  if(
+    body.options !==
+    undefined
+  ){
+
+    updates.options =
+      normalizeQuestionOptions(
+        body.options
+      );
+
+  }
+
+
+  /* =====================================================
+     EXPLANATION
+  ===================================================== */
+
+  if(
+    body.explanation !==
+    undefined
+  ){
+
+    updates.explanation =
+      safeString(
+        body.explanation
+      );
+
+  }
+
+
+  /* =====================================================
+     POINTS
+  ===================================================== */
+
+  if(
+    body.points !==
+    undefined
+  ){
+
+    updates.points =
+      normalizeQuestionPoints(
+        body.points,
+        currentQuestion?.points ||
+        1
+      );
+
+  }
+
+
+  /* =====================================================
+     DIFFICULTY
+  ===================================================== */
+
+  if(
+    body.difficulty !==
+    undefined
+  ){
+
+    updates.difficulty =
+      normalizeQuestionDifficulty(
+        body.difficulty,
+        currentQuestion?.difficulty ||
+        "medium"
+      );
+
+  }
+
+
+  /* =====================================================
+     BLOOM
+  ===================================================== */
+
+  if(
+    body.bloom !==
+    undefined
+  ){
+
+    updates.bloom =
+      normalizeQuestionBloom(
+        body.bloom,
+        currentQuestion?.bloom ||
+        "remember"
+      );
+
+  }
+
+
+  /* =====================================================
+     CATEGORY
+  ===================================================== */
+
+  if(
+    body.category !==
+    undefined
+  ){
+
+    updates.category =
+      safeString(
+        body.category,
+        "General"
+      );
+
+  }
+
+
+  /* =====================================================
+     TAGS
+  ===================================================== */
+
+  if(
+    body.tags !==
+    undefined
+  ){
+
+    updates.tags =
+      normalizeQuestionTags(
+        body.tags
+      );
+
+  }
+
+
+  /* =====================================================
+     ATTACHMENTS
+  ===================================================== */
+
+  if(
+    body.attachments !==
+    undefined
+  ){
+
+    updates.attachments =
+      normalizeQuestionAttachments(
+        body.attachments
+      );
+
+  }
+
+
+  /* =====================================================
+     AI GENERATED
+  ===================================================== */
+
+  if(
+    body.aiGenerated !==
+    undefined
+  ){
+
+    updates.aiGenerated =
+      safeBoolean(
+        body.aiGenerated,
+        false
+      );
+
+  }
+
+
+  /* =====================================================
+     ARCHIVED
+  ===================================================== */
+
+  if(
+    body.archived !==
+    undefined
+  ){
+
+    updates.archived =
+      safeBoolean(
+        body.archived,
+        false
+      );
+
+  }
+
+
+  return updates;
+
+}
+
+
+/* =========================================================
+   ERROR RESPONSE
+========================================================= */
+
+function sendQuestionBankError(
+  res,
+  err,
+  context
+){
+
   console.error(
-    "POST /api/question-bank error:",
+    context,
     {
 
       name:
@@ -2205,13 +1834,38 @@ router.patch(
 
 
   /* =====================================================
+     EXPLICIT HTTP ERROR
+  ===================================================== */
+
+  if(
+    Number.isInteger(
+      err?.statusCode
+    )
+  ){
+
+    return res
+      .status(
+        err.statusCode
+      )
+      .json({
+
+        message:
+          err.message ||
+          "Question Bank request failed"
+
+      });
+
+  }
+
+
+  /* =====================================================
      VALIDATION
   ===================================================== */
 
-  if (
+  if(
     err?.name ===
     "ValidationError"
-  ) {
+  ){
 
     const firstError =
       Object.values(
@@ -2238,13 +1892,13 @@ router.patch(
 
 
   /* =====================================================
-     INVALID OBJECT ID / CAST
+     CAST ERROR
   ===================================================== */
 
-  if (
+  if(
     err?.name ===
     "CastError"
-  ) {
+  ){
 
     return res
       .status(400)
@@ -2253,7 +1907,7 @@ router.patch(
         message:
           `Invalid ${
             err?.path ||
-            "question"
+            "Question Bank"
           } value`,
 
         errorType:
@@ -2265,19 +1919,15 @@ router.patch(
 
 
   /* =====================================================
-     MONGODB DUPLICATE INDEX
-
-     Important during schema migrations because an obsolete
-     unique index can remain in Atlas even when it no longer
-     exists in the Mongoose schema.
+     DUPLICATE INDEX
   ===================================================== */
 
-  if (
+  if(
     Number(
       err?.code
     ) ===
     11000
-  ) {
+  ){
 
     const duplicateField =
       Object.keys(
@@ -2293,7 +1943,7 @@ router.patch(
       .json({
 
         message:
-          `Question could not be created because of a duplicate database index on "${duplicateField}".`,
+          `A database uniqueness rule prevented this Question Bank operation on "${duplicateField}".`,
 
         errorType:
           "duplicate_index",
@@ -2307,15 +1957,15 @@ router.patch(
 
 
   /* =====================================================
-     MONGODB SERVER ERROR
+     DATABASE ERROR
   ===================================================== */
 
-  if (
+  if(
     err?.name ===
       "MongoServerError" ||
     err?.name ===
       "MongoError"
-  ) {
+  ){
 
     return res
       .status(500)
@@ -2323,7 +1973,7 @@ router.patch(
 
         message:
           err?.message ||
-          "MongoDB failed while creating the question.",
+          "MongoDB failed while processing the Question Bank request.",
 
         errorType:
           "database"
@@ -2333,17 +1983,13 @@ router.patch(
   }
 
 
-  /* =====================================================
-     UNKNOWN ERROR
-  ===================================================== */
-
   return res
     .status(500)
     .json({
 
       message:
         err?.message ||
-        "Failed to create question",
+        "Question Bank request failed",
 
       errorType:
         "server"
@@ -2352,11 +1998,1229 @@ router.patch(
 
 }
 
+
+/* =========================================================
+   GET QUESTION BANK
+   GET /api/question-bank
+========================================================= */
+
+router.get(
+  "/",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try{
+
+      const role =
+        normalizeRole(
+          req.user.role
+        );
+
+
+      const query =
+        {};
+
+
+      /* =====================================================
+         ADMIN
+      ===================================================== */
+
+      if(
+        role ===
+        "admin"
+      ){
+
+        if(
+          req.query.schoolId
+        ){
+
+          if(
+            !isValidObjectId(
+              req.query.schoolId
+            )
+          ){
+
+            return res
+              .status(400)
+              .json({
+                message:
+                  "Invalid schoolId"
+              });
+
+          }
+
+
+          query.schoolId =
+            normalizeId(
+              req.query.schoolId
+            );
+
+        }
+
+
+        /*
+          Admin may optionally inspect one creator.
+        */
+
+        if(
+          req.query.createdBy
+        ){
+
+          if(
+            !isValidObjectId(
+              req.query.createdBy
+            )
+          ){
+
+            return res
+              .status(400)
+              .json({
+                message:
+                  "Invalid createdBy"
+              });
+
+          }
+
+
+          query.createdBy =
+            normalizeId(
+              req.query.createdBy
+            );
+
+        }
+
+      }
+
+
+      /* =====================================================
+         SCHOOL
+
+         All questions belonging to the School.
+      ===================================================== */
+
+      else if(
+        role ===
+        "school"
+      ){
+
+        query.schoolId =
+          req.user._id;
+
+      }
+
+
+      /* =====================================================
+         TEACHER
+
+         Only questions created by this teacher.
+      ===================================================== */
+
+      else if(
+        role ===
+        "teacher"
+      ){
+
+        const schoolIds =
+          getUserSchoolIds(
+            req.user
+          );
+
+
+        if(
+          !schoolIds.length
+        ){
+
+          return res
+            .status(403)
+            .json({
+              message:
+                "Your teacher account is not linked to a School."
+            });
+
+        }
+
+
+        query.createdBy =
+          req.user._id;
+
+
+        if(
+          req.query.schoolId
+        ){
+
+          const requestedSchoolId =
+            normalizeId(
+              req.query.schoolId
+            );
+
+
+          if(
+            !canAccessSchool(
+              req.user,
+              requestedSchoolId
+            )
+          ){
+
+            return res
+              .status(403)
+              .json({
+                message:
+                  "Not allowed to access this School's Question Bank."
+              });
+
+          }
+
+
+          query.schoolId =
+            requestedSchoolId;
+
+        }else{
+
+          query.schoolId = {
+            $in:
+              schoolIds
+          };
+
+        }
+
+      }
+
+
+      /* =====================================================
+         OTHER ROLES
+      ===================================================== */
+
+      else{
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Not allowed to access Question Bank."
+          });
+
+      }
+
+
+      /* =====================================================
+         ARCHIVED
+      ===================================================== */
+
+      if(
+        req.query.archived !==
+        undefined
+      ){
+
+        query.archived =
+          safeBoolean(
+            req.query.archived,
+            false
+          );
+
+      }
+
+
+      /* =====================================================
+         CATEGORY
+      ===================================================== */
+
+      if(
+        req.query.category
+      ){
+
+        query.category =
+          safeString(
+            req.query.category
+          );
+
+      }
+
+
+      /* =====================================================
+         DIFFICULTY
+      ===================================================== */
+
+      if(
+        req.query.difficulty
+      ){
+
+        const difficulty =
+          safeString(
+            req.query.difficulty
+          )
+            .toLowerCase();
+
+
+        if(
+          !QUESTION_DIFFICULTIES.has(
+            difficulty
+          )
+        ){
+
+          return res
+            .status(400)
+            .json({
+              message:
+                "Invalid difficulty filter."
+            });
+
+        }
+
+
+        query.difficulty =
+          difficulty;
+
+      }
+
+
+      /* =====================================================
+         TYPE
+      ===================================================== */
+
+      if(
+        req.query.type
+      ){
+
+        const type =
+          safeString(
+            req.query.type
+          )
+            .toLowerCase();
+
+
+        if(
+          !QUESTION_TYPES.has(
+            type
+          )
+        ){
+
+          return res
+            .status(400)
+            .json({
+              message:
+                "Invalid question type filter."
+            });
+
+        }
+
+
+        query.type =
+          type;
+
+      }
+
+
+      /* =====================================================
+         SEARCH
+      ===================================================== */
+
+      if(
+        req.query.search
+      ){
+
+        const search =
+          escapeRegex(
+            safeString(
+              req.query.search
+            ).slice(
+              0,
+              200
+            )
+          );
+
+
+        if(
+          search
+        ){
+
+          query.$or = [
+
+            {
+              title:{
+                $regex:
+                  search,
+
+                $options:
+                  "i"
+              }
+            },
+
+            {
+              question:{
+                $regex:
+                  search,
+
+                $options:
+                  "i"
+              }
+            },
+
+            {
+              category:{
+                $regex:
+                  search,
+
+                $options:
+                  "i"
+              }
+            },
+
+            {
+              tags:{
+                $regex:
+                  search,
+
+                $options:
+                  "i"
+              }
+            }
+
+          ];
+
+        }
+
+      }
+
+
+      const questions =
+        await QuestionBank
+          .find(
+            query
+          )
+          .populate(
+            "createdBy",
+            "name email profileImage role"
+          )
+          .sort({
+            updatedAt:
+              -1,
+
+            createdAt:
+              -1
+          })
+          .lean();
+
+
+      return res.json(
+        questions
+      );
+
+    }catch(
+      err
+    ){
+
+      return sendQuestionBankError(
+        res,
+        err,
+        "GET /api/question-bank error"
+      );
+
+    }
+
   }
 );
 
 
 /* =========================================================
+   GET ONE QUESTION
+   GET /api/question-bank/:id
+========================================================= */
+
+router.get(
+  "/:id",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try{
+
+      if(
+        !isValidObjectId(
+          req.params.id
+        )
+      ){
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "Invalid question ID."
+          });
+
+      }
+
+
+      const question =
+        await QuestionBank
+          .findById(
+            req.params.id
+          )
+          .populate(
+            "createdBy",
+            "name email profileImage role"
+          )
+          .lean();
+
+
+      if(
+        !question
+      ){
+
+        return res
+          .status(404)
+          .json({
+            message:
+              "Question not found."
+          });
+
+      }
+
+
+      if(
+        !canReadQuestion(
+          req.user,
+          question
+        )
+      ){
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Not allowed to view this question."
+          });
+
+      }
+
+
+      return res.json(
+        question
+      );
+
+    }catch(
+      err
+    ){
+
+      return sendQuestionBankError(
+        res,
+        err,
+        "GET /api/question-bank/:id error"
+      );
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   CREATE QUESTION
+   POST /api/question-bank
+========================================================= */
+
+router.post(
+  "/",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try{
+
+      const role =
+        normalizeRole(
+          req.user.role
+        );
+
+
+      if(
+        ![
+          "admin",
+          "school",
+          "teacher"
+        ].includes(
+          role
+        )
+      ){
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Not allowed to create Question Bank items."
+          });
+
+      }
+
+
+      /* =====================================================
+         TITLE
+      ===================================================== */
+
+      const title =
+        safeString(
+          req.body.title
+        );
+
+
+      if(
+        !title
+      ){
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "Question title is required."
+          });
+
+      }
+
+
+      /* =====================================================
+         QUESTION TEXT
+      ===================================================== */
+
+      const questionText =
+        safeString(
+          req.body.question
+        );
+
+
+      if(
+        !questionText
+      ){
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "Question text is required."
+          });
+
+      }
+
+
+      /* =====================================================
+         SCHOOL OWNERSHIP
+      ===================================================== */
+
+      const schoolId =
+        resolveCreateSchoolId(
+          req.user,
+          req.body.schoolId
+        );
+
+
+      if(
+        !schoolId
+      ){
+
+        return res
+          .status(403)
+          .json({
+            message:
+              role ===
+              "admin"
+                ? "A valid School ID is required."
+                : "A valid authorized School is required."
+          });
+
+      }
+
+
+      if(
+        !isValidObjectId(
+          schoolId
+        )
+      ){
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "Invalid schoolId."
+          });
+
+      }
+
+
+      if(
+        !canAccessSchool(
+          req.user,
+          schoolId
+        )
+      ){
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Not allowed to create questions for this School."
+          });
+
+      }
+
+
+      /* =====================================================
+         QUESTION CONTENT
+      ===================================================== */
+
+      const type =
+        normalizeQuestionType(
+          req.body.type
+        );
+
+
+      const options =
+        normalizeQuestionOptions(
+          req.body.options
+        );
+
+
+      const optionValidation =
+        validateQuestionOptions(
+          type,
+          options
+        );
+
+
+      if(
+        !optionValidation.valid
+      ){
+
+        return res
+          .status(400)
+          .json({
+            message:
+              optionValidation.message
+          });
+
+      }
+
+
+      /* =====================================================
+         CREATE
+
+         createdBy intentionally ignores req.body.createdBy.
+      ===================================================== */
+
+      const question =
+        await QuestionBank.create({
+
+          schoolId,
+
+          createdBy:
+            req.user._id,
+
+          title,
+
+          question:
+            questionText,
+
+          type,
+
+          options,
+
+          explanation:
+            safeString(
+              req.body.explanation
+            ),
+
+          points:
+            normalizeQuestionPoints(
+              req.body.points,
+              1
+            ),
+
+          difficulty:
+            normalizeQuestionDifficulty(
+              req.body.difficulty
+            ),
+
+          bloom:
+            normalizeQuestionBloom(
+              req.body.bloom
+            ),
+
+          category:
+            safeString(
+              req.body.category,
+              "General"
+            ),
+
+          tags:
+            normalizeQuestionTags(
+              req.body.tags
+            ),
+
+          attachments:
+            normalizeQuestionAttachments(
+              req.body.attachments
+            ),
+
+          aiGenerated:
+            safeBoolean(
+              req.body.aiGenerated,
+              false
+            ),
+
+          usageCount:
+            0,
+
+          versions:[
+            {
+
+              version:
+                1,
+
+              updatedAt:
+                new Date(),
+
+              updatedBy:
+                req.user._id
+
+            }
+          ],
+
+          archived:
+            false
+
+        });
+
+
+      const populated =
+        await QuestionBank
+          .findById(
+            question._id
+          )
+          .populate(
+            "createdBy",
+            "name email profileImage role"
+          )
+          .lean();
+
+
+      return res
+        .status(201)
+        .json(
+          populated
+        );
+
+    }catch(
+      err
+    ){
+
+      return sendQuestionBankError(
+        res,
+        err,
+        "POST /api/question-bank error"
+      );
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   UPDATE QUESTION
+   PATCH /api/question-bank/:id
+========================================================= */
+
+router.patch(
+  "/:id",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try{
+
+      if(
+        !isValidObjectId(
+          req.params.id
+        )
+      ){
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "Invalid question ID."
+          });
+
+      }
+
+
+      const question =
+        await QuestionBank.findById(
+          req.params.id
+        );
+
+
+      if(
+        !question
+      ){
+
+        return res
+          .status(404)
+          .json({
+            message:
+              "Question not found."
+          });
+
+      }
+
+
+      if(
+        !canManageQuestion(
+          req.user,
+          question
+        )
+      ){
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Not allowed to update this question."
+          });
+
+      }
+
+
+      /* =====================================================
+         OWNERSHIP IS IMMUTABLE
+
+         schoolId and createdBy are deliberately ignored.
+      ===================================================== */
+
+      const updates =
+        buildQuestionUpdates(
+          req.body,
+          question
+        );
+
+
+      /* =====================================================
+         DETERMINE RESULTING TYPE / OPTIONS
+
+         Needed because type and options may be changed
+         independently in the same PATCH.
+      ===================================================== */
+
+      const resultingType =
+        updates.type ??
+        question.type;
+
+
+      const resultingOptions =
+        updates.options ??
+        normalizeQuestionOptions(
+          question.options
+        );
+
+
+      const optionValidation =
+        validateQuestionOptions(
+          resultingType,
+          resultingOptions
+        );
+
+
+      if(
+        !optionValidation.valid
+      ){
+
+        return res
+          .status(400)
+          .json({
+            message:
+              optionValidation.message
+          });
+
+      }
+
+
+      /* =====================================================
+         VERSION
+      ===================================================== */
+
+      appendQuestionVersion(
+        question,
+        req.user._id
+      );
+
+
+      /* =====================================================
+         APPLY CHANGES
+      ===================================================== */
+
+      Object.entries(
+        updates
+      )
+        .forEach(
+          ([
+            field,
+            value
+          ]) => {
+
+            question[
+              field
+            ] =
+              value;
+
+          }
+        );
+
+
+      await question.save();
+
+
+      const populated =
+        await QuestionBank
+          .findById(
+            question._id
+          )
+          .populate(
+            "createdBy",
+            "name email profileImage role"
+          )
+          .lean();
+
+
+      return res.json(
+        populated
+      );
+
+    }catch(
+      err
+    ){
+
+      return sendQuestionBankError(
+        res,
+        err,
+        "PATCH /api/question-bank/:id error"
+      );
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   ARCHIVE QUESTION
+   PATCH /api/question-bank/:id/archive
+========================================================= */
+
+router.patch(
+  "/:id/archive",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try{
+
+      if(
+        !isValidObjectId(
+          req.params.id
+        )
+      ){
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "Invalid question ID."
+          });
+
+      }
+
+
+      const question =
+        await QuestionBank.findById(
+          req.params.id
+        );
+
+
+      if(
+        !question
+      ){
+
+        return res
+          .status(404)
+          .json({
+            message:
+              "Question not found."
+          });
+
+      }
+
+
+      if(
+        !canManageQuestion(
+          req.user,
+          question
+        )
+      ){
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Not allowed to archive this question."
+          });
+
+      }
+
+
+      appendQuestionVersion(
+        question,
+        req.user._id
+      );
+
+
+      question.archived =
+        true;
+
+
+      await question.save();
+
+
+      return res.json(
+        question
+      );
+
+    }catch(
+      err
+    ){
+
+      return sendQuestionBankError(
+        res,
+        err,
+        "PATCH /api/question-bank/:id/archive error"
+      );
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   RESTORE QUESTION
+   PATCH /api/question-bank/:id/restore
+========================================================= */
+
+router.patch(
+  "/:id/restore",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try{
+
+      if(
+        !isValidObjectId(
+          req.params.id
+        )
+      ){
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "Invalid question ID."
+          });
+
+      }
+
+
+      const question =
+        await QuestionBank.findById(
+          req.params.id
+        );
+
+
+      if(
+        !question
+      ){
+
+        return res
+          .status(404)
+          .json({
+            message:
+              "Question not found."
+          });
+
+      }
+
+
+      if(
+        !canManageQuestion(
+          req.user,
+          question
+        )
+      ){
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Not allowed to restore this question."
+          });
+
+      }
+
+
+      appendQuestionVersion(
+        question,
+        req.user._id
+      );
+
+
+      question.archived =
+        false;
+
+
+      await question.save();
+
+
+      return res.json(
+        question
+      );
+
+    }catch(
+      err
+    ){
+
+      return sendQuestionBankError(
+        res,
+        err,
+        "PATCH /api/question-bank/:id/restore error"
+      );
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   DELETE QUESTION
    DELETE /api/question-bank/:id
 ========================================================= */
 
@@ -2368,99 +3232,88 @@ router.delete(
     res
   ) => {
 
-    try {
+    try{
 
-      if (
+      if(
         !isValidObjectId(
           req.params.id
         )
-      ) {
+      ){
 
         return res
-          .status(
-            400
-          )
+          .status(400)
           .json({
             message:
-              "Invalid question ID"
+              "Invalid question ID."
           });
 
       }
 
 
       const question =
-        await QuestionBank
-          .findById(
-            req.params.id
-          );
+        await QuestionBank.findById(
+          req.params.id
+        );
 
 
-      if (
+      if(
         !question
-      ) {
+      ){
 
         return res
-          .status(
-            404
-          )
+          .status(404)
           .json({
             message:
-              "Question not found"
+              "Question not found."
           });
 
       }
 
 
-      if (
+      if(
         !canManageQuestion(
           req.user,
           question
         )
-      ) {
+      ){
 
         return res
-          .status(
-            403
-          )
+          .status(403)
           .json({
             message:
-              "Not allowed to delete this question"
+              "Not allowed to delete this question."
           });
 
       }
+
+
+      const questionId =
+        normalizeId(
+          question._id
+        );
 
 
       await question.deleteOne();
 
 
       return res.json({
-        message:
-          "Question deleted",
 
-        questionId:
-          normalizeId(
-            question._id
-          )
+        message:
+          "Question deleted.",
+
+        questionId
+
       });
 
-    } catch (
+    }catch(
       err
-    ) {
+    ){
 
-      console.error(
-        "DELETE question error:",
-        err
+      return sendQuestionBankError(
+        res,
+        err,
+        "DELETE /api/question-bank/:id error"
       );
-
-
-      return res
-        .status(
-          500
-        )
-        .json({
-          message:
-            "Failed to delete question"
-        });
 
     }
 
@@ -2468,4 +3321,5 @@ router.delete(
 );
 
 
-module.exports = router;
+module.exports =
+  router;
