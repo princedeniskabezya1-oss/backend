@@ -9,6 +9,15 @@ const auth = require("../middleware/auth");
 const Schedule = require("../models/Schedule");
 const Class = require("../models/Class");
 
+const {
+  initializeScheduleAttendance,
+  finalizeScheduleAttendance,
+  synchronizeScheduleAttendanceSummary,
+  synchronizeRescheduledAttendance,
+  handleCancelledScheduleAttendance
+} = require("../services/scheduleAttendance");
+
+
 
 /* =========================================================
    CONSTANTS
@@ -2264,15 +2273,48 @@ router.post(
       schedule.missedDetectedAutomatically =
         false;
 
-      schedule.lastActivityAt =
-        now;
+schedule.lastActivityAt =
+  now;
 
-      await schedule.save();
+await schedule.save();
 
-      const populated =
-        await populateSchedule(
-          schedule._id
-        );
+
+/* =====================================================
+   INITIALIZE STUDENT ATTENDANCE
+
+   Every currently enrolled student gets one attendance
+   record for this Schedule with:
+
+     status = pending
+
+   Nobody is falsely marked present.
+===================================================== */
+
+await initializeScheduleAttendance(
+  schedule,
+  {
+    markedBy:
+      req.user._id,
+
+    source:
+      "schedule"
+  }
+);
+
+
+/* =====================================================
+   SYNC SCHEDULE ATTENDANCE COUNTERS
+===================================================== */
+
+await synchronizeScheduleAttendanceSummary(
+  schedule
+);
+
+
+const populated =
+  await populateSchedule(
+    schedule._id
+  );
 
       emitScheduleEvent(
         req,
@@ -2487,15 +2529,40 @@ router.post(
           now;
       }
 
-      schedule.lastActivityAt =
-        now;
+schedule.lastActivityAt =
+  now;
 
-      await schedule.save();
+await schedule.save();
 
-      const populated =
-        await populateSchedule(
-          schedule._id
-        );
+
+/* =====================================================
+   FINALIZE STUDENT ATTENDANCE
+
+   Any student still marked:
+
+     pending
+
+   becomes:
+
+     absent
+
+   Existing present / late / excused / absent records stay
+   unchanged.
+===================================================== */
+
+await finalizeScheduleAttendance(
+  schedule,
+  {
+    finalizedBy:
+      req.user._id
+  }
+);
+
+
+const populated =
+  await populateSchedule(
+    schedule._id
+  );
 
       emitScheduleEvent(
         req,
@@ -2671,15 +2738,32 @@ router.post(
             : "Teacher cancelled session";
       }
 
-      schedule.lastActivityAt =
-        now;
+schedule.lastActivityAt =
+  now;
 
-      await schedule.save();
+await schedule.save();
 
-      const populated =
-        await populateSchedule(
-          schedule._id
-        );
+
+/* =====================================================
+   CANCELLED SESSION ATTENDANCE
+
+   A cancelled class must NOT create student absences.
+
+   Untouched pending attendance rows are removed.
+
+   Real attendance activity, if any somehow exists, is
+   preserved for audit.
+===================================================== */
+
+await handleCancelledScheduleAttendance(
+  schedule
+);
+
+
+const populated =
+  await populateSchedule(
+    schedule._id
+  );
 
       emitScheduleEvent(
         req,
@@ -2989,19 +3073,41 @@ router.post(
             : "Teacher rescheduled session";
       }
 
-      synchronizeScheduleTimes(
-        schedule
-      );
+synchronizeScheduleTimes(
+  schedule
+);
 
-      schedule.lastActivityAt =
-        now;
+schedule.lastActivityAt =
+  now;
 
-      await schedule.save();
+await schedule.save();
 
-      const populated =
-        await populateSchedule(
-          schedule._id
-        );
+
+/* =====================================================
+   RESCHEDULE ATTENDANCE
+
+   If attendance only contains untouched pending rows,
+   move those rows to the new session date.
+
+   If real participation already exists, the service throws
+   a conflict instead of silently rewriting attendance
+   history.
+===================================================== */
+
+await synchronizeRescheduledAttendance(
+  schedule
+);
+
+
+await synchronizeScheduleAttendanceSummary(
+  schedule
+);
+
+
+const populated =
+  await populateSchedule(
+    schedule._id
+  );
 
       emitScheduleEvent(
         req,
@@ -3039,19 +3145,34 @@ router.post(
         populated
       );
 
-    } catch (err) {
-      console.error(
-        "POST /api/schedules/:id/reschedule error:",
-        err
-      );
+} catch (err) {
 
-      return res
-        .status(500)
-        .json({
-          message:
-            "Failed to reschedule session"
-        });
-    }
+  console.error(
+    "POST /api/schedules/:id/reschedule error:",
+    err
+  );
+
+
+  const statusCode =
+    Number(
+      err?.statusCode
+    ) ||
+    500;
+
+
+  return res
+    .status(
+      statusCode
+    )
+    .json({
+      message:
+        statusCode ===
+        500
+          ? "Failed to reschedule session"
+          : err.message
+    });
+
+}
   }
 );
 
