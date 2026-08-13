@@ -44,6 +44,7 @@ const mongoose =
 ========================================================= */
 
 const ATTENDANCE_STATUSES = [
+  "pending",
   "present",
   "late",
   "absent",
@@ -206,7 +207,7 @@ const AttendanceSchema =
           ATTENDANCE_STATUSES,
 
         default:
-          "present",
+  "pending",
 
         required:
           true,
