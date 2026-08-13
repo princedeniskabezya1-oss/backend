@@ -811,15 +811,36 @@ router.post(
       }
 
 
-      const record =
-        await Attendance.findOneAndUpdate(
-          {
-            schoolId,
-            classId:
-              classDoc._id,
-            studentId,
-            date
-          },
+const attendanceIdentity =
+  scheduleId
+    ? {
+        schoolId,
+
+        classId:
+          classDoc._id,
+
+        studentId,
+
+        scheduleId
+      }
+    : {
+        schoolId,
+
+        classId:
+          classDoc._id,
+
+        studentId,
+
+        scheduleId:
+          null,
+
+        date
+      };
+
+
+const record =
+  await Attendance.findOneAndUpdate(
+    attendanceIdentity,
           {
             schoolId,
 
@@ -1583,53 +1604,85 @@ router.post(
               );
 
 
-            return {
-              updateOne: {
-                filter: {
-                  schoolId,
+const attendanceIdentity =
+  scheduleId
+    ? {
+        schoolId,
 
-                  classId:
-                    classDoc._id,
+        classId:
+          classDoc._id,
 
-                  studentId,
+        studentId,
 
-                  date
-                },
+        scheduleId
+      }
+    : {
+        schoolId,
 
-                update: {
-                  $set: {
-                    schoolId,
+        classId:
+          classDoc._id,
 
-                    classId:
-                      classDoc._id,
+        studentId,
 
-                    teacherId,
+        scheduleId:
+          null,
 
-                    studentId,
+        date
+      };
 
-                    scheduleId,
 
-                    date,
+return {
+  updateOne: {
+    filter:
+      attendanceIdentity,
 
-                    status,
+    update: {
+      $set: {
+        schoolId,
 
-                    participationScore,
+        classId:
+          classDoc._id,
 
-                    notes:
-                      item.notes ||
-                      "",
+        teacherId,
 
-                    markedBy,
+        studentId,
 
-                    source:
-                      "bulk"
-                  }
-                },
+        scheduleId:
+          scheduleId ||
+          null,
 
-                upsert:
-                  true
-              }
-            };
+        date,
+
+        status,
+
+        participationScore,
+
+        notes:
+          item.notes ||
+          "",
+
+        markedBy,
+
+        markedAt:
+          new Date(),
+
+        source:
+          scheduleId
+            ? "schedule"
+            : "bulk",
+
+        attendanceFinalized:
+          false,
+
+        lastActivityAt:
+          new Date()
+      }
+    },
+
+    upsert:
+      true
+  }
+};
           })
           .filter(Boolean);
 
