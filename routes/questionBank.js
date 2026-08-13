@@ -2113,44 +2113,198 @@ router.patch(
         question
       );
 
-    } catch (
-      err
-    ) {
+} catch (
+  err
+) {
 
-      console.error(
-        "PATCH question error:",
-        err
-      );
+  /* =====================================================
+     FULL SERVER DIAGNOSTIC
 
+     This appears in Render logs.
+  ===================================================== */
 
-      if (
-        err?.name ===
-        "ValidationError"
-      ) {
+  console.error(
+    "POST /api/question-bank error:",
+    {
 
-        return res
-          .status(
-            400
-          )
-          .json({
-            message:
-              err.message ||
-              "Question validation failed"
-          });
+      name:
+        err?.name,
 
-      }
+      code:
+        err?.code,
 
+      message:
+        err?.message,
 
-      return res
-        .status(
-          500
-        )
-        .json({
-          message:
-            "Failed to update question"
-        });
+      path:
+        err?.path,
+
+      value:
+        err?.value,
+
+      keyPattern:
+        err?.keyPattern,
+
+      keyValue:
+        err?.keyValue,
+
+      errors:
+        err?.errors,
+
+      stack:
+        err?.stack
 
     }
+  );
+
+
+  /* =====================================================
+     VALIDATION
+  ===================================================== */
+
+  if (
+    err?.name ===
+    "ValidationError"
+  ) {
+
+    const firstError =
+      Object.values(
+        err.errors ||
+        {}
+      )[0];
+
+
+    return res
+      .status(400)
+      .json({
+
+        message:
+          firstError?.message ||
+          err.message ||
+          "Question validation failed",
+
+        errorType:
+          "validation"
+
+      });
+
+  }
+
+
+  /* =====================================================
+     INVALID OBJECT ID / CAST
+  ===================================================== */
+
+  if (
+    err?.name ===
+    "CastError"
+  ) {
+
+    return res
+      .status(400)
+      .json({
+
+        message:
+          `Invalid ${
+            err?.path ||
+            "question"
+          } value`,
+
+        errorType:
+          "cast"
+
+      });
+
+  }
+
+
+  /* =====================================================
+     MONGODB DUPLICATE INDEX
+
+     Important during schema migrations because an obsolete
+     unique index can remain in Atlas even when it no longer
+     exists in the Mongoose schema.
+  ===================================================== */
+
+  if (
+    Number(
+      err?.code
+    ) ===
+    11000
+  ) {
+
+    const duplicateField =
+      Object.keys(
+        err?.keyPattern ||
+        err?.keyValue ||
+        {}
+      )[0] ||
+      "unknown";
+
+
+    return res
+      .status(409)
+      .json({
+
+        message:
+          `Question could not be created because of a duplicate database index on "${duplicateField}".`,
+
+        errorType:
+          "duplicate_index",
+
+        field:
+          duplicateField
+
+      });
+
+  }
+
+
+  /* =====================================================
+     MONGODB SERVER ERROR
+  ===================================================== */
+
+  if (
+    err?.name ===
+      "MongoServerError" ||
+    err?.name ===
+      "MongoError"
+  ) {
+
+    return res
+      .status(500)
+      .json({
+
+        message:
+          err?.message ||
+          "MongoDB failed while creating the question.",
+
+        errorType:
+          "database"
+
+      });
+
+  }
+
+
+  /* =====================================================
+     UNKNOWN ERROR
+  ===================================================== */
+
+  return res
+    .status(500)
+    .json({
+
+      message:
+        err?.message ||
+        "Failed to create question",
+
+      errorType:
+        "server"
+
+    });
+
+}
 
   }
 );
