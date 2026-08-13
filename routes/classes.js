@@ -224,91 +224,293 @@ function canViewClassBuilder(
   user,
   classDoc
 ) {
-  if (!user || !classDoc) {
+
+  if (
+    !user ||
+    !classDoc
+  ) {
     return false;
   }
 
+
   const role =
-    normalizeRole(user.role);
+    normalizeRole(
+      user.role
+    );
+
 
   const userId =
-    normalizeObjectId(user._id);
+    normalizeObjectId(
+      user._id
+    );
+
 
   const classSchoolId =
     normalizeObjectId(
       classDoc.schoolId
     );
 
+
   const classTeacherId =
     normalizeObjectId(
       classDoc.teacherId
     );
 
-  const studentIds =
-    Array.isArray(
-      classDoc.studentIds
-    )
-      ? classDoc.studentIds
-          .map(normalizeObjectId)
-          .filter(Boolean)
-      : [];
 
-  /*
-    ADMIN
+  /* =====================================================
+     ADMIN
 
-    Administrators may inspect every class builder.
-  */
-  if (role === "admin") {
+     Platform administrators may inspect any Class Builder.
+  ===================================================== */
+
+  if (
+    role ===
+    "admin"
+  ) {
     return true;
   }
 
-  /*
-    SCHOOL
 
-    A school account may access builders belonging
-    to that school.
-  */
-  if (role === "school") {
-    return getUserSchoolIds(user)
-      .includes(classSchoolId);
+  /* =====================================================
+     SCHOOL
+
+     Only the owning School account may open its Builder.
+  ===================================================== */
+
+  if (
+    role ===
+    "school"
+  ) {
+
+    return getUserSchoolIds(
+      user
+    ).includes(
+      classSchoolId
+    );
+
   }
 
-  /*
-    TEACHER
 
-    Teachers may only access a class builder when
-    they are the teacher explicitly assigned to
-    that class.
+  /* =====================================================
+     TEACHER
 
-    Belonging to the same school alone does NOT
-    grant builder access.
-  */
-  if (role === "teacher") {
+     Teachers only receive Builder access when they are
+     explicitly assigned as this class's teacher.
+
+     Same-school membership alone is NEVER enough.
+  ===================================================== */
+
+  if (
+    role ===
+    "teacher"
+  ) {
+
     return (
       Boolean(userId) &&
       Boolean(classTeacherId) &&
-      classTeacherId === userId
+      userId ===
+        classTeacherId
     );
+
   }
 
-  /*
-    STUDENT
 
-    Students may access class learning information
-    only when they are enrolled in the class.
+  /* =====================================================
+     STUDENT / OTHER ROLES
 
-    Write permissions are handled separately by
-    the protected mutation routes.
-  */
-  if (role === "student") {
-    return (
-      Boolean(userId) &&
-      studentIds.includes(userId)
-    );
-  }
+     Students do not use the authoring Class Builder.
+
+     Student classroom/progress routes must be used instead.
+  ===================================================== */
 
   return false;
+
 }
+
+/* =========================================================
+   CLASS BUILDER PERMISSION MATRIX
+
+   These permissions are returned to Class Builder so the
+   frontend can hide School-only controls.
+
+   IMPORTANT:
+   Backend mutation routes must still enforce permission.
+========================================================= */
+
+function getClassBuilderPermissions(
+  user,
+  classDoc
+) {
+
+  const role =
+    normalizeRole(
+      user?.role
+    );
+
+
+  const instructionalAccess =
+    canManageAssignedClass(
+      user,
+      classDoc
+    );
+
+
+  const schoolManagement =
+    canManageSchool(
+      user,
+      classDoc?.schoolId
+    );
+
+
+  const isAdmin =
+    role ===
+    "admin";
+
+
+  const isSchool =
+    role ===
+    "school";
+
+
+  const isTeacher =
+    role ===
+    "teacher";
+
+
+  return {
+
+    role,
+
+    /* =====================================================
+       BUILDER
+    ===================================================== */
+
+    canViewBuilder:
+      canViewClassBuilder(
+        user,
+        classDoc
+      ),
+
+
+    /* =====================================================
+       INSTRUCTIONAL CONTENT
+
+       School/admin/assigned teacher
+    ===================================================== */
+
+    canManageInstruction:
+      instructionalAccess,
+
+    canManageModules:
+      instructionalAccess,
+
+    canManageLessons:
+      instructionalAccess,
+
+    canManageAssignments:
+      instructionalAccess,
+
+    canManageQuizzes:
+      instructionalAccess,
+
+    canManagePresentations:
+      instructionalAccess,
+
+    canManageMedia:
+      instructionalAccess,
+
+    canManageProjectCanvas:
+      instructionalAccess,
+
+    canManageContentBlocks:
+      instructionalAccess,
+
+
+    /* =====================================================
+       TEACHING DATA
+
+       Assigned teacher needs these for teaching/grading.
+    ===================================================== */
+
+    canViewStudents:
+      instructionalAccess,
+
+    canViewSubmissions:
+      instructionalAccess,
+
+    canViewAttendance:
+      instructionalAccess,
+
+    canViewProgress:
+      instructionalAccess,
+
+    canViewAnalytics:
+      instructionalAccess,
+
+    canGradeStudents:
+      instructionalAccess,
+
+    canManageAttendance:
+      instructionalAccess,
+
+
+    /* =====================================================
+       SCHOOL-LEVEL CLASS ADMINISTRATION
+
+       Assigned teachers are intentionally excluded.
+    ===================================================== */
+
+    canEditClassIdentity:
+      schoolManagement,
+
+    canAssignTeacher:
+      schoolManagement,
+
+    canManageEnrollment:
+      schoolManagement,
+
+    canManagePublishing:
+      schoolManagement,
+
+    canPublishClass:
+      schoolManagement,
+
+    canArchiveClass:
+      schoolManagement,
+
+    canDeleteClass:
+      schoolManagement,
+
+    canManageAppearance:
+      schoolManagement,
+
+    canManageNotificationSettings:
+      schoolManagement,
+
+    canManageAdvancedSettings:
+      schoolManagement,
+
+    canTransferOwnership:
+      isAdmin ||
+      isSchool,
+
+
+    /* =====================================================
+       ROLE FLAGS
+    ===================================================== */
+
+    isAdmin,
+
+    isSchool,
+
+    isTeacher
+
+  };
+
+}
+
+
+
 
 function normalizeArray(value) {
   if (Array.isArray(value)) return value.filter(Boolean);
@@ -1143,48 +1345,227 @@ function uploadClassCover(file) {
 /* ============================================
    GET CLASSES
    GET /api/classes
+
+   ACCESS MODEL
+
+   ADMIN
+     May query across schools.
+
+   SCHOOL
+     Only classes owned by that School.
+
+   TEACHER
+     Only classes explicitly assigned to that teacher.
+
+   STUDENT
+     Only classes where that student is enrolled.
 ============================================ */
-router.get("/", auth, async (req, res) => {
-  try {
-    const user = req.user;
 
-    const query = {};
+router.get(
+  "/",
+  auth,
+  async (
+    req,
+    res
+  ) => {
 
-    if (user.role === "admin") {
-      if (req.query.schoolId) query.schoolId = req.query.schoolId;
-    } else if (user.role === "school") {
-      query.schoolId = user._id;
-    } else if (user.role === "teacher") {
-      query.$or = [
-        { teacherId: user._id },
-        { schoolId: user.schoolId || user.linkedSchoolId }
-      ];
-    } else if (user.role === "student") {
-      query.$or = [
-        { studentIds: user._id },
-        { schoolId: user.schoolId || user.linkedSchoolId }
-      ];
-    } else if (req.query.schoolId) {
-      query.schoolId = req.query.schoolId;
+    try {
+
+      const user =
+        req.user;
+
+
+      const role =
+        normalizeRole(
+          user.role
+        );
+
+
+      const query = {};
+
+
+      /* =================================================
+         ADMIN
+      ================================================= */
+
+      if (
+        role ===
+        "admin"
+      ) {
+
+        if (
+          req.query.schoolId
+        ) {
+
+          query.schoolId =
+            req.query.schoolId;
+
+        }
+
+
+        if (
+          req.query.teacherId
+        ) {
+
+          query.teacherId =
+            req.query.teacherId;
+
+        }
+
+      }
+
+
+      /* =================================================
+         SCHOOL
+      ================================================= */
+
+      else if (
+        role ===
+        "school"
+      ) {
+
+        query.schoolId =
+          user._id;
+
+
+        /*
+          School accounts may optionally filter their own
+          classes by teacher.
+        */
+
+        if (
+          req.query.teacherId
+        ) {
+
+          query.teacherId =
+            req.query.teacherId;
+
+        }
+
+      }
+
+
+      /* =================================================
+         TEACHER
+      ================================================= */
+
+      else if (
+        role ===
+        "teacher"
+      ) {
+
+        /*
+          IMPORTANT:
+
+          Do not use schoolId here.
+
+          A teacher connected to School A must NOT receive
+          every class belonging to School A.
+        */
+
+        query.teacherId =
+          user._id;
+
+      }
+
+
+      /* =================================================
+         STUDENT
+      ================================================= */
+
+      else if (
+        role ===
+        "student"
+      ) {
+
+        /*
+          Students only receive classes in which they are
+          explicitly enrolled.
+        */
+
+        query.studentIds =
+          user._id;
+
+      }
+
+
+      /* =================================================
+         UNKNOWN ROLE
+      ================================================= */
+
+      else {
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Not allowed to view classes"
+          });
+
+      }
+
+
+      /* =================================================
+         OPTIONAL STATUS FILTER
+      ================================================= */
+
+      if (
+        req.query.status
+      ) {
+
+        query.status =
+          req.query.status;
+
+      }
+
+
+      const classes =
+        await Class.find(
+          query
+        )
+          .populate(
+            "schoolId",
+            "name schoolName profileImage schoolLogo"
+          )
+          .populate(
+            "teacherId",
+            "name email profileImage subject department"
+          )
+          .populate(
+            "studentIds",
+            "name email profileImage course"
+          )
+          .sort({
+            createdAt:
+              -1
+          });
+
+
+      return res.json(
+        classes
+      );
+
+    } catch (
+      err
+    ) {
+
+      console.error(
+        "GET /api/classes error:",
+        err
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          message:
+            "Failed to load classes"
+        });
+
     }
 
-    if (req.query.teacherId) query.teacherId = req.query.teacherId;
-    if (req.query.status) query.status = req.query.status;
-
-    const classes = await Class.find(query)
-      .populate("schoolId", "name schoolName profileImage schoolLogo")
-      .populate("teacherId", "name email profileImage subject department")
-      .populate("studentIds", "name email profileImage course")
-      .sort({ createdAt: -1 });
-
-    return res.json(classes);
-  } catch (err) {
-    console.error("GET /api/classes error:", err);
-    return res.status(500).json({
-      message: "Failed to load classes"
-    });
   }
-});
+);
 
 /* ============================================
    GET CLASS BY ID
@@ -1489,223 +1870,366 @@ router.delete("/:id", auth, async (req, res) => {
    CLASS BUILDER DASHBOARD
    GET /api/classes/:id/builder
 ===================================================== */
-router.get("/:id/builder", auth, async (req, res) => {
-  try {
-    const classId = req.params.id;
 
-    const classDoc = await Class.findById(classId)
-      .populate("schoolId", "name schoolName profileImage schoolLogo")
-      .populate("teacherId", "name email profileImage avatar role subject department")
-      .populate("studentIds", "name email profileImage avatar course")
-      .lean();
+router.get(
+  "/:id/builder",
+  auth,
+  async (
+    req,
+    res
+  ) => {
 
-    if (!classDoc) {
-      return res.status(404).json({
-        message: "Class not found"
-      });
-    }
+    try {
 
-const user =
-  req.user;
+      const classId =
+        req.params.id;
 
-const canAccess =
-  canViewClassBuilder(
-    user,
-    classDoc
-  );
 
-if (!canAccess) {
-  console.warn(
-    "Class builder access denied",
-    {
-      classId:
-        normalizeObjectId(
-          classDoc._id
-        ),
-
-      role:
-        normalizeRole(
-          user.role
-        ),
-
-      userId:
-        normalizeObjectId(
-          user._id
-        ),
-
-      userSchoolIds:
-        getUserSchoolIds(
-          user
-        ),
-
-      classSchoolId:
-        normalizeObjectId(
-          classDoc.schoolId
-        ),
-
-      classTeacherId:
-        normalizeObjectId(
-          classDoc.teacherId
+      const classDoc =
+        await Class.findById(
+          classId
         )
-    }
-  );
+          .populate(
+            "schoolId",
+            "name schoolName profileImage schoolLogo"
+          )
+          .populate(
+            "teacherId",
+            "name email profileImage avatar role subject department"
+          )
+          .populate(
+            "studentIds",
+            "name email profileImage avatar course"
+          )
+          .lean();
 
-  return res.status(403).json({
-    message:
-      "Not allowed to view this class builder"
-  });
-}
 
-    const schoolId = classDoc.schoolId?._id || classDoc.schoolId;
+      if (
+        !classDoc
+      ) {
 
-    const [
-      modules,
-      lessons,
-      quizzes,
-      quizSubmissions,
-      assignments,
-      submissions,
-      attendance,
-      progress
-    ] = await Promise.all([
-      ClassModule.find({
-        classId
-      })
-        .sort({
-          order: 1,
-          createdAt: 1
-        })
-        .lean(),
+        return res
+          .status(404)
+          .json({
+            message:
+              "Class not found"
+          });
 
-      ClassLesson.find({
-        classId
-      })
-        .sort({
-          order: 1,
-          createdAt: 1
-        })
-        .lean(),
-
-      Quiz.find({
-        classId
-      })
-        .sort({
-          createdAt: -1
-        })
-        .lean(),
-
-      QuizSubmission.find({
-        classId
-      })
-        .populate(
-          "quizId",
-          "title passingScore attemptsAllowed status"
-        )
-        .populate(
-          "studentId",
-          "name email profileImage avatar course"
-        )
-        .sort({
-          submittedAt: -1
-        })
-        .lean(),
-
-      Assignment.find({
-        classId
-      })
-        .sort({
-          createdAt: -1
-        })
-        .lean(),
-
-      Submission.find({
-        classId
-      })
-        .populate(
-          "assignmentId",
-          "title dueDate status"
-        )
-        .populate(
-          "studentId",
-          "name email profileImage avatar course"
-        )
-        .sort({
-          createdAt: -1
-        })
-        .lean(),
-
-      Attendance.find({
-        classId
-      })
-        .sort({
-          date: -1
-        })
-        .limit(500)
-        .lean(),
-
-      LessonProgress.find({
-        classId
-      })
-        .sort({
-          updatedAt: -1
-        })
-        .lean()
-    ]);
-
-    const completedLessons = progress.filter(
-      item =>
-        item.status === "completed" ||
-        Number(item.progressPercent || 0) >= 100
-    ).length;
-
-    const totalProgress = progress.length
-      ? Math.round(
-          progress.reduce(
-            (sum, item) => sum + Number(item.progressPercent || 0),
-            0
-          ) / progress.length
-        )
-      : 0;
-
-    const attendanceTotal = attendance.length;
-
-    const attendancePresent = attendance.filter(
-      item => item.status === "present"
-    ).length;
-
-    const attendanceRate = attendanceTotal
-      ? Math.round((attendancePresent / attendanceTotal) * 100)
-      : 0;
-
-    return res.json({
-      class: classDoc,
-      schoolId,
-      modules,
-      lessons,
-      quizzes,
-      quizSubmissions,
-      assignments,
-      submissions,
-      attendance,
-      progress,
-      analytics: {
-        moduleCount: modules.length,
-        lessonCount: lessons.length,
-        quizCount: quizzes.length,
-        assignmentCount: assignments.length,
-        submissionCount: submissions.length,
-        completedLessons,
-        averageProgress: totalProgress,
-        attendanceRate
       }
-    });
-  } catch (err) {
-    console.error("GET class builder error:", err);
-    return res.status(500).json({
-      message: "Failed to load class builder"
-    });
+
+
+      const user =
+        req.user;
+
+
+      if (
+        !canViewClassBuilder(
+          user,
+          classDoc
+        )
+      ) {
+
+        console.warn(
+          "Class builder access denied",
+          {
+
+            classId:
+              normalizeObjectId(
+                classDoc._id
+              ),
+
+            role:
+              normalizeRole(
+                user.role
+              ),
+
+            userId:
+              normalizeObjectId(
+                user._id
+              ),
+
+            userSchoolIds:
+              getUserSchoolIds(
+                user
+              ),
+
+            classSchoolId:
+              normalizeObjectId(
+                classDoc.schoolId
+              ),
+
+            classTeacherId:
+              normalizeObjectId(
+                classDoc.teacherId
+              )
+
+          }
+        );
+
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Not allowed to view this class builder"
+          });
+
+      }
+
+
+      const permissions =
+        getClassBuilderPermissions(
+          user,
+          classDoc
+        );
+
+
+      const schoolId =
+        classDoc.schoolId?._id ||
+        classDoc.schoolId;
+
+
+      const [
+        modules,
+        lessons,
+        quizzes,
+        quizSubmissions,
+        assignments,
+        submissions,
+        attendance,
+        progress
+      ] =
+        await Promise.all([
+
+          ClassModule.find({
+            classId
+          })
+            .sort({
+              order:1,
+              createdAt:1
+            })
+            .lean(),
+
+
+          ClassLesson.find({
+            classId
+          })
+            .sort({
+              order:1,
+              createdAt:1
+            })
+            .lean(),
+
+
+          Quiz.find({
+            classId
+          })
+            .sort({
+              createdAt:-1
+            })
+            .lean(),
+
+
+          QuizSubmission.find({
+            classId
+          })
+            .populate(
+              "quizId",
+              "title passingScore attemptsAllowed status"
+            )
+            .populate(
+              "studentId",
+              "name email profileImage avatar course"
+            )
+            .sort({
+              submittedAt:-1
+            })
+            .lean(),
+
+
+          Assignment.find({
+            classId
+          })
+            .sort({
+              createdAt:-1
+            })
+            .lean(),
+
+
+          Submission.find({
+            classId
+          })
+            .populate(
+              "assignmentId",
+              "title dueDate status"
+            )
+            .populate(
+              "studentId",
+              "name email profileImage avatar course"
+            )
+            .sort({
+              createdAt:-1
+            })
+            .lean(),
+
+
+          Attendance.find({
+            classId
+          })
+            .sort({
+              date:-1
+            })
+            .limit(500)
+            .lean(),
+
+
+          LessonProgress.find({
+            classId
+          })
+            .sort({
+              updatedAt:-1
+            })
+            .lean()
+
+        ]);
+
+
+      const completedLessons =
+        progress.filter(
+          item =>
+            item.status ===
+              "completed" ||
+            Number(
+              item.progressPercent ||
+              0
+            ) >=
+              100
+        ).length;
+
+
+      const totalProgress =
+        progress.length
+          ? Math.round(
+              progress.reduce(
+                (
+                  sum,
+                  item
+                ) =>
+                  sum +
+                  Number(
+                    item.progressPercent ||
+                    0
+                  ),
+                0
+              ) /
+              progress.length
+            )
+          : 0;
+
+
+      const attendanceTotal =
+        attendance.length;
+
+
+      const attendancePresent =
+        attendance.filter(
+          item =>
+            item.status ===
+              "present"
+        ).length;
+
+
+      const attendanceRate =
+        attendanceTotal
+          ? Math.round(
+              (
+                attendancePresent /
+                attendanceTotal
+              ) *
+              100
+            )
+          : 0;
+
+
+      return res.json({
+
+        class:
+          classDoc,
+
+        schoolId,
+
+        /*
+          The frontend uses this object to control visibility,
+          but backend routes remain authoritative.
+        */
+
+        permissions,
+
+        modules,
+
+        lessons,
+
+        quizzes,
+
+        quizSubmissions,
+
+        assignments,
+
+        submissions,
+
+        attendance,
+
+        progress,
+
+        analytics: {
+
+          moduleCount:
+            modules.length,
+
+          lessonCount:
+            lessons.length,
+
+          quizCount:
+            quizzes.length,
+
+          assignmentCount:
+            assignments.length,
+
+          submissionCount:
+            submissions.length,
+
+          completedLessons,
+
+          averageProgress:
+            totalProgress,
+
+          attendanceRate
+
+        }
+
+      });
+
+    } catch (
+      err
+    ) {
+
+      console.error(
+        "GET class builder error:",
+        err
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          message:
+            "Failed to load class builder"
+        });
+
+    }
+
   }
-});
+);
 
 
 /* =====================================================
