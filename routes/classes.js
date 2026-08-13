@@ -2828,714 +2828,1395 @@ router.get(
   }
 );
 
-
-
 /* =====================================================
-   UPDATE CLASS BUILDER PROFILE + VISUAL CONTENT
+   UPDATE CLASS BUILDER
    PATCH /api/classes/:id/builder
+
+   PERMISSION MODEL
+
+   ADMIN / SCHOOL
+     Full class administration + instructional content.
+
+   ASSIGNED TEACHER
+     Instructional content only.
+
+   Teachers cannot:
+     - reassign the instructor
+     - change class ownership
+     - change class identity
+     - archive the class
+     - publish/unpublish the class
+     - change enrollment rules
+     - change publishing/discovery settings
+     - change appearance branding
+     - change School notification policy
 ===================================================== */
 
-router.patch("/:id/builder", auth, async (req, res) => {
-  try {
-    const classDoc =
-      await Class.findById(
-        req.params.id
-      );
+router.patch(
+  "/:id/builder",
+  auth,
+  async (
+    req,
+    res
+  ) => {
 
-    if (!classDoc) {
-      return res.status(404).json({
-        message:
-          "Class not found"
-      });
-    }
+    try {
 
-    if (
-      !canManageAssignedClass(
-        req.user,
-        classDoc
-      )
-    ) {
-      return res.status(403).json({
-        message:
-          "Not allowed to update this class builder"
-      });
-    }
+      /* =================================================
+         LOAD CLASS
+      ================================================= */
 
-    const oldTeacherId =
-      classDoc.teacherId
-        ? String(classDoc.teacherId)
-        : null;
-
-    /* ============================================
-       GENERAL CLASS INFORMATION
-    ============================================ */
-
-    if (
-      req.body.title !==
-      undefined
-    ) {
-      const title =
-        normalizeString(
-          req.body.title,
-          {
-            fallback:null,
-            maximumLength:120
-          }
+      const classDoc =
+        await Class.findById(
+          req.params.id
         );
 
-      if (!title) {
-        return res.status(400).json({
-          message:
-            "Class title is required"
-        });
-      }
 
-      classDoc.title =
-        title;
-    }
-
-    if (
-      req.body.name !==
-      undefined
-    ) {
-      const title =
-        normalizeString(
-          req.body.name,
-          {
-            fallback:null,
-            maximumLength:120
-          }
-        );
-
-      if (title) {
-        classDoc.title =
-          title;
-      }
-    }
-
-    if (
-      req.body.subtitle !==
-      undefined
-    ) {
-      classDoc.subtitle =
-        normalizeString(
-          req.body.subtitle,
-          {
-            fallback:null,
-            maximumLength:220
-          }
-        );
-    }
-
-    if (
-      req.body.category !==
-      undefined
-    ) {
-      classDoc.category =
-        normalizeString(
-          req.body.category,
-          {
-            fallback:null,
-            maximumLength:120
-          }
-        );
-    }
-
-    if (
-      req.body.estimatedDurationMinutes !==
-      undefined
-    ) {
-      classDoc.estimatedDurationMinutes =
-        normalizeNumber(
-          req.body.estimatedDurationMinutes,
-          {
-            fallback:
-              classDoc.estimatedDurationMinutes ||
-              0,
-
-            minimum:0,
-            maximum:1000000,
-            integer:true
-          }
-        );
-    }
-
-    if (
-      req.body.subject !==
-      undefined
-    ) {
-      classDoc.subject =
-        normalizeString(
-          req.body.subject,
-          {
-            fallback:null,
-            maximumLength:120
-          }
-        );
-    }
-
-    if (
-      req.body.level !==
-      undefined
-    ) {
-      classDoc.level =
-        normalizeString(
-          req.body.level,
-          {
-            fallback:null,
-            maximumLength:80
-          }
-        );
-    }
-
-    if (
-      req.body.language !==
-      undefined
-    ) {
-      classDoc.language =
-        normalizeString(
-          req.body.language,
-          {
-            fallback:null,
-            maximumLength:80
-          }
-        );
-    }
-
-    if (
-      req.body.description !==
-      undefined
-    ) {
-      classDoc.description =
-        normalizeString(
-          req.body.description,
-          {
-            fallback:null,
-            maximumLength:3000
-          }
-        );
-    }
-
-    if (
-      req.body.welcomeContent !==
-      undefined
-    ) {
-      classDoc.welcomeContent =
-        normalizeString(
-          req.body.welcomeContent,
-          {
-            fallback:null,
-            maximumLength:10000
-          }
-        );
-    }
-
-    if (
-      req.body.schedule !==
-      undefined
-    ) {
-      classDoc.schedule =
-        normalizeString(
-          req.body.schedule,
-          {
-            fallback:null,
-            maximumLength:200
-          }
-        );
-    }
-
-    if (
-      req.body.meetingLink !==
-      undefined
-    ) {
-      classDoc.meetingLink =
-        normalizeString(
-          req.body.meetingLink,
-          {
-            fallback:null,
-            maximumLength:500
-          }
-        );
-    }
-
-    if (
-      req.body.classCode !==
-      undefined ||
-      req.body.code !==
-      undefined
-    ) {
-      classDoc.classCode =
-        normalizeString(
-          req.body.classCode ??
-          req.body.code,
-          {
-            fallback:null,
-            maximumLength:40
-          }
-        );
-    }
-
-    /* ============================================
-       CLASS RELATIONSHIPS
-    ============================================ */
-
-    if (
-      req.body.teacherId !==
-      undefined
-    ) {
-
-      /*
-        Only the owning school or an admin may
-        assign, replace, or remove a teacher.
-
-        An assigned teacher may edit instructional
-        content, but may not change class ownership.
-      */
       if (
-        !canManageSchool(
+        !classDoc
+      ) {
+
+        return res
+          .status(404)
+          .json({
+            message:
+              "Class not found"
+          });
+
+      }
+
+
+      /* =================================================
+         BASE BUILDER ACCESS
+      ================================================= */
+
+      if (
+        !canManageAssignedClass(
           req.user,
-          classDoc.schoolId
+          classDoc
         )
       ) {
-        return res.status(403).json({
-          message:
-            "Only the school or an administrator can change the assigned teacher."
-        });
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Not allowed to update this class builder"
+          });
+
       }
 
-      const nextTeacherId =
-        normalizeNullableObjectId(
-          req.body.teacherId
+
+      const role =
+        normalizeRole(
+          req.user?.role
         );
 
-      if (nextTeacherId) {
-        const teacher =
-          await User.findById(
-            nextTeacherId
+
+      const permissions =
+        getClassBuilderPermissions(
+          req.user,
+          classDoc
+        );
+
+
+      const canManageInstruction =
+        permissions
+          .canManageInstruction ===
+        true;
+
+
+      const canManageSchoolSettings =
+        (
+          permissions
+            .canEditClassIdentity ===
+          true
+        );
+
+
+      /* =================================================
+         TEACHER FORBIDDEN FIELDS
+
+         IMPORTANT:
+
+         Do not silently ignore administrative changes from
+         teachers.
+
+         Reject them explicitly so a modified browser request
+         cannot make it look like the change succeeded.
+      ================================================= */
+
+      const schoolOnlyFields = [
+
+        /* ownership */
+        "teacherId",
+        "schoolId",
+
+        /* class identity */
+        "title",
+        "name",
+        "subtitle",
+        "category",
+        "subject",
+        "level",
+        "language",
+        "description",
+        "classCode",
+        "code",
+
+        /* schedule / identity */
+        "schedule",
+        "meetingLink",
+        "estimatedDurationMinutes",
+
+        /* branding */
+        "coverImage",
+        "bannerImage",
+        "appearanceSettings",
+
+        /* lifecycle */
+        "status",
+        "published",
+
+        /* administrative settings */
+        "enrollmentSettings",
+        "publishingSettings",
+        "notificationSettings"
+
+      ];
+
+
+      if (
+        role ===
+        "teacher"
+      ) {
+
+        const attemptedRestrictedFields =
+          schoolOnlyFields.filter(
+            field =>
+              req.body[field] !==
+              undefined
           );
 
-        if (!teacher) {
-          return res.status(404).json({
-            message:
-              "Teacher not found"
-          });
-        }
 
-        const teacherRole =
-          normalizeRole(
-            teacher.role
+        if (
+          attemptedRestrictedFields.length
+        ) {
+
+          console.warn(
+            "Teacher attempted restricted Class Builder update",
+            {
+
+              userId:
+                normalizeObjectId(
+                  req.user._id
+                ),
+
+              classId:
+                normalizeObjectId(
+                  classDoc._id
+                ),
+
+              fields:
+                attemptedRestrictedFields
+
+            }
           );
 
-        if (
-          ![
-            "teacher",
-            "school",
-            "admin"
-          ].includes(
-            teacherRole
-          )
-        ) {
-          return res.status(400).json({
-            message:
-              "Selected user is not an instructor"
-          });
+
+          return res
+            .status(403)
+            .json({
+
+              message:
+                "Your teacher account cannot change School-managed class settings.",
+
+              restrictedFields:
+                attemptedRestrictedFields
+
+            });
+
         }
 
-        if (
-          teacherRole !==
-          "admin"
-        ) {
-          const teacherSchoolIds = [
-            ...getUserSchoolIds(
-              teacher
-            ),
+      }
 
-            normalizeObjectId(
-              teacher.companyId
+
+      /* =================================================
+         OLD TEACHER
+
+         Needed only if a School/Admin changes teacherId.
+      ================================================= */
+
+      const oldTeacherId =
+        classDoc.teacherId
+          ? String(
+              classDoc.teacherId
             )
-          ].filter(Boolean);
+          : null;
 
-          const uniqueTeacherSchoolIds =
-            [
-              ...new Set(
-                teacherSchoolIds
-              )
-            ];
+
+      /* =================================================
+         SCHOOL / ADMIN — CLASS IDENTITY
+      ================================================= */
+
+      if (
+        canManageSchoolSettings
+      ) {
+
+        /* =============================================
+           TITLE
+        ============================================= */
+
+        if (
+          req.body.title !==
+          undefined
+        ) {
+
+          const title =
+            normalizeString(
+              req.body.title,
+              {
+                fallback:
+                  null,
+
+                maximumLength:
+                  120
+              }
+            );
+
 
           if (
-            !uniqueTeacherSchoolIds.includes(
-              normalizeObjectId(
-                classDoc.schoolId
-              )
-            )
+            !title
           ) {
-            return res.status(403).json({
-              message:
-                "Teacher is not linked to this school"
-            });
+
+            return res
+              .status(400)
+              .json({
+                message:
+                  "Class title is required"
+              });
+
           }
+
+
+          classDoc.title =
+            title;
+
         }
+
+
+        if (
+          req.body.name !==
+          undefined
+        ) {
+
+          const title =
+            normalizeString(
+              req.body.name,
+              {
+                fallback:
+                  null,
+
+                maximumLength:
+                  120
+              }
+            );
+
+
+          if (
+            title
+          ) {
+
+            classDoc.title =
+              title;
+
+          }
+
+        }
+
+
+        /* =============================================
+           SUBTITLE
+        ============================================= */
+
+        if (
+          req.body.subtitle !==
+          undefined
+        ) {
+
+          classDoc.subtitle =
+            normalizeString(
+              req.body.subtitle,
+              {
+                fallback:
+                  null,
+
+                maximumLength:
+                  220
+              }
+            );
+
+        }
+
+
+        /* =============================================
+           CATEGORY
+        ============================================= */
+
+        if (
+          req.body.category !==
+          undefined
+        ) {
+
+          classDoc.category =
+            normalizeString(
+              req.body.category,
+              {
+                fallback:
+                  null,
+
+                maximumLength:
+                  120
+              }
+            );
+
+        }
+
+
+        /* =============================================
+           SUBJECT
+        ============================================= */
+
+        if (
+          req.body.subject !==
+          undefined
+        ) {
+
+          classDoc.subject =
+            normalizeString(
+              req.body.subject,
+              {
+                fallback:
+                  null,
+
+                maximumLength:
+                  120
+              }
+            );
+
+        }
+
+
+        /* =============================================
+           LEVEL
+        ============================================= */
+
+        if (
+          req.body.level !==
+          undefined
+        ) {
+
+          classDoc.level =
+            normalizeString(
+              req.body.level,
+              {
+                fallback:
+                  null,
+
+                maximumLength:
+                  80
+              }
+            );
+
+        }
+
+
+        /* =============================================
+           LANGUAGE
+        ============================================= */
+
+        if (
+          req.body.language !==
+          undefined
+        ) {
+
+          classDoc.language =
+            normalizeString(
+              req.body.language,
+              {
+                fallback:
+                  null,
+
+                maximumLength:
+                  80
+              }
+            );
+
+        }
+
+
+        /* =============================================
+           DESCRIPTION
+        ============================================= */
+
+        if (
+          req.body.description !==
+          undefined
+        ) {
+
+          classDoc.description =
+            normalizeString(
+              req.body.description,
+              {
+                fallback:
+                  null,
+
+                maximumLength:
+                  3000
+              }
+            );
+
+        }
+
+
+        /* =============================================
+           DURATION
+        ============================================= */
+
+        if (
+          req.body
+            .estimatedDurationMinutes !==
+          undefined
+        ) {
+
+          classDoc
+            .estimatedDurationMinutes =
+            normalizeNumber(
+              req.body
+                .estimatedDurationMinutes,
+              {
+
+                fallback:
+                  classDoc
+                    .estimatedDurationMinutes ||
+                  0,
+
+                minimum:
+                  0,
+
+                maximum:
+                  1000000,
+
+                integer:
+                  true
+
+              }
+            );
+
+        }
+
+
+        /* =============================================
+           SCHEDULE
+        ============================================= */
+
+        if (
+          req.body.schedule !==
+          undefined
+        ) {
+
+          classDoc.schedule =
+            normalizeString(
+              req.body.schedule,
+              {
+
+                fallback:
+                  null,
+
+                maximumLength:
+                  200
+
+              }
+            );
+
+        }
+
+
+        /* =============================================
+           MEETING LINK
+        ============================================= */
+
+        if (
+          req.body.meetingLink !==
+          undefined
+        ) {
+
+          classDoc.meetingLink =
+            normalizeString(
+              req.body.meetingLink,
+              {
+
+                fallback:
+                  null,
+
+                maximumLength:
+                  500
+
+              }
+            );
+
+        }
+
+
+        /* =============================================
+           CLASS CODE
+        ============================================= */
+
+        if (
+          req.body.classCode !==
+            undefined ||
+          req.body.code !==
+            undefined
+        ) {
+
+          classDoc.classCode =
+            normalizeString(
+              req.body.classCode ??
+              req.body.code,
+              {
+
+                fallback:
+                  null,
+
+                maximumLength:
+                  40
+
+              }
+            );
+
+        }
+
+
+        /* =============================================
+           COVER IMAGE
+        ============================================= */
+
+        if (
+          req.body.coverImage !==
+          undefined
+        ) {
+
+          classDoc.coverImage =
+            normalizeString(
+              req.body.coverImage,
+              {
+
+                fallback:
+                  null,
+
+                maximumLength:
+                  800
+
+              }
+            );
+
+        }
+
+
+        /* =============================================
+           BANNER
+        ============================================= */
+
+        if (
+          req.body.bannerImage !==
+          undefined
+        ) {
+
+          classDoc.bannerImage =
+            normalizeString(
+              req.body.bannerImage,
+              {
+
+                fallback:
+                  null,
+
+                maximumLength:
+                  800
+
+              }
+            );
+
+        }
+
       }
 
-      classDoc.teacherId =
-        nextTeacherId;
-    }
 
-    /* ============================================
-       MEDIA AND CLASS CONTENT
-    ============================================ */
+      /* =================================================
+         SCHOOL / ADMIN — TEACHER ASSIGNMENT
+      ================================================= */
 
-    if (
-      req.body.coverImage !==
-      undefined
-    ) {
-      classDoc.coverImage =
-        normalizeString(
-          req.body.coverImage,
-          {
-            fallback:null,
-            maximumLength:800
-          }
-        );
-    }
+      if (
+        req.body.teacherId !==
+        undefined
+      ) {
 
-    if (
-      req.body.bannerImage !==
-      undefined
-    ) {
-      classDoc.bannerImage =
-        normalizeString(
-          req.body.bannerImage,
-          {
-            fallback:null,
-            maximumLength:800
-          }
-        );
-    }
+        if (
+          !permissions
+            .canAssignTeacher
+        ) {
 
-    if (
-      req.body.learningOutcomes !==
-      undefined
-    ) {
-      classDoc.learningOutcomes =
-        normalizeArray(
-          req.body.learningOutcomes
-        )
-          .map(item =>
-            String(item).trim()
-          )
-          .filter(Boolean);
-    }
+          return res
+            .status(403)
+            .json({
+              message:
+                "Only the School or an administrator can change the assigned teacher."
+            });
 
-    if (
-      req.body.materials !==
-      undefined
-    ) {
-      classDoc.materials =
-        normalizeArray(
-          req.body.materials
-        )
-          .map(item =>
-            String(item).trim()
-          )
-          .filter(Boolean);
-    }
-
-    if (
-      req.body.projectCanvas !==
-      undefined
-    ) {
-      classDoc.projectCanvas =
-        Array.isArray(
-          req.body.projectCanvas
-        )
-          ? req.body.projectCanvas
-          : [];
-
-      classDoc.projectCanvasUpdatedAt =
-        new Date();
-    }
-
-    if (
-      req.body.contentBlocks !==
-      undefined
-    ) {
-      classDoc.contentBlocks =
-        Array.isArray(
-          req.body.contentBlocks
-        )
-          ? req.body.contentBlocks
-          : [];
-
-      classDoc.contentBlocksUpdatedAt =
-        new Date();
-    }
-
-    /* ============================================
-       CLASS STATE
-    ============================================ */
-
-    if (
-      req.body.status !==
-      undefined
-    ) {
-      classDoc.status =
-        normalizeEnum(
-          req.body.status,
-          [
-            "active",
-            "archived"
-          ],
-          classDoc.status ||
-          "active"
-        );
-    }
-
-    if (
-      req.body.published !==
-      undefined
-    ) {
-      classDoc.published =
-        normalizeBoolean(
-          req.body.published,
-          classDoc.published ??
-          false
-        );
-    }
-
-    /* ============================================
-       STRUCTURED SETTINGS
-    ============================================ */
-
-    if (
-      req.body.appearanceSettings !==
-      undefined
-    ) {
-      classDoc.appearanceSettings =
-        sanitizeAppearanceSettings(
-          req.body.appearanceSettings,
-          classDoc.appearanceSettings?.toObject
-            ? classDoc.appearanceSettings.toObject()
-            : classDoc.appearanceSettings ||
-              {}
-        );
-    }
-
-    if (
-      req.body.enrollmentSettings !==
-      undefined
-    ) {
-      classDoc.enrollmentSettings =
-        sanitizeEnrollmentSettings(
-          req.body.enrollmentSettings,
-          classDoc.enrollmentSettings?.toObject
-            ? classDoc.enrollmentSettings.toObject()
-            : classDoc.enrollmentSettings ||
-              {}
-        );
-    }
-
-    if (
-      req.body.learningSettings !==
-      undefined
-    ) {
-      classDoc.learningSettings =
-        sanitizeLearningSettings(
-          req.body.learningSettings,
-          classDoc.learningSettings?.toObject
-            ? classDoc.learningSettings.toObject()
-            : classDoc.learningSettings ||
-              {}
-        );
-    }
-
-    if (
-      req.body.assessmentSettings !==
-      undefined
-    ) {
-      classDoc.assessmentSettings =
-        sanitizeAssessmentSettings(
-          req.body.assessmentSettings,
-          classDoc.assessmentSettings?.toObject
-            ? classDoc.assessmentSettings.toObject()
-            : classDoc.assessmentSettings ||
-              {}
-        );
-    }
-
-    if (
-      req.body.publishingSettings !==
-      undefined
-    ) {
-      classDoc.publishingSettings =
-        sanitizePublishingSettings(
-          req.body.publishingSettings,
-          classDoc.publishingSettings?.toObject
-            ? classDoc.publishingSettings.toObject()
-            : classDoc.publishingSettings ||
-              {}
-        );
-    }
-
-    if (
-      req.body.notificationSettings !==
-      undefined
-    ) {
-      classDoc.notificationSettings =
-        sanitizeNotificationSettings(
-          req.body.notificationSettings,
-          classDoc.notificationSettings?.toObject
-            ? classDoc.notificationSettings.toObject()
-            : classDoc.notificationSettings ||
-              {}
-        );
-    }
-
-    await classDoc.save();
-
-    /* ============================================
-       SYNCHRONIZE TEACHER CLASS REFERENCES
-    ============================================ */
-
-    const newTeacherId =
-      classDoc.teacherId
-        ? String(classDoc.teacherId)
-        : null;
-
-    if (
-      oldTeacherId &&
-      oldTeacherId !==
-      newTeacherId
-    ) {
-      await User.findByIdAndUpdate(
-        oldTeacherId,
-        {
-          $pull: {
-            assignedClasses:
-              classDoc._id
-          }
         }
-      );
-    }
 
-    if (newTeacherId) {
-      await User.findByIdAndUpdate(
-        newTeacherId,
-        {
-          $addToSet: {
-            assignedClasses:
-              classDoc._id
+
+        const nextTeacherId =
+          normalizeNullableObjectId(
+            req.body.teacherId
+          );
+
+
+        if (
+          nextTeacherId
+        ) {
+
+          const teacher =
+            await User.findById(
+              nextTeacherId
+            );
+
+
+          if (
+            !teacher
+          ) {
+
+            return res
+              .status(404)
+              .json({
+                message:
+                  "Teacher not found"
+              });
+
           }
+
+
+          const teacherRole =
+            normalizeRole(
+              teacher.role
+            );
+
+
+          if (
+            ![
+              "teacher",
+              "school",
+              "admin"
+            ].includes(
+              teacherRole
+            )
+          ) {
+
+            return res
+              .status(400)
+              .json({
+                message:
+                  "Selected user is not an instructor"
+              });
+
+          }
+
+
+          /*
+            A normal teacher/school account being assigned must
+            belong to this School.
+
+            Admin remains exempt.
+          */
+
+          if (
+            teacherRole !==
+            "admin"
+          ) {
+
+            const teacherSchoolIds = [
+
+              ...getUserSchoolIds(
+                teacher
+              ),
+
+              normalizeObjectId(
+                teacher.companyId
+              )
+
+            ].filter(
+              Boolean
+            );
+
+
+            const uniqueTeacherSchoolIds =
+              [
+                ...new Set(
+                  teacherSchoolIds
+                )
+              ];
+
+
+            if (
+              !uniqueTeacherSchoolIds.includes(
+                normalizeObjectId(
+                  classDoc.schoolId
+                )
+              )
+            ) {
+
+              return res
+                .status(403)
+                .json({
+                  message:
+                    "Teacher is not linked to this school"
+                });
+
+            }
+
+          }
+
         }
-      );
-    }
 
-    const updatedClass =
-      await Class.findById(
-        classDoc._id
-      )
-        .populate(
-          "schoolId",
-          "name schoolName profileImage schoolLogo"
-        )
-        .populate(
-          "teacherId",
-          "name email profileImage avatar role subject department"
-        )
-        .populate(
-          "studentIds",
-          "name email profileImage avatar course"
-        );
 
-    const io =
-      req.app.get("io");
+        classDoc.teacherId =
+          nextTeacherId;
 
-    if (io) {
-      io.to(
-        String(
-          classDoc.schoolId
-        )
-      ).emit(
-        "class:builder:updated",
-        {
-          classId:
-            classDoc._id,
+      }
 
-          class:
-            updatedClass
+
+      /* =================================================
+         INSTRUCTIONAL CONTENT
+
+         AVAILABLE TO:
+           Admin
+           owning School
+           explicitly assigned teacher
+      ================================================= */
+
+      if (
+        canManageInstruction
+      ) {
+
+        /* =============================================
+           WELCOME / TEACHING CONTENT
+        ============================================= */
+
+        if (
+          req.body.welcomeContent !==
+          undefined
+        ) {
+
+          classDoc.welcomeContent =
+            normalizeString(
+              req.body.welcomeContent,
+              {
+
+                fallback:
+                  null,
+
+                maximumLength:
+                  10000
+
+              }
+            );
+
         }
-      );
 
-      if (newTeacherId) {
-        io.to(
+
+        /* =============================================
+           LEARNING OUTCOMES
+        ============================================= */
+
+        if (
+          req.body.learningOutcomes !==
+          undefined
+        ) {
+
+          classDoc.learningOutcomes =
+            normalizeArray(
+              req.body.learningOutcomes
+            )
+              .map(
+                item =>
+                  String(
+                    item
+                  ).trim()
+              )
+              .filter(
+                Boolean
+              );
+
+        }
+
+
+        /* =============================================
+           MATERIALS
+        ============================================= */
+
+        if (
+          req.body.materials !==
+          undefined
+        ) {
+
+          classDoc.materials =
+            normalizeArray(
+              req.body.materials
+            )
+              .map(
+                item =>
+                  String(
+                    item
+                  ).trim()
+              )
+              .filter(
+                Boolean
+              );
+
+        }
+
+
+        /* =============================================
+           VISUAL PROJECT CANVAS
+        ============================================= */
+
+        if (
+          req.body.projectCanvas !==
+          undefined
+        ) {
+
+          classDoc.projectCanvas =
+            Array.isArray(
+              req.body.projectCanvas
+            )
+              ? req.body.projectCanvas
+              : [];
+
+
+          classDoc
+            .projectCanvasUpdatedAt =
+            new Date();
+
+        }
+
+
+        /* =============================================
+           CONTENT BLOCKS
+        ============================================= */
+
+        if (
+          req.body.contentBlocks !==
+          undefined
+        ) {
+
+          classDoc.contentBlocks =
+            Array.isArray(
+              req.body.contentBlocks
+            )
+              ? req.body.contentBlocks
+              : [];
+
+
+          classDoc
+            .contentBlocksUpdatedAt =
+            new Date();
+
+        }
+
+
+        /* =============================================
+           LEARNING SETTINGS
+
+           These control teaching behavior rather than School
+           ownership/discovery, so the assigned teacher may
+           manage them.
+        ============================================= */
+
+        if (
+          req.body.learningSettings !==
+          undefined
+        ) {
+
+          classDoc.learningSettings =
+            sanitizeLearningSettings(
+
+              req.body.learningSettings,
+
+              classDoc
+                .learningSettings
+                ?.toObject
+                ? classDoc
+                    .learningSettings
+                    .toObject()
+                : classDoc
+                    .learningSettings ||
+                  {}
+
+            );
+
+        }
+
+
+        /* =============================================
+           ASSESSMENT SETTINGS
+
+           Teacher may control Quiz/Assignment behavior for
+           the class they teach.
+        ============================================= */
+
+        if (
+          req.body.assessmentSettings !==
+          undefined
+        ) {
+
+          classDoc.assessmentSettings =
+            sanitizeAssessmentSettings(
+
+              req.body.assessmentSettings,
+
+              classDoc
+                .assessmentSettings
+                ?.toObject
+                ? classDoc
+                    .assessmentSettings
+                    .toObject()
+                : classDoc
+                    .assessmentSettings ||
+                  {}
+
+            );
+
+        }
+
+      }
+
+
+      /* =================================================
+         SCHOOL / ADMIN — CLASS STATE
+      ================================================= */
+
+      if (
+        permissions
+          .canArchiveClass
+      ) {
+
+        if (
+          req.body.status !==
+          undefined
+        ) {
+
+          classDoc.status =
+            normalizeEnum(
+              req.body.status,
+              [
+                "active",
+                "archived"
+              ],
+              classDoc.status ||
+              "active"
+            );
+
+        }
+
+      }
+
+
+      if (
+        permissions
+          .canPublishClass
+      ) {
+
+        if (
+          req.body.published !==
+          undefined
+        ) {
+
+          classDoc.published =
+            normalizeBoolean(
+              req.body.published,
+              classDoc.published ??
+              false
+            );
+
+        }
+
+      }
+
+
+      /* =================================================
+         SCHOOL / ADMIN — APPEARANCE
+      ================================================= */
+
+      if (
+        permissions
+          .canManageAppearance &&
+        req.body.appearanceSettings !==
+          undefined
+      ) {
+
+        classDoc.appearanceSettings =
+          sanitizeAppearanceSettings(
+
+            req.body.appearanceSettings,
+
+            classDoc
+              .appearanceSettings
+              ?.toObject
+              ? classDoc
+                  .appearanceSettings
+                  .toObject()
+              : classDoc
+                  .appearanceSettings ||
+                {}
+
+          );
+
+      }
+
+
+      /* =================================================
+         SCHOOL / ADMIN — ENROLLMENT
+      ================================================= */
+
+      if (
+        permissions
+          .canManageEnrollment &&
+        req.body.enrollmentSettings !==
+          undefined
+      ) {
+
+        classDoc.enrollmentSettings =
+          sanitizeEnrollmentSettings(
+
+            req.body.enrollmentSettings,
+
+            classDoc
+              .enrollmentSettings
+              ?.toObject
+              ? classDoc
+                  .enrollmentSettings
+                  .toObject()
+              : classDoc
+                  .enrollmentSettings ||
+                {}
+
+          );
+
+      }
+
+
+      /* =================================================
+         SCHOOL / ADMIN — PUBLISHING
+      ================================================= */
+
+      if (
+        permissions
+          .canManagePublishing &&
+        req.body.publishingSettings !==
+          undefined
+      ) {
+
+        classDoc.publishingSettings =
+          sanitizePublishingSettings(
+
+            req.body.publishingSettings,
+
+            classDoc
+              .publishingSettings
+              ?.toObject
+              ? classDoc
+                  .publishingSettings
+                  .toObject()
+              : classDoc
+                  .publishingSettings ||
+                {}
+
+          );
+
+      }
+
+
+      /* =================================================
+         SCHOOL / ADMIN — NOTIFICATIONS
+      ================================================= */
+
+      if (
+        permissions
+          .canManageNotificationSettings &&
+        req.body.notificationSettings !==
+          undefined
+      ) {
+
+        classDoc.notificationSettings =
+          sanitizeNotificationSettings(
+
+            req.body.notificationSettings,
+
+            classDoc
+              .notificationSettings
+              ?.toObject
+              ? classDoc
+                  .notificationSettings
+                  .toObject()
+              : classDoc
+                  .notificationSettings ||
+                {}
+
+          );
+
+      }
+
+
+      /* =================================================
+         SAVE
+      ================================================= */
+
+      await classDoc.save();
+
+
+      /* =================================================
+         SYNCHRONIZE TEACHER REFERENCES
+
+         This normally runs only for School/Admin because
+         teacherId is a School-managed field.
+      ================================================= */
+
+      const newTeacherId =
+        classDoc.teacherId
+          ? String(
+              classDoc.teacherId
+            )
+          : null;
+
+
+      if (
+        oldTeacherId &&
+        oldTeacherId !==
           newTeacherId
+      ) {
+
+        await User.findByIdAndUpdate(
+          oldTeacherId,
+          {
+            $pull:{
+              assignedClasses:
+                classDoc._id
+            }
+          }
+        );
+
+      }
+
+
+      if (
+        newTeacherId &&
+        (
+          !oldTeacherId ||
+          oldTeacherId !==
+            newTeacherId
+        )
+      ) {
+
+        await User.findByIdAndUpdate(
+          newTeacherId,
+          {
+            $addToSet:{
+              assignedClasses:
+                classDoc._id
+            }
+          }
+        );
+
+      }
+
+
+      /* =================================================
+         AUTHORITATIVE RESPONSE
+      ================================================= */
+
+      const updatedClass =
+        await Class.findById(
+          classDoc._id
+        )
+          .populate(
+            "schoolId",
+            "name schoolName profileImage schoolLogo"
+          )
+          .populate(
+            "teacherId",
+            "name email profileImage avatar role subject department"
+          )
+          .populate(
+            "studentIds",
+            "name email profileImage avatar course"
+          );
+
+
+      /* =================================================
+         SOCKET.IO
+      ================================================= */
+
+      const io =
+        req.app.get(
+          "io"
+        );
+
+
+      if (
+        io
+      ) {
+
+        io.to(
+          String(
+            classDoc.schoolId
+          )
         ).emit(
           "class:builder:updated",
           {
+
             classId:
               classDoc._id,
 
             class:
               updatedClass
+
           }
         );
+
+
+        if (
+          newTeacherId
+        ) {
+
+          io.to(
+            newTeacherId
+          ).emit(
+            "class:builder:updated",
+            {
+
+              classId:
+                classDoc._id,
+
+              class:
+                updatedClass
+
+            }
+          );
+
+        }
+
       }
-    }
 
-    return res.json({
-      success:true,
-      class:updatedClass
-    });
-  } catch (err) {
-    console.error(
-      "PATCH class builder error:",
+
+      /* =================================================
+         RETURN PERMISSIONS TOO
+
+         Important because the frontend can refresh its
+         permission-based visibility after a save.
+      ================================================= */
+
+      return res.json({
+
+        success:
+          true,
+
+        class:
+          updatedClass,
+
+        permissions:
+          getClassBuilderPermissions(
+            req.user,
+            updatedClass
+          )
+
+      });
+
+    } catch (
       err
-    );
-
-    if (
-      err?.statusCode === 400
     ) {
-      return res.status(400).json({
-        message:
-          err.message ||
-          "Invalid class settings"
-      });
+
+      console.error(
+        "PATCH class builder error:",
+        err
+      );
+
+
+      if (
+        err?.statusCode ===
+        400
+      ) {
+
+        return res
+          .status(400)
+          .json({
+            message:
+              err.message ||
+              "Invalid class settings"
+          });
+
+      }
+
+
+      if (
+        err?.name ===
+        "ValidationError"
+      ) {
+
+        const firstValidationError =
+          Object.values(
+            err.errors ||
+            {}
+          )[0];
+
+
+        return res
+          .status(400)
+          .json({
+            message:
+              firstValidationError
+                ?.message ||
+              err.message ||
+              "Invalid class settings"
+          });
+
+      }
+
+
+      if (
+        err?.name ===
+        "CastError"
+      ) {
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "One of the supplied IDs is invalid."
+          });
+
+      }
+
+
+      return res
+        .status(500)
+        .json({
+          message:
+            "Failed to update class builder"
+        });
+
     }
 
-    if (
-      err?.name ===
-      "ValidationError"
-    ) {
-      const firstValidationError =
-        Object.values(
-          err.errors ||
-          {}
-        )[0];
-
-      return res.status(400).json({
-        message:
-          firstValidationError?.message ||
-          err.message ||
-          "Invalid class settings"
-      });
-    }
-
-    if (
-      err?.name ===
-      "CastError"
-    ) {
-      return res.status(400).json({
-        message:
-          "One of the supplied IDs is invalid."
-      });
-    }
-
-    return res.status(500).json({
-      message:
-        "Failed to update class builder"
-    });
   }
-});
+);
 /* =====================================================
    UPDATE LESSON FROM VISUAL STUDIO NORMAL MODE
    PATCH /api/classes/:id/builder/lesson/:lessonId
