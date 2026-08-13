@@ -1342,9 +1342,22 @@ router.get(
 /* =========================================================
    POST /api/question-bank
 
-   createdBy always comes from req.user._id.
+   OWNERSHIP
+   ---------------------------------------------------------
 
-   Browser supplied createdBy is intentionally ignored.
+   createdBy ALWAYS comes from req.user._id.
+
+   The browser cannot assign ownership.
+
+   ADMIN
+     May create for an authorized supplied School.
+
+   SCHOOL
+     Creates for itself.
+
+   TEACHER
+     Creates only inside a School actually linked to the
+     authenticated teacher.
 ========================================================= */
 
 router.post(
@@ -1357,10 +1370,15 @@ router.post(
 
     try {
 
+      /* =====================================================
+         BASIC INPUT
+      ===================================================== */
+
       const title =
         safeString(
           req.body.title
         );
+
 
       const questionText =
         safeString(
@@ -1374,9 +1392,7 @@ router.post(
       ) {
 
         return res
-          .status(
-            400
-          )
+          .status(400)
           .json({
             message:
               "title and question are required"
@@ -1384,6 +1400,10 @@ router.post(
 
       }
 
+
+      /* =====================================================
+         SCHOOL
+      ===================================================== */
 
       const schoolId =
         resolveCreateSchoolId(
@@ -1397,9 +1417,7 @@ router.post(
       ) {
 
         return res
-          .status(
-            403
-          )
+          .status(403)
           .json({
             message:
               "A valid authorized school is required"
@@ -1415,9 +1433,7 @@ router.post(
       ) {
 
         return res
-          .status(
-            400
-          )
+          .status(400)
           .json({
             message:
               "Invalid schoolId"
@@ -1434,9 +1450,7 @@ router.post(
       ) {
 
         return res
-          .status(
-            403
-          )
+          .status(403)
           .json({
             message:
               "Not allowed to create questions for this school"
@@ -1445,10 +1459,144 @@ router.post(
       }
 
 
+      /* =====================================================
+         OPTIONS
+
+         Normalize the Class Builder option format before
+         sending it into Mongoose.
+
+         Browser format:
+           {
+             id,
+             text,
+             isCorrect
+           }
+
+         Database format:
+           {
+             text,
+             isCorrect
+           }
+
+         Local UI IDs must never become ownership/database
+         identifiers.
+      ===================================================== */
+
+      const options =
+        normalizeArray(
+          req.body.options
+        )
+          .map(
+            option => {
+
+              /*
+                Legacy string option support.
+              */
+
+              if (
+                typeof option ===
+                "string"
+              ) {
+
+                return {
+                  text:
+                    safeString(
+                      option
+                    ),
+
+                  isCorrect:
+                    false
+                };
+
+              }
+
+
+              return {
+
+                text:
+                  safeString(
+                    option?.text
+                  ),
+
+                isCorrect:
+                  Boolean(
+                    option?.isCorrect
+                  )
+
+              };
+
+            }
+          )
+          .filter(
+            option =>
+              Boolean(
+                option.text
+              )
+          );
+
+
+      const type =
+        normalizeQuestionType(
+          req.body.type
+        );
+
+
+      /* =====================================================
+         MULTIPLE-CHOICE VALIDATION
+      ===================================================== */
+
+      if (
+        type ===
+        "multiple_choice"
+      ) {
+
+        if (
+          options.length <
+          2
+        ) {
+
+          return res
+            .status(400)
+            .json({
+              message:
+                "Multiple-choice questions require at least two options"
+            });
+
+        }
+
+
+        if (
+          !options.some(
+            option =>
+              option.isCorrect ===
+              true
+          )
+        ) {
+
+          return res
+            .status(400)
+            .json({
+              message:
+                "Select the correct answer before saving the question"
+            });
+
+        }
+
+      }
+
+
+      /* =====================================================
+         CREATE
+      ===================================================== */
+
       const item =
         await QuestionBank.create({
 
           schoolId,
+
+          /*
+            Authoritative authenticated ownership.
+          */
 
           createdBy:
             req.user._id,
@@ -1458,15 +1606,9 @@ router.post(
           question:
             questionText,
 
-          type:
-            normalizeQuestionType(
-              req.body.type
-            ),
+          type,
 
-          options:
-            normalizeArray(
-              req.body.options
-            ),
+          options,
 
           explanation:
             safeString(
@@ -1497,7 +1639,16 @@ router.post(
           tags:
             normalizeArray(
               req.body.tags
-            ),
+            )
+              .map(
+                tag =>
+                  safeString(
+                    tag
+                  )
+              )
+              .filter(
+                Boolean
+              ),
 
           attachments:
             normalizeArray(
@@ -1516,9 +1667,7 @@ router.post(
 
 
       return res
-        .status(
-          201
-        )
+        .status(201)
         .json(
           item
         );
@@ -1527,23 +1676,52 @@ router.post(
       err
     ) {
 
+      /*
+        Keep the complete error in Render logs.
+      */
+
       console.error(
-        "POST question error:",
-        err
+        "POST /api/question-bank error:",
+        {
+          name:
+            err?.name,
+
+          code:
+            err?.code,
+
+          message:
+            err?.message,
+
+          errors:
+            err?.errors,
+
+          stack:
+            err?.stack
+        }
       );
 
+
+      /* =====================================================
+         MONGOOSE VALIDATION
+      ===================================================== */
 
       if (
         err?.name ===
         "ValidationError"
       ) {
 
+        const firstError =
+          Object.values(
+            err.errors ||
+            {}
+          )[0];
+
+
         return res
-          .status(
-            400
-          )
+          .status(400)
           .json({
             message:
+              firstError?.message ||
               err.message ||
               "Question validation failed"
           });
@@ -1551,10 +1729,50 @@ router.post(
       }
 
 
+      /* =====================================================
+         CAST ERROR
+      ===================================================== */
+
+      if (
+        err?.name ===
+        "CastError"
+      ) {
+
+        return res
+          .status(400)
+          .json({
+            message:
+              `Invalid ${err.path || "question"} value`
+          });
+
+      }
+
+
+      /* =====================================================
+         DUPLICATE INDEX
+      ===================================================== */
+
+      if (
+        err?.code ===
+        11000
+      ) {
+
+        return res
+          .status(409)
+          .json({
+            message:
+              "A Question Bank item with this unique value already exists"
+          });
+
+      }
+
+
+      /* =====================================================
+         UNKNOWN SERVER ERROR
+      ===================================================== */
+
       return res
-        .status(
-          500
-        )
+        .status(500)
         .json({
           message:
             "Failed to create question"
@@ -1564,7 +1782,6 @@ router.post(
 
   }
 );
-
 
 /* =========================================================
    PATCH /api/question-bank/:id
