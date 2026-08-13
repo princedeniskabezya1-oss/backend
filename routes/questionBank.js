@@ -136,14 +136,30 @@ function normalizeRole(
 
 }
 
-
 /* =========================================================
    ID NORMALIZATION
+
+   IMPORTANT:
+   ---------------------------------------------------------
+
+   Mongoose/BSON ObjectId values must be handled BEFORE
+   attempting to inspect object._id.
+
+   Some ID-like objects expose an _id property that can point
+   back to the same underlying object. Recursively passing that
+   value into normalizeId() can cause:
+
+     RangeError:
+     Maximum call stack size exceeded
 ========================================================= */
 
 function normalizeId(
   value
 ){
+
+  /* =====================================================
+     EMPTY
+  ===================================================== */
 
   if(
     value === null ||
@@ -155,6 +171,10 @@ function normalizeId(
   }
 
 
+  /* =====================================================
+     STRING
+  ===================================================== */
+
   if(
     typeof value ===
     "string"
@@ -165,6 +185,10 @@ function normalizeId(
   }
 
 
+  /* =====================================================
+     NUMBER
+  ===================================================== */
+
   if(
     typeof value ===
     "number"
@@ -172,42 +196,235 @@ function normalizeId(
 
     return String(
       value
-    );
+    ).trim();
 
   }
 
+
+  /* =====================================================
+     MONGOOSE / BSON OBJECT ID
+
+     Handle this BEFORE _id / id object properties.
+  ===================================================== */
+
+  if(
+    value instanceof
+      mongoose.Types.ObjectId
+  ){
+
+    return value
+      .toHexString()
+      .trim();
+
+  }
+
+
+  /* =====================================================
+     GENERIC BSON-LIKE OBJECT ID
+
+     Covers objects supplied by different BSON/Mongoose
+     package instances.
+  ===================================================== */
+
+  if(
+    typeof value ===
+      "object" &&
+    typeof value.toHexString ===
+      "function"
+  ){
+
+    try{
+
+      const hex =
+        value.toHexString();
+
+
+      if(
+        typeof hex ===
+        "string" &&
+        hex.trim()
+      ){
+
+        return hex.trim();
+
+      }
+
+    }catch(
+      error
+    ){
+
+      /*
+        Continue to the remaining normalization strategies.
+      */
+
+    }
+
+  }
+
+
+  /* =====================================================
+     DOCUMENT / POPULATED OBJECT WITH _id
+
+     Never recursively normalize if _id is the exact same
+     object reference.
+  ===================================================== */
 
   if(
     typeof value ===
       "object" &&
     value._id !==
-      undefined
+      undefined &&
+    value._id !==
+      null &&
+    value._id !==
+      value
   ){
 
-    return normalizeId(
-      value._id
-    );
+    const nestedId =
+      value._id;
+
+
+    if(
+      nestedId instanceof
+        mongoose.Types.ObjectId
+    ){
+
+      return nestedId
+        .toHexString()
+        .trim();
+
+    }
+
+
+    if(
+      typeof nestedId ===
+      "string"
+    ){
+
+      return nestedId.trim();
+
+    }
+
+
+    if(
+      typeof nestedId?.toHexString ===
+      "function"
+    ){
+
+      try{
+
+        return String(
+          nestedId.toHexString()
+        ).trim();
+
+      }catch(
+        error
+      ){
+
+        /* continue */
+
+      }
+
+    }
+
+
+    return String(
+      nestedId
+    ).trim();
 
   }
 
+
+  /* =====================================================
+     GENERIC OBJECT WITH id
+
+     Also protect against a self-reference.
+  ===================================================== */
 
   if(
     typeof value ===
       "object" &&
     value.id !==
-      undefined
+      undefined &&
+    value.id !==
+      null &&
+    value.id !==
+      value
   ){
 
-    return normalizeId(
-      value.id
-    );
+    const nestedId =
+      value.id;
+
+
+    if(
+      typeof nestedId ===
+      "string"
+    ){
+
+      return nestedId.trim();
+
+    }
+
+
+    if(
+      Buffer.isBuffer(
+        nestedId
+      )
+    ){
+
+      return nestedId
+        .toString(
+          "hex"
+        )
+        .trim();
+
+    }
+
+
+    return String(
+      nestedId
+    ).trim();
 
   }
 
 
-  return String(
-    value
-  ).trim();
+  /* =====================================================
+     FALLBACK
+  ===================================================== */
+
+  try{
+
+    const normalized =
+      String(
+        value
+      )
+        .trim();
+
+
+    /*
+      Prevent accidental conversion of generic objects into:
+        [object Object]
+    */
+
+    if(
+      normalized ===
+      "[object Object]"
+    ){
+
+      return "";
+
+    }
+
+
+    return normalized;
+
+  }catch(
+    error
+  ){
+
+    return "";
+
+  }
 
 }
 
@@ -257,13 +474,21 @@ function isValidObjectId(
     );
 
 
-  return Boolean(
-    id &&
-    mongoose.Types.ObjectId
-      .isValid(
-        id
-      )
-  );
+  if(
+    !id
+  ){
+
+    return false;
+
+  }
+
+
+  return mongoose
+    .Types
+    .ObjectId
+    .isValid(
+      id
+    );
 
 }
 
