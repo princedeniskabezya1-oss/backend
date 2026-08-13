@@ -365,10 +365,28 @@ function populateAttendance(query) {
       "classId",
       "title name subject classCode studentIds teacherId schoolId"
     )
-    .populate(
-      "scheduleId",
-      "date time meetingLink classId teacherId"
-    )
+.populate(
+  "scheduleId",
+  [
+    "title",
+    "date",
+    "time",
+    "startTime",
+    "endTime",
+    "scheduledStartAt",
+    "scheduledEndAt",
+    "actualStartAt",
+    "actualEndAt",
+    "sessionType",
+    "sessionStatus",
+    "status",
+    "meetingLink",
+    "location",
+    "classId",
+    "teacherId",
+    "attendanceFinalized"
+  ].join(" ")
+)
     .populate(
       "markedBy",
       "name email role"
