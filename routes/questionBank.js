@@ -1482,57 +1482,103 @@ router.post(
          identifiers.
       ===================================================== */
 
-      const options =
-        normalizeArray(
-          req.body.options
-        )
-          .map(
-            option => {
+const options =
+  normalizeArray(
+    req.body.options
+  )
+    .map(
+      (
+        option,
+        index
+      ) => {
 
-              /*
-                Legacy string option support.
-              */
+        /* =================================================
+           LEGACY STRING OPTION
+        ================================================= */
 
-              if (
-                typeof option ===
-                "string"
-              ) {
+        if (
+          typeof option ===
+          "string"
+        ) {
 
-                return {
-                  text:
-                    safeString(
-                      option
-                    ),
-
-                  isCorrect:
-                    false
-                };
-
-              }
+          const text =
+            safeString(
+              option
+            );
 
 
-              return {
+          if (
+            !text
+          ) {
 
-                text:
-                  safeString(
-                    option?.text
-                  ),
+            return null;
 
-                isCorrect:
-                  Boolean(
-                    option?.isCorrect
-                  )
+          }
 
-              };
 
-            }
-          )
-          .filter(
-            option =>
-              Boolean(
-                option.text
-              )
+          return {
+
+            id:
+              new mongoose
+                .Types
+                .ObjectId()
+                .toString(),
+
+            text,
+
+            isCorrect:
+              index ===
+              0
+
+          };
+
+        }
+
+
+        /* =================================================
+           CLASS BUILDER OPTION
+        ================================================= */
+
+        const text =
+          safeString(
+            option?.text
           );
+
+
+        if (
+          !text
+        ) {
+
+          return null;
+
+        }
+
+
+        return {
+
+          id:
+            safeString(
+              option?.id
+            ) ||
+            new mongoose
+              .Types
+              .ObjectId()
+              .toString(),
+
+          text,
+
+          isCorrect:
+            Boolean(
+              option?.isCorrect
+            )
+
+        };
+
+      }
+    )
+    .filter(
+      Boolean
+    );
 
 
       const type =
