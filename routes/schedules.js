@@ -1,13 +1,32 @@
 "use strict";
 
-const express = require("express");
-const mongoose = require("mongoose");
+const express =
+  require("express");
 
-const router = express.Router();
+const mongoose =
+  require("mongoose");
 
-const auth = require("../middleware/auth");
-const Schedule = require("../models/Schedule");
-const Class = require("../models/Class");
+const crypto =
+  require("crypto");
+
+
+const router =
+  express.Router();
+
+
+const auth =
+  require("../middleware/auth");
+
+const Schedule =
+  require("../models/Schedule");
+
+const Class =
+  require("../models/Class");
+
+
+/* =========================================================
+   SCHEDULE → ATTENDANCE SERVICE
+========================================================= */
 
 const {
   initializeScheduleAttendance,
@@ -15,7 +34,240 @@ const {
   synchronizeScheduleAttendanceSummary,
   synchronizeRescheduledAttendance,
   handleCancelledScheduleAttendance
-} = require("../services/scheduleAttendance");
+} =
+  require(
+    "../services/scheduleAttendance"
+  );
+
+
+/* =========================================================
+   AUTOMATIC SCHEDULE TRACKING
+========================================================= */
+
+const {
+  evaluateSchedule,
+  processMissedSchedules,
+  getSchoolReviewQueue
+} =
+  require(
+    "../services/scheduleTracking"
+  );
+
+
+/* =========================================================
+   SOCKET SERVER
+========================================================= */
+
+function getSocketServer(
+  req
+) {
+
+  try {
+
+    return (
+      req.app.get(
+        "io"
+      ) ||
+      null
+    );
+
+  } catch (
+    error
+  ) {
+
+    return null;
+
+  }
+
+}
+
+
+/* =========================================================
+   EMIT SCHEDULE EVENT
+
+   Rooms:
+     School
+     Teacher
+     Class
+
+   Duplicate rooms are automatically removed.
+========================================================= */
+
+function emitTrackedScheduleEvent(
+  req,
+  schedule,
+  eventName,
+  payload =
+    null
+) {
+
+  const io =
+    getSocketServer(
+      req
+    );
+
+
+  if (
+    !io ||
+    !schedule ||
+    !eventName
+  ) {
+
+    return;
+
+  }
+
+
+  const finalPayload =
+    payload ||
+    schedule;
+
+
+  const rooms =
+    new Set();
+
+
+  const schoolId =
+    normalizeObjectId(
+      schedule.schoolId
+    );
+
+
+  const teacherId =
+    normalizeObjectId(
+      schedule.teacherId
+    );
+
+
+  const classId =
+    normalizeObjectId(
+      schedule.classId
+    );
+
+
+  if (
+    schoolId
+  ) {
+
+    rooms.add(
+      schoolId
+    );
+
+  }
+
+
+  if (
+    teacherId
+  ) {
+
+    rooms.add(
+      teacherId
+    );
+
+  }
+
+
+  if (
+    classId
+  ) {
+
+    rooms.add(
+      classId
+    );
+
+  }
+
+
+  rooms.forEach(
+    room => {
+
+      io
+        .to(
+          room
+        )
+        .emit(
+          eventName,
+          finalPayload
+        );
+
+    }
+  );
+
+}
+
+
+/* =========================================================
+   INTERNAL TRACKER AUTHORIZATION
+
+   Used only by:
+     Render Cron
+     dedicated backend worker
+
+   NEVER expose this secret in frontend JavaScript.
+========================================================= */
+
+function verifyScheduleTrackerSecret(
+  req
+) {
+
+  const expectedSecret =
+    String(
+      process.env
+        .SCHEDULE_TRACKER_SECRET ||
+      ""
+    )
+      .trim();
+
+
+  const providedSecret =
+    String(
+      req.headers[
+        "x-schedule-tracker-secret"
+      ] ||
+      ""
+    )
+      .trim();
+
+
+  if (
+    !expectedSecret ||
+    !providedSecret
+  ) {
+
+    return false;
+
+  }
+
+
+  const expectedBuffer =
+    Buffer.from(
+      expectedSecret
+    );
+
+
+  const providedBuffer =
+    Buffer.from(
+      providedSecret
+    );
+
+
+  if (
+    expectedBuffer.length !==
+    providedBuffer.length
+  ) {
+
+    return false;
+
+  }
+
+
+  return crypto
+    .timingSafeEqual(
+      expectedBuffer,
+      providedBuffer
+    );
+
+}
 
 
 
@@ -752,43 +1004,111 @@ function resolveTeacherForClass(
 
 
 /* =========================================================
-   AUTOMATIC OPERATIONAL EVALUATION
+   SCHEDULE OPERATIONAL STATUS
 
-   This does NOT require a cron job merely to display an
-   accurate status when schedules are loaded.
+   NO CRON / NO BACKGROUND WORKER
+   ---------------------------------------------------------
 
-   A future scheduled worker can use the same logic to send
-   proactive School alerts.
+   Every time Schedule data is loaded, the API evaluates the
+   real current state.
+
+   This keeps:
+
+     School
+     Teacher
+     Student
+
+   views synchronized without a cron service.
+
+   IMPORTANT
+   ---------------------------------------------------------
+
+   A missed Teacher session NEVER marks students absent.
+
+   Student attendance is finalized only when a real session
+   is completed through the Attendance integration.
 ========================================================= */
 
 function evaluateScheduleOperationalState(
   schedule,
-  now = new Date()
+  now =
+    new Date()
 ) {
-  if (!schedule) {
+
+  if (
+    !schedule
+  ) {
+
     return false;
+
   }
+
 
   let changed =
     false;
 
-  const terminalStatuses =
-    new Set([
-      "completed",
-      "cancelled",
-      "rescheduled"
-    ]);
+
+  /* =====================================================
+     NORMALIZE STATE
+  ===================================================== */
+
+  const sessionStatus =
+    safeString(
+      schedule.sessionStatus,
+      schedule.status ===
+        "completed"
+        ? "completed"
+        : schedule.status ===
+            "cancelled"
+          ? "cancelled"
+          : "scheduled"
+    )
+      .toLowerCase();
+
 
   if (
-    terminalStatuses.has(
+    schedule.sessionStatus !==
+    sessionStatus
+  ) {
+
+    schedule.sessionStatus =
+      sessionStatus;
+
+    changed =
+      true;
+
+  }
+
+
+  /* =====================================================
+     TERMINAL SESSION
+
+     Once completed/cancelled/missed, automatic checking must
+     not rewrite the historical state.
+  ===================================================== */
+
+  if (
+    [
+      "completed",
+      "cancelled",
+      "missed"
+    ].includes(
       schedule.sessionStatus
     )
   ) {
+
     schedule.trackingEvaluatedAt =
       now;
 
+
     return changed;
+
   }
+
+
+  /* =====================================================
+     DATETIMES
+  ===================================================== */
 
   const scheduledStartAt =
     schedule.scheduledStartAt
@@ -797,6 +1117,7 @@ function evaluateScheduleOperationalState(
         )
       : null;
 
+
   const scheduledEndAt =
     schedule.scheduledEndAt
       ? new Date(
@@ -804,212 +1125,468 @@ function evaluateScheduleOperationalState(
         )
       : null;
 
-  /*
-    Detect late Teacher after grace period.
-  */
+
+  const teacherStartAt =
+    schedule.teacherJoinedAt
+      ? new Date(
+          schedule.teacherJoinedAt
+        )
+      : schedule.actualStartAt
+        ? new Date(
+            schedule.actualStartAt
+          )
+        : null;
+
+
+  /* =====================================================
+     TEACHER ACTUALLY STARTED SESSION
+  ===================================================== */
 
   if (
-    schedule.sessionStatus ===
-      "scheduled" &&
-    scheduledStartAt &&
-    !schedule.actualStartAt &&
-    !schedule.teacherJoinedAt
+    teacherStartAt &&
+    !Number.isNaN(
+      teacherStartAt.getTime()
+    )
   ) {
-    const graceBoundary =
-      new Date(
-        scheduledStartAt.getTime() +
-        DEFAULT_LATE_GRACE_MINUTES *
-          60 *
-          1000
-      );
+
+    /*
+      If the session has actually started, it cannot later
+      become "missed".
+    */
 
     if (
-      now >= graceBoundary &&
-      (
-        !scheduledEndAt ||
-        now < scheduledEndAt
+      schedule.sessionStatus ===
+      "scheduled" ||
+      schedule.sessionStatus ===
+      "rescheduled"
+    ) {
+
+      schedule.sessionStatus =
+        "started";
+
+      changed =
+        true;
+
+    }
+
+
+    /* ===================================================
+       CALCULATE LATE ARRIVAL
+
+       10-minute grace period.
+
+       Examples:
+
+         9:00 scheduled
+         9:05 start -> present
+         9:10 start -> present
+         9:11 start -> late
+    =================================================== */
+
+    if (
+      scheduledStartAt &&
+      !Number.isNaN(
+        scheduledStartAt.getTime()
       )
     ) {
-      if (
-        schedule.teacherAttendanceStatus !==
-        "late"
-      ) {
-        schedule.teacherAttendanceStatus =
-          "late";
 
-        changed =
-          true;
-      }
+      const graceMinutes =
+        10;
 
-      const lateMinutes =
+
+      const differenceMinutes =
         Math.max(
           0,
           Math.floor(
             (
-              now.getTime() -
+              teacherStartAt.getTime() -
               scheduledStartAt.getTime()
             ) /
             60000
           )
         );
 
+
+      const late =
+        differenceMinutes >
+        graceMinutes;
+
+
+      const finalLateMinutes =
+        late
+          ? differenceMinutes
+          : 0;
+
+
       if (
         schedule.teacherLateMinutes !==
-        lateMinutes
+        finalLateMinutes
       ) {
+
         schedule.teacherLateMinutes =
-          lateMinutes;
+          finalLateMinutes;
 
         changed =
           true;
+
       }
+
+
+      const attendanceStatus =
+        late
+          ? "late"
+          : "present";
+
+
+      if (
+        schedule.teacherAttendanceStatus !==
+        attendanceStatus
+      ) {
+
+        schedule.teacherAttendanceStatus =
+          attendanceStatus;
+
+        changed =
+          true;
+
+      }
+
+    } else {
+
+      if (
+        schedule.teacherAttendanceStatus ===
+        "pending"
+      ) {
+
+        schedule.teacherAttendanceStatus =
+          "present";
+
+        changed =
+          true;
+
+      }
+
     }
-  }
 
-  /*
-    Automatically flag a session as missed once its scheduled
-    end passes without any evidence that the Teacher started.
-  */
 
-  if (
-    schedule.sessionStatus ===
-      "scheduled" &&
-    scheduledEndAt &&
-    now > scheduledEndAt &&
-    !schedule.actualStartAt &&
-    !schedule.teacherJoinedAt
-  ) {
-    schedule.sessionStatus =
-      "missed";
-
-    schedule.status =
-      "scheduled";
-
-    schedule.teacherAttendanceStatus =
-      "missed";
-
-    schedule.missedAt =
-      schedule.missedAt ||
+    schedule.trackingEvaluatedAt =
       now;
 
-    schedule.missedDetectedAutomatically =
-      true;
 
-    schedule.requiresReview =
-      true;
+    return changed;
 
-    schedule.reviewReason =
-      schedule.reviewReason ||
-      "Scheduled session ended without a recorded teacher start.";
-
-    changed =
-      true;
   }
+
+
+  /* =====================================================
+     MISSED SESSION
+
+     A session becomes missed when:
+
+       - it is still scheduled/rescheduled
+       - no Teacher start/join exists
+       - scheduledEndAt has already passed
+
+     We use a 15-minute grace period after the scheduled end.
+
+     Example:
+
+       session: 9:00 - 10:00
+       missed appears after: 10:15
+  ===================================================== */
+
+  if (
+    [
+      "scheduled",
+      "rescheduled"
+    ].includes(
+      schedule.sessionStatus
+    ) &&
+    scheduledEndAt &&
+    !Number.isNaN(
+      scheduledEndAt.getTime()
+    )
+  ) {
+
+    const missedGraceMinutes =
+      15;
+
+
+    const missedCutoff =
+      new Date(
+        scheduledEndAt.getTime() +
+        (
+          missedGraceMinutes *
+          60 *
+          1000
+        )
+      );
+
+
+    if (
+      now >=
+      missedCutoff
+    ) {
+
+      schedule.sessionStatus =
+        "missed";
+
+
+      /*
+        Legacy status intentionally stays "scheduled" because
+        the old status enum does not contain "missed".
+
+        sessionStatus is now the authoritative lifecycle field.
+      */
+
+      schedule.status =
+        "scheduled";
+
+
+      schedule.teacherAttendanceStatus =
+        "missed";
+
+
+      schedule.missedAt =
+        schedule.missedAt ||
+        now;
+
+
+      schedule.missedReason =
+        schedule.missedReason ||
+        "The assigned Teacher did not start this scheduled session before the missed-session cutoff.";
+
+
+      schedule.missedDetectedAutomatically =
+        true;
+
+
+      /* ===================================================
+         SCHOOL REVIEW
+      =================================================== */
+
+      schedule.requiresReview =
+        true;
+
+
+      schedule.reviewReason =
+        schedule.reviewReason ||
+        "Scheduled class ended without a recorded Teacher start.";
+
+
+      schedule.trackingEvaluatedAt =
+        now;
+
+
+      schedule.lastActivityAt =
+        now;
+
+
+      changed =
+        true;
+
+
+      return changed;
+
+    }
+
+  }
+
+
+  /* =====================================================
+     NOT MISSED YET
+  ===================================================== */
 
   schedule.trackingEvaluatedAt =
     now;
 
+
   return changed;
+
 }
+
+
 
 
 /* =========================================================
    GET SCHEDULES
+
+   GET /api/schedules
+
+   IMPORTANT
+   ---------------------------------------------------------
+
+   This endpoint performs lazy operational evaluation.
+
+   That means:
+
+     School opens Schedule -> missed sessions update
+     Teacher opens Schedule -> missed sessions update
+     Student opens Schedule -> missed sessions update
+
+   No Cron service is required.
 ========================================================= */
 
 router.get(
   "/",
   auth,
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
+
     try {
+
       const user =
         req.user;
+
 
       const role =
         normalizeRole(
           user.role
         );
 
-      const query = {};
+
+      const query =
+        {};
+
 
       /* =====================================================
          ADMIN
       ===================================================== */
 
-      if (role === "admin") {
+      if (
+        role ===
+        "admin"
+      ) {
+
         if (
           req.query.schoolId
         ) {
+
+          if (
+            !isValidObjectId(
+              req.query.schoolId
+            )
+          ) {
+
+            return res
+              .status(400)
+              .json({
+                message:
+                  "Invalid schoolId."
+              });
+
+          }
+
+
           query.schoolId =
             req.query.schoolId;
+
         }
+
       }
+
 
       /* =====================================================
          SCHOOL
+
+         School sees every Schedule belonging to itself.
       ===================================================== */
 
       else if (
-        role === "school"
+        role ===
+        "school"
       ) {
+
         query.schoolId =
           user._id;
+
       }
+
 
       /* =====================================================
          TEACHER
+
+         Teacher sees only classes explicitly assigned to them.
       ===================================================== */
 
       else if (
-        role === "teacher"
+        role ===
+        "teacher"
       ) {
-        const assignedClasses =
+
+        const classes =
           await Class.find({
             teacherId:
               user._id
           })
-            .select("_id")
+            .select(
+              "_id"
+            )
             .lean();
+
 
         query.classId = {
           $in:
-            assignedClasses.map(
-              item => item._id
+            classes.map(
+              classDoc =>
+                classDoc._id
             )
         };
+
       }
+
 
       /* =====================================================
          STUDENT
+
+         Student sees only schedules belonging to enrolled
+         classes.
       ===================================================== */
 
       else if (
-        role === "student"
+        role ===
+        "student"
       ) {
-        const enrolledClasses =
+
+        const classes =
           await Class.find({
             studentIds:
               user._id
           })
-            .select("_id")
+            .select(
+              "_id"
+            )
             .lean();
+
 
         query.classId = {
           $in:
-            enrolledClasses.map(
-              item => item._id
+            classes.map(
+              classDoc =>
+                classDoc._id
             )
         };
+
       }
 
+
+      /* =====================================================
+         OTHER ROLE
+      ===================================================== */
+
       else {
+
         return res
           .status(403)
           .json({
             message:
-              "Not allowed to view schedules"
+              "Not allowed to view schedules."
           });
+
       }
+
 
       /* =====================================================
          CLASS FILTER
@@ -1018,81 +1595,105 @@ router.get(
       if (
         req.query.classId
       ) {
+
         if (
           !isValidObjectId(
             req.query.classId
           )
         ) {
+
           return res
             .status(400)
             .json({
               message:
-                "Invalid classId"
+                "Invalid classId."
             });
+
         }
+
 
         const classDoc =
           await Class.findById(
             req.query.classId
           );
 
-        if (!classDoc) {
+
+        if (
+          !classDoc
+        ) {
+
           return res
             .status(404)
             .json({
               message:
-                "Class not found"
+                "Class not found."
             });
+
         }
 
+
         if (
-          role === "teacher" &&
+          role ===
+            "teacher" &&
           !canManageAssignedClass(
             user,
             classDoc
           )
         ) {
+
           return res
             .status(403)
             .json({
               message:
-                "Not allowed to view this class schedule"
+                "Not allowed to view this class Schedule."
             });
+
         }
 
+
         if (
-          role === "student" &&
+          role ===
+            "student" &&
           !isStudentEnrolled(
             user,
             classDoc
           )
         ) {
+
           return res
             .status(403)
             .json({
               message:
-                "Not enrolled in this class"
+                "You are not enrolled in this class."
             });
+
         }
 
+
         if (
-          role === "school" &&
+          role ===
+            "school" &&
           !canManageAssignedClass(
             user,
             classDoc
           )
         ) {
+
           return res
             .status(403)
             .json({
               message:
-                "Class does not belong to this school"
+                "This class does not belong to your School."
             });
+
         }
+
 
         query.classId =
           classDoc._id;
+
       }
+
 
       /* =====================================================
          TEACHER FILTER
@@ -1101,55 +1702,71 @@ router.get(
       if (
         req.query.teacherId
       ) {
+
         if (
-          role === "teacher" &&
+          role ===
+            "teacher" &&
           !sameId(
             req.query.teacherId,
             user._id
           )
         ) {
+
           return res
             .status(403)
             .json({
               message:
-                "Not allowed to view another teacher's schedule"
+                "Not allowed to view another Teacher's Schedule."
             });
+
         }
 
+
         query.teacherId =
-          role === "teacher"
+          role ===
+            "teacher"
             ? user._id
             : req.query.teacherId;
+
       }
 
+
       /* =====================================================
-         STATUS FILTER
+         SESSION STATUS FILTER
       ===================================================== */
 
       if (
         req.query.sessionStatus
       ) {
-        const requestedStatus =
+
+        const sessionStatus =
           safeString(
             req.query.sessionStatus
-          ).toLowerCase();
+          )
+            .toLowerCase();
+
 
         if (
           !SESSION_STATUSES.has(
-            requestedStatus
+            sessionStatus
           )
         ) {
+
           return res
             .status(400)
             .json({
               message:
-                "Invalid sessionStatus"
+                "Invalid sessionStatus."
             });
+
         }
 
+
         query.sessionStatus =
-          requestedStatus;
+          sessionStatus;
+
       }
+
 
       /* =====================================================
          DATE RANGE
@@ -1159,45 +1776,64 @@ router.get(
         req.query.from ||
         req.query.to
       ) {
-        query.date = {};
+
+        query.date =
+          {};
+
 
         if (
           req.query.from
         ) {
+
           const from =
             normalizeDateInput(
               req.query.from
             );
 
-          if (!from) {
+
+          if (
+            !from
+          ) {
+
             return res
               .status(400)
               .json({
                 message:
-                  "Invalid from date"
+                  "Invalid from date."
               });
+
           }
+
 
           query.date.$gte =
             from;
+
         }
+
 
         if (
           req.query.to
         ) {
+
           const to =
             normalizeDateInput(
               req.query.to
             );
 
-          if (!to) {
+
+          if (
+            !to
+          ) {
+
             return res
               .status(400)
               .json({
                 message:
-                  "Invalid to date"
+                  "Invalid to date."
               });
+
           }
+
 
           to.setHours(
             23,
@@ -1206,18 +1842,26 @@ router.get(
             999
           );
 
+
           query.date.$lte =
             to;
+
         }
+
       }
 
-      let schedules =
+
+      /* =====================================================
+         LOAD
+      ===================================================== */
+
+      const schedules =
         await Schedule.find(
           query
         )
           .populate(
             "classId",
-            "title subject classCode schoolId teacherId"
+            "title subject classCode schoolId teacherId studentIds"
           )
           .populate(
             "teacherId",
@@ -1228,53 +1872,67 @@ router.get(
             "name email role profileImage"
           )
           .sort({
-            scheduledStartAt: 1,
-            date: 1,
-            time: 1,
-            createdAt: -1
+            scheduledStartAt:
+              1,
+
+            date:
+              1,
+
+            time:
+              1,
+
+            createdAt:
+              -1
           });
 
-      /*
-        Upgrade old records lazily and evaluate operational
-        status whenever schedules are read.
-      */
+
+      /* =====================================================
+         LAZY MISSED-SESSION EVALUATION
+      ===================================================== */
 
       const now =
         new Date();
 
-      const changedSchedules =
+
+      const schedulesToSave =
         [];
 
+
       for (
-        const schedule of schedules
+        const schedule of
+        schedules
       ) {
+
         let changed =
           false;
 
+
+        /* ===================================================
+           UPGRADE OLD SCHEDULE DATETIME FIELDS
+        =================================================== */
+
         if (
-          !schedule.scheduledStartAt
+          !schedule.scheduledStartAt ||
+          (
+            schedule.endTime &&
+            !schedule.scheduledEndAt
+          )
         ) {
+
           synchronizeScheduleTimes(
             schedule
           );
 
-          changed =
-            true;
-        }
-
-        if (
-          !schedule.sessionStatus
-        ) {
-          schedule.sessionStatus =
-            schedule.status === "completed"
-              ? "completed"
-              : schedule.status === "cancelled"
-                ? "cancelled"
-                : "scheduled";
 
           changed =
             true;
+
         }
+
+
+        /* ===================================================
+           EVALUATE OPERATIONAL STATUS
+        =================================================== */
 
         if (
           evaluateScheduleOperationalState(
@@ -1282,79 +1940,143 @@ router.get(
             now
           )
         ) {
+
           changed =
             true;
+
         }
+
 
         synchronizeLegacyStatus(
           schedule
         );
 
-        if (changed) {
-          await schedule.save();
 
-          changedSchedules.push(
+        if (
+          changed
+        ) {
+
+          schedulesToSave.push(
             schedule
           );
+
         }
+
       }
+
+
+      /* =====================================================
+         SAVE ONLY CHANGED RECORDS
+      ===================================================== */
+
+      if (
+        schedulesToSave.length
+      ) {
+
+        await Promise.all(
+          schedulesToSave.map(
+            schedule =>
+              schedule.save()
+          )
+        );
+
+      }
+
 
       return res.json(
         schedules
       );
 
-    } catch (err) {
+    } catch (
+      error
+    ) {
+
       console.error(
         "GET /api/schedules error:",
-        err
+        error
       );
+
 
       return res
         .status(500)
         .json({
           message:
-            "Failed to load schedules"
+            "Failed to load schedules."
         });
+
     }
+
   }
 );
 
-
 /* =========================================================
    GET SINGLE SCHEDULE
+
+   GET /api/schedules/:id
+
+   This route also performs a safe lazy tracking evaluation.
+
+   The automatic cron/worker remains responsible for proactive
+   missed-session detection when nobody has the page open.
 ========================================================= */
 
 router.get(
   "/:id",
   auth,
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
+
     try {
+
+      /* =====================================================
+         VALIDATE ID
+      ===================================================== */
+
       if (
         !isValidObjectId(
           req.params.id
         )
       ) {
+
         return res
           .status(400)
           .json({
             message:
-              "Invalid schedule ID"
+              "Invalid Schedule ID."
           });
+
       }
+
+
+      /* =====================================================
+         LOAD BASE SCHEDULE
+      ===================================================== */
 
       const schedule =
         await Schedule.findById(
           req.params.id
         );
 
-      if (!schedule) {
+
+      if (
+        !schedule
+      ) {
+
         return res
           .status(404)
           .json({
             message:
-              "Schedule not found"
+              "Schedule not found."
           });
+
       }
+
+
+      /* =====================================================
+         AUTHORIZATION
+      ===================================================== */
 
       const access =
         await getScheduleAccessContext(
@@ -1362,51 +2084,158 @@ router.get(
           schedule
         );
 
-      if (!access.allowed) {
+
+      if (
+        !access.allowed
+      ) {
+
         return res
           .status(403)
           .json({
             message:
-              "Not allowed to view this schedule"
+              "Not allowed to view this Schedule."
           });
+
       }
+
+
+      /* =====================================================
+         LEGACY / CANONICAL TIME SYNCHRONIZATION
+      ===================================================== */
 
       synchronizeScheduleTimes(
         schedule
       );
 
-      evaluateScheduleOperationalState(
-        schedule
-      );
 
       synchronizeLegacyStatus(
         schedule
       );
 
+
       await schedule.save();
+
+
+      /* =====================================================
+         LAZY TRACKING EVALUATION
+
+         Examples:
+
+         scheduled + expired + no Teacher start
+           -> missed
+
+         Teacher actually started
+           -> present / late tracking
+
+         This is NOT the replacement for the scheduled worker.
+      ===================================================== */
+
+      const evaluation =
+        await evaluateSchedule(
+          schedule._id,
+          {
+            now:
+              new Date()
+          }
+        );
+
+
+      /* =====================================================
+         REALTIME EVENT IF TRACKING CHANGED
+      ===================================================== */
+
+      if (
+        evaluation?.changed &&
+        evaluation?.schedule
+      ) {
+
+        const trackingEvent =
+          evaluation.reason ===
+          "missed"
+            ? "schedule:missed"
+            : "schedule:tracking-updated";
+
+
+        emitTrackedScheduleEvent(
+          req,
+          evaluation.schedule,
+          trackingEvent
+        );
+
+
+        /*
+          Existing clients already know schedule:updated,
+          therefore emit it as the compatibility event too.
+        */
+
+        emitTrackedScheduleEvent(
+          req,
+          evaluation.schedule,
+          "schedule:updated"
+        );
+
+      }
+
+
+      /* =====================================================
+         RELOAD AUTHORITATIVE POPULATED SCHEDULE
+      ===================================================== */
 
       const populated =
         await populateSchedule(
           schedule._id
         );
 
+
+      if (
+        !populated
+      ) {
+
+        return res
+          .status(404)
+          .json({
+            message:
+              "Schedule could not be reloaded."
+          });
+
+      }
+
+
       return res.json(
         populated
       );
 
-    } catch (err) {
+    } catch (
+      error
+    ) {
+
       console.error(
         "GET /api/schedules/:id error:",
-        err
+        error
       );
 
+
+      const statusCode =
+        Number(
+          error?.statusCode
+        ) ||
+        500;
+
+
       return res
-        .status(500)
+        .status(
+          statusCode
+        )
         .json({
           message:
-            "Failed to load schedule"
+            statusCode ===
+            500
+              ? "Failed to load Schedule."
+              : error.message
         });
+
     }
+
   }
 );
 
