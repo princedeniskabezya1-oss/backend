@@ -56,7 +56,21 @@ const uploadRoutes = require("./routes/uploads");
 const studentResourceRoutes = require("./routes/studentResources");
 const certificateRoutes = require("./routes/certificates");
 const studentPortfolioRoutes = require("./routes/studentPortfolio");
-const studentAIRoutes = require("./routes/studentAI");
+
+/* ============================================
+   KABEZYA AI
+============================================ */
+
+const studentAIRoutes =
+  require(
+    "./routes/studentAI"
+  );
+
+const teacherKabezyaRoutes =
+  require(
+    "./routes/teacherKabezya"
+  );
+
 const supportRoutes = require("./routes/support");
 const mediaRoutes = require("./routes/media");
 
@@ -344,18 +358,116 @@ app.use("/api/analytics", analyticsRoutes);
 app.use("/api/saved", savedRoutes);
 app.use("/api/groups", groupRoutes);
 
-app.use("/api/class-modules", classModuleRoutes);
-app.use("/api/class-lessons", classLessonRoutes);
-app.use("/api/quizzes", quizRoutes);
-app.use("/api/question-bank", questionBankRoutes);
-app.use("/api/lesson-progress", lessonProgressRoutes);
-app.use("/api/uploads", uploadRoutes);
-app.use("/api/student-resources", studentResourceRoutes);
-app.use("/api/certificates", certificateRoutes);
-app.use("/api/student-portfolio", studentPortfolioRoutes);
-app.use("/api/student-ai", studentAIRoutes);
-app.use("/api/support", supportRoutes);
-app.use("/api/media", mediaRoutes);
+app.use(
+  "/api/class-modules",
+  classModuleRoutes
+);
+
+app.use(
+  "/api/class-lessons",
+  classLessonRoutes
+);
+
+app.use(
+  "/api/quizzes",
+  quizRoutes
+);
+
+app.use(
+  "/api/question-bank",
+  questionBankRoutes
+);
+
+app.use(
+  "/api/lesson-progress",
+  lessonProgressRoutes
+);
+
+app.use(
+  "/api/uploads",
+  uploadRoutes
+);
+
+app.use(
+  "/api/student-resources",
+  studentResourceRoutes
+);
+
+app.use(
+  "/api/certificates",
+  certificateRoutes
+);
+
+app.use(
+  "/api/student-portfolio",
+  studentPortfolioRoutes
+);
+
+
+/* ============================================
+   KABEZYA AI
+============================================ */
+
+/*
+  Student Kabezya
+
+  Existing student AI system.
+*/
+
+app.use(
+  "/api/student-ai",
+  studentAIRoutes
+);
+
+
+/*
+  Teacher Kabezya
+
+  Teacher Studio endpoints become:
+
+  POST
+  /api/kabezya/teacher/assistant
+
+  POST
+  /api/kabezya/teacher/analyze-class
+
+  POST
+  /api/kabezya/teacher/analyze-student
+
+  POST
+  /api/kabezya/teacher/inspect-submission
+
+  POST
+  /api/kabezya/teacher/generate-quiz
+
+  POST
+  /api/kabezya/teacher/generate-assignment
+
+  POST
+  /api/kabezya/teacher/lesson-plan
+
+  GET
+  /api/kabezya/teacher/inspections/:submissionId
+
+  PATCH
+  /api/kabezya/teacher/inspections/:inspectionId/review
+*/
+
+app.use(
+  "/api/kabezya",
+  teacherKabezyaRoutes
+);
+
+
+app.use(
+  "/api/support",
+  supportRoutes
+);
+
+app.use(
+  "/api/media",
+  mediaRoutes
+);
 /* ============================================
    SOCKET.IO
 ============================================ */
