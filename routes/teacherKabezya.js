@@ -83,21 +83,15 @@ const {
 /* =========================================================
    RATE LIMIT CONFIGURATION
 
-   Current policy:
+   AIFT ACCOUNT-LEVEL LIMIT
 
-   - 60 accepted AI requests
-   - per 5-minute rolling window
-   - per authenticated account
-   - rejected requests do NOT consume another slot
-   - precise retry timing is returned to the frontend
+   180 accepted requests / 5 minutes / account.
+
+   This protects AIFT from accidental loops and abuse while
+   allowing normal conversational AI usage.
 
    IMPORTANT:
-
-   This remains process-local because the current AIFT
-   backend uses an in-memory implementation.
-
-   If AIFT later runs multiple backend instances, move this
-   store to Redis or another shared rate-limit service.
+   This does NOT control Gemini's own provider quota.
 ========================================================= */
 
 const TEACHER_AI_WINDOW_MS =
@@ -107,7 +101,7 @@ const TEACHER_AI_WINDOW_MS =
 
 
 const TEACHER_AI_MAX_REQUESTS =
-  60;
+  180;
 
 
 const teacherAIUsage =
@@ -125,10 +119,8 @@ function safeString(
 ){
 
   if(
-    value ===
-      null ||
-    value ===
-      undefined
+    value === null ||
+    value === undefined
   ){
 
     return "";
@@ -261,13 +253,6 @@ function getRole(
 
 /* =========================================================
    SCHOOL ID
-
-   Supports the school identity patterns already used
-   throughout AIFT:
-
-   - school account => own _id
-   - teacher => schoolId / linkedSchoolId
-   - admin => resolved from target record
 ========================================================= */
 
 function getUserSchoolId(
@@ -291,7 +276,7 @@ function getUserSchoolId(
 
   if(
     role ===
-      "school"
+    "school"
   ){
 
     return normalizeId(
@@ -341,8 +326,16 @@ function requireTeacherKabezya(
         403
       )
       .json({
+
+        ok:
+          false,
+
+        code:
+          "TEACHER_KABEZYA_ACCESS_DENIED",
+
         message:
           "Teacher Kabezya access is not available for this account."
+
       });
 
   }
@@ -356,22 +349,17 @@ function requireTeacherKabezya(
 /* =========================================================
    TEACHER AI RATE LIMIT
 
-   Production behavior:
+   IMPORTANT:
 
-   1. Keep only requests still inside the rolling window.
-   2. Reject only when the active request count reaches
-      the configured account limit.
-   3. Calculate exactly when a request slot becomes free.
-   4. Return Retry-After using the standard HTTP header.
-   5. Also return structured retry information as JSON.
-   6. A rejected request is NOT added to usage history.
+   This limiter is deliberately separate from Gemini's
+   provider quota.
 
-   This allows the frontend to distinguish:
+   If THIS middleware rejects a request, it ALWAYS returns:
 
-   - normal temporary throttling
-   - provider overload
-   - authentication errors
-   - ordinary request failures
+     code: TEACHER_AI_RATE_LIMITED
+
+   That lets the frontend distinguish an AIFT account limit
+   from a Gemini/provider 429.
 ========================================================= */
 
 function enforceTeacherAIRateLimit(
@@ -379,10 +367,6 @@ function enforceTeacherAIRateLimit(
   res,
   next
 ){
-
-  /* =====================================================
-     AUTHENTICATED ACCOUNT
-  ===================================================== */
 
   const userId =
     normalizeId(
@@ -414,10 +398,6 @@ function enforceTeacherAIRateLimit(
   }
 
 
-  /* =====================================================
-     CURRENT WINDOW
-  ===================================================== */
-
   const now =
     Date.now();
 
@@ -429,32 +409,26 @@ function enforceTeacherAIRateLimit(
     [];
 
 
-  /*
-    Only timestamps that remain inside the rolling window
-    count toward the current rate limit.
-  */
+  /* =====================================================
+     CLEAN ACTIVE WINDOW
+  ===================================================== */
 
   const active =
     existing
+      .map(
+        timestamp =>
+          Number(
+            timestamp
+          )
+      )
       .filter(
-        timestamp => {
-
-          const normalizedTimestamp =
-            Number(
-              timestamp
-            );
-
-
-          return (
-            Number.isFinite(
-              normalizedTimestamp
-            ) &&
-            now -
-            normalizedTimestamp <
-            TEACHER_AI_WINDOW_MS
-          );
-
-        }
+        timestamp =>
+          Number.isFinite(
+            timestamp
+          ) &&
+          now -
+          timestamp <
+          TEACHER_AI_WINDOW_MS
       )
       .sort(
         (
@@ -467,7 +441,7 @@ function enforceTeacherAIRateLimit(
 
 
   /* =====================================================
-     LIMIT REACHED
+     ACCOUNT LIMIT REACHED
   ===================================================== */
 
   if(
@@ -475,21 +449,12 @@ function enforceTeacherAIRateLimit(
     TEACHER_AI_MAX_REQUESTS
   ){
 
-    /*
-      The first timestamp is the oldest request still inside
-      the rolling window.
-
-      As soon as it expires, one new request can be accepted.
-    */
-
     const oldestRequestAt =
-      Number(
-        active[0] ||
-        now
-      );
+      active[0] ||
+      now;
 
 
-    const elapsedSinceOldest =
+    const elapsed =
       Math.max(
         0,
         now -
@@ -501,7 +466,7 @@ function enforceTeacherAIRateLimit(
       Math.max(
         1000,
         TEACHER_AI_WINDOW_MS -
-        elapsedSinceOldest
+        elapsed
       );
 
 
@@ -516,10 +481,7 @@ function enforceTeacherAIRateLimit(
 
 
     /*
-      Retain only valid timestamps.
-
-      This keeps the Map clean without counting the rejected
-      request itself.
+      Do not count the rejected request.
     */
 
     teacherAIUsage.set(
@@ -527,10 +489,6 @@ function enforceTeacherAIRateLimit(
       active
     );
 
-
-    /*
-      Standard HTTP retry information.
-    */
 
     res.set(
       "Retry-After",
@@ -577,17 +535,26 @@ function enforceTeacherAIRateLimit(
         ok:
           false,
 
+        /*
+          CRITICAL:
+          This tells the frontend that the 429 came from
+          AIFT, rather than Gemini.
+        */
+
         code:
           "TEACHER_AI_RATE_LIMITED",
 
         message:
-          "Kabezya has reached the temporary request limit for this account.",
-
-        retryAfterSeconds,
+          "Kabezya has reached the temporary AIFT request limit for this account.",
 
         retryAfterMs,
 
+        retryAfterSeconds,
+
         rateLimit:{
+
+          source:
+            "aift",
 
           limit:
             TEACHER_AI_MAX_REQUESTS,
@@ -598,11 +565,12 @@ function enforceTeacherAIRateLimit(
           windowMs:
             TEACHER_AI_WINDOW_MS,
 
-          windowSeconds:
-            Math.ceil(
-              TEACHER_AI_WINDOW_MS /
-              1000
+          resetAt:
+            new Date(
+              now +
+              retryAfterMs
             )
+              .toISOString()
 
         }
 
@@ -625,13 +593,6 @@ function enforceTeacherAIRateLimit(
     active
   );
 
-
-  /* =====================================================
-     RATE LIMIT RESPONSE INFORMATION
-
-     This is useful for future UI/monitoring without
-     exposing anything sensitive.
-  ===================================================== */
 
   const remaining =
     Math.max(
@@ -657,10 +618,19 @@ function enforceTeacherAIRateLimit(
   );
 
 
+  /*
+    Make the source explicit for debugging.
+  */
+
+  res.set(
+    "X-AIFT-AI-RateLimit",
+    "teacher"
+  );
+
+
   next();
 
 }
-
 
 /* =========================================================
    SAFE ERROR RESPONSE
