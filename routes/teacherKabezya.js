@@ -75,17 +75,39 @@ const {
 
 
 /* =========================================================
-   CONSTANTS
+   KABEZYA CORE HELPERS + RATE LIMIT
+   Production Teacher AI Request Protection
+========================================================= */
+
+
+/* =========================================================
+   RATE LIMIT CONFIGURATION
+
+   Current policy:
+
+   - 60 accepted AI requests
+   - per 5-minute rolling window
+   - per authenticated account
+   - rejected requests do NOT consume another slot
+   - precise retry timing is returned to the frontend
+
+   IMPORTANT:
+
+   This remains process-local because the current AIFT
+   backend uses an in-memory implementation.
+
+   If AIFT later runs multiple backend instances, move this
+   store to Redis or another shared rate-limit service.
 ========================================================= */
 
 const TEACHER_AI_WINDOW_MS =
-  10 *
+  5 *
   60 *
   1000;
 
 
 const TEACHER_AI_MAX_REQUESTS =
-  40;
+  60;
 
 
 const teacherAIUsage =
@@ -103,8 +125,10 @@ function safeString(
 ){
 
   if(
-    value === null ||
-    value === undefined
+    value ===
+      null ||
+    value ===
+      undefined
   ){
 
     return "";
@@ -240,6 +264,7 @@ function getRole(
 
    Supports the school identity patterns already used
    throughout AIFT:
+
    - school account => own _id
    - teacher => schoolId / linkedSchoolId
    - admin => resolved from target record
@@ -266,7 +291,7 @@ function getUserSchoolId(
 
   if(
     role ===
-    "school"
+      "school"
   ){
 
     return normalizeId(
@@ -329,14 +354,24 @@ function requireTeacherKabezya(
 
 
 /* =========================================================
-   REQUEST RATE LIMIT
+   TEACHER AI RATE LIMIT
 
-   This is intentionally lightweight and process-local,
-   matching the simple protection style of the current
-   Student AI implementation.
+   Production behavior:
 
-   If AIFT later runs multiple backend instances, this should
-   move to Redis or another shared store.
+   1. Keep only requests still inside the rolling window.
+   2. Reject only when the active request count reaches
+      the configured account limit.
+   3. Calculate exactly when a request slot becomes free.
+   4. Return Retry-After using the standard HTTP header.
+   5. Also return structured retry information as JSON.
+   6. A rejected request is NOT added to usage history.
+
+   This allows the frontend to distinguish:
+
+   - normal temporary throttling
+   - provider overload
+   - authentication errors
+   - ordinary request failures
 ========================================================= */
 
 function enforceTeacherAIRateLimit(
@@ -344,6 +379,10 @@ function enforceTeacherAIRateLimit(
   res,
   next
 ){
+
+  /* =====================================================
+     AUTHENTICATED ACCOUNT
+  ===================================================== */
 
   const userId =
     normalizeId(
@@ -360,12 +399,24 @@ function enforceTeacherAIRateLimit(
         401
       )
       .json({
+
+        ok:
+          false,
+
+        code:
+          "KABEZYA_AUTH_REQUIRED",
+
         message:
           "Authentication is required."
+
       });
 
   }
 
+
+  /* =====================================================
+     CURRENT WINDOW
+  ===================================================== */
 
   const now =
     Date.now();
@@ -378,23 +429,142 @@ function enforceTeacherAIRateLimit(
     [];
 
 
-  const active =
-    existing.filter(
-      timestamp =>
-        now -
-        timestamp <
-        TEACHER_AI_WINDOW_MS
-    );
+  /*
+    Only timestamps that remain inside the rolling window
+    count toward the current rate limit.
+  */
 
+  const active =
+    existing
+      .filter(
+        timestamp => {
+
+          const normalizedTimestamp =
+            Number(
+              timestamp
+            );
+
+
+          return (
+            Number.isFinite(
+              normalizedTimestamp
+            ) &&
+            now -
+            normalizedTimestamp <
+            TEACHER_AI_WINDOW_MS
+          );
+
+        }
+      )
+      .sort(
+        (
+          left,
+          right
+        ) =>
+          left -
+          right
+      );
+
+
+  /* =====================================================
+     LIMIT REACHED
+  ===================================================== */
 
   if(
     active.length >=
     TEACHER_AI_MAX_REQUESTS
   ){
 
+    /*
+      The first timestamp is the oldest request still inside
+      the rolling window.
+
+      As soon as it expires, one new request can be accepted.
+    */
+
+    const oldestRequestAt =
+      Number(
+        active[0] ||
+        now
+      );
+
+
+    const elapsedSinceOldest =
+      Math.max(
+        0,
+        now -
+        oldestRequestAt
+      );
+
+
+    const retryAfterMs =
+      Math.max(
+        1000,
+        TEACHER_AI_WINDOW_MS -
+        elapsedSinceOldest
+      );
+
+
+    const retryAfterSeconds =
+      Math.max(
+        1,
+        Math.ceil(
+          retryAfterMs /
+          1000
+        )
+      );
+
+
+    /*
+      Retain only valid timestamps.
+
+      This keeps the Map clean without counting the rejected
+      request itself.
+    */
+
     teacherAIUsage.set(
       userId,
       active
+    );
+
+
+    /*
+      Standard HTTP retry information.
+    */
+
+    res.set(
+      "Retry-After",
+      String(
+        retryAfterSeconds
+      )
+    );
+
+
+    res.set(
+      "X-RateLimit-Limit",
+      String(
+        TEACHER_AI_MAX_REQUESTS
+      )
+    );
+
+
+    res.set(
+      "X-RateLimit-Remaining",
+      "0"
+    );
+
+
+    res.set(
+      "X-RateLimit-Reset",
+      String(
+        Math.ceil(
+          (
+            now +
+            retryAfterMs
+          ) /
+          1000
+        )
+      )
     );
 
 
@@ -403,12 +573,47 @@ function enforceTeacherAIRateLimit(
         429
       )
       .json({
+
+        ok:
+          false,
+
+        code:
+          "TEACHER_AI_RATE_LIMITED",
+
         message:
-          "Kabezya is receiving many requests from this account. Please wait a few minutes and try again."
+          "Kabezya has reached the temporary request limit for this account.",
+
+        retryAfterSeconds,
+
+        retryAfterMs,
+
+        rateLimit:{
+
+          limit:
+            TEACHER_AI_MAX_REQUESTS,
+
+          remaining:
+            0,
+
+          windowMs:
+            TEACHER_AI_WINDOW_MS,
+
+          windowSeconds:
+            Math.ceil(
+              TEACHER_AI_WINDOW_MS /
+              1000
+            )
+
+        }
+
       });
 
   }
 
+
+  /* =====================================================
+     ACCEPT REQUEST
+  ===================================================== */
 
   active.push(
     now
@@ -418,6 +623,37 @@ function enforceTeacherAIRateLimit(
   teacherAIUsage.set(
     userId,
     active
+  );
+
+
+  /* =====================================================
+     RATE LIMIT RESPONSE INFORMATION
+
+     This is useful for future UI/monitoring without
+     exposing anything sensitive.
+  ===================================================== */
+
+  const remaining =
+    Math.max(
+      0,
+      TEACHER_AI_MAX_REQUESTS -
+      active.length
+    );
+
+
+  res.set(
+    "X-RateLimit-Limit",
+    String(
+      TEACHER_AI_MAX_REQUESTS
+    )
+  );
+
+
+  res.set(
+    "X-RateLimit-Remaining",
+    String(
+      remaining
+    )
   );
 
 
