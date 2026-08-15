@@ -27,24 +27,34 @@ const User =
     "../models/User"
   );
 
+
 const Class =
   require(
     "../models/Class"
   );
+
 
 const Assignment =
   require(
     "../models/Assignment"
   );
 
+
 const Submission =
   require(
     "../models/Submission"
   );
 
+
 const SubmissionAIInspection =
   require(
     "../models/SubmissionAIInspection"
+  );
+
+
+const TeacherAIConversation =
+  require(
+    "../models/TeacherAIConversation"
   );
 
 
@@ -2961,6 +2971,2026 @@ router.patch(
 
   }
 );
+
+/* =========================================================
+   KABEZYA CONVERSATIONS
+   Persistent Teacher AI Conversation System
+
+   Supports:
+   - recent conversations
+   - reopening old conversations
+   - continuing previous conversations
+   - renaming conversations
+   - appending user / assistant messages
+   - editing user prompts
+   - ChatGPT-style branch reset after message editing
+   - archiving conversations
+   - ownership enforcement
+
+   SECURITY:
+   Every conversation is scoped to the authenticated account.
+========================================================= */
+
+
+/* =========================================================
+   VALID TEACHER AI CONVERSATION MODES
+========================================================= */
+
+const TEACHER_AI_CONVERSATION_MODES =
+  new Set([
+    "assistant",
+    "class-analysis",
+    "student-analysis",
+    "submission-review",
+    "generate-quiz",
+    "generate-assignment",
+    "feedback",
+    "lesson-plan"
+  ]);
+
+
+/* =========================================================
+   NORMALIZE CONVERSATION MODE
+========================================================= */
+
+function normalizeTeacherAIConversationMode(
+  value
+){
+
+  const normalized =
+    safeString(
+      value,
+      100
+    );
+
+
+  return TEACHER_AI_CONVERSATION_MODES
+    .has(
+      normalized
+    )
+      ? normalized
+      : "assistant";
+
+}
+
+
+/* =========================================================
+   OPTIONAL OBJECT ID
+
+   Returns null instead of storing empty strings.
+========================================================= */
+
+function normalizeOptionalObjectId(
+  value
+){
+
+  const id =
+    normalizeId(
+      value
+    );
+
+
+  if(
+    !id ||
+    !mongoose.Types.ObjectId
+      .isValid(
+        id
+      )
+  ){
+
+    return null;
+
+  }
+
+
+  return id;
+
+}
+
+
+/* =========================================================
+   CONVERSATION OWNER
+
+   The current schema uses teacherId as the owner field.
+
+   Teacher, school and admin accounts supported by the
+   Kabezya route own their own conversation histories.
+========================================================= */
+
+function getTeacherAIConversationOwnerId(
+  user
+){
+
+  return normalizeId(
+    user?._id
+  );
+
+}
+
+
+/* =========================================================
+   SAFE CONVERSATION TITLE
+========================================================= */
+
+function normalizeTeacherAIConversationTitle(
+  value
+){
+
+  const title =
+    safeString(
+      value,
+      180
+    )
+      .replace(
+        /\s+/g,
+        " "
+      )
+      .trim();
+
+
+  return title ||
+    "New conversation";
+
+}
+
+
+/* =========================================================
+   BUILD TITLE FROM PROMPT
+
+   Keeps right-panel conversation titles concise.
+========================================================= */
+
+function buildTeacherAIConversationTitle(
+  value
+){
+
+  const source =
+    safeString(
+      value,
+      1000
+    )
+      .replace(
+        /\s+/g,
+        " "
+      )
+      .trim();
+
+
+  if(
+    !source
+  ){
+
+    return "New conversation";
+
+  }
+
+
+  if(
+    source.length <=
+    72
+  ){
+
+    return source;
+
+  }
+
+
+  return `${
+    source.slice(
+      0,
+      69
+    )
+  }...`;
+
+}
+
+
+/* =========================================================
+   SAFE RESPONSE SNAPSHOT
+
+   The snapshot lets structured responses reopen correctly:
+   - Work Inspector
+   - feedback
+   - quiz
+   - assignment
+   - lesson plan
+
+   JSON cloning removes Mongoose/runtime objects and ensures
+   only serializable response data is retained.
+========================================================= */
+
+function normalizeTeacherAIResponseSnapshot(
+  value
+){
+
+  if(
+    !value ||
+    typeof value !==
+      "object"
+  ){
+
+    return null;
+
+  }
+
+
+  try{
+
+    return JSON.parse(
+      JSON.stringify(
+        value
+      )
+    );
+
+  }catch(
+    error
+  ){
+
+    return null;
+
+  }
+
+}
+
+
+/* =========================================================
+   SERIALIZE CONVERSATION MESSAGE
+========================================================= */
+
+function serializeTeacherAIMessage(
+  message
+){
+
+  if(
+    !message
+  ){
+
+    return null;
+
+  }
+
+
+  const source =
+    typeof message.toObject ===
+      "function"
+      ? message.toObject()
+      : message;
+
+
+  return {
+
+    id:
+      normalizeId(
+        source?._id
+      ),
+
+    role:
+      safeString(
+        source?.role,
+        50
+      ),
+
+    content:
+      safeString(
+        source?.content,
+        30000
+      ),
+
+    mode:
+      normalizeTeacherAIConversationMode(
+        source?.mode
+      ),
+
+    classId:
+      normalizeId(
+        source?.classId
+      ),
+
+    studentId:
+      normalizeId(
+        source?.studentId
+      ),
+
+    assignmentId:
+      normalizeId(
+        source?.assignmentId
+      ),
+
+    submissionId:
+      normalizeId(
+        source?.submissionId
+      ),
+
+    quizId:
+      normalizeId(
+        source?.quizId
+      ),
+
+    responseSnapshot:
+      source?.responseSnapshot &&
+      typeof source.responseSnapshot ===
+        "object"
+        ? source.responseSnapshot
+        : null,
+
+    model:
+      safeString(
+        source?.model,
+        200
+      ),
+
+    inputTokens:
+      Number(
+        source?.inputTokens ||
+        0
+      ),
+
+    outputTokens:
+      Number(
+        source?.outputTokens ||
+        0
+      ),
+
+    totalTokens:
+      Number(
+        source?.totalTokens ||
+        0
+      ),
+
+    responseTimeMs:
+      Number(
+        source?.responseTimeMs ||
+        0
+      ),
+
+    edited:
+      Boolean(
+        source?.edited
+      ),
+
+    editedAt:
+      source?.editedAt ||
+      null,
+
+    createdAt:
+      source?.createdAt ||
+      null
+
+  };
+
+}
+
+
+/* =========================================================
+   SERIALIZE CONVERSATION
+
+   includeMessages=false is used by the right-panel list so
+   the browser does not download every historical message.
+========================================================= */
+
+function serializeTeacherAIConversation(
+  conversation,
+  {
+    includeMessages =
+      true
+  } = {}
+){
+
+  if(
+    !conversation
+  ){
+
+    return null;
+
+  }
+
+
+  const source =
+    typeof conversation.toObject ===
+      "function"
+      ? conversation.toObject()
+      : conversation;
+
+
+  const result = {
+
+    id:
+      normalizeId(
+        source?._id
+      ),
+
+    title:
+      normalizeTeacherAIConversationTitle(
+        source?.title
+      ),
+
+    mode:
+      normalizeTeacherAIConversationMode(
+        source?.mode
+      ),
+
+    classId:
+      normalizeId(
+        source?.classId
+      ),
+
+    studentId:
+      normalizeId(
+        source?.studentId
+      ),
+
+    assignmentId:
+      normalizeId(
+        source?.assignmentId
+      ),
+
+    submissionId:
+      normalizeId(
+        source?.submissionId
+      ),
+
+    quizId:
+      normalizeId(
+        source?.quizId
+      ),
+
+    status:
+      safeString(
+        source?.status,
+        50
+      ) ||
+      "active",
+
+    messageCount:
+      Number(
+        source?.messageCount ||
+        asArray(
+          source?.messages
+        ).length ||
+        0
+      ),
+
+    lastMessageAt:
+      source?.lastMessageAt ||
+      source?.updatedAt ||
+      source?.createdAt ||
+      null,
+
+    createdAt:
+      source?.createdAt ||
+      null,
+
+    updatedAt:
+      source?.updatedAt ||
+      null
+
+  };
+
+
+  if(
+    includeMessages
+  ){
+
+    result.messages =
+      asArray(
+        source?.messages
+      )
+        .map(
+          serializeTeacherAIMessage
+        )
+        .filter(
+          Boolean
+        );
+
+  }
+
+
+  return result;
+
+}
+
+
+/* =========================================================
+   LOAD OWNED CONVERSATION
+
+   Never trust a conversation ID from the browser by itself.
+========================================================= */
+
+async function loadOwnedTeacherAIConversation(
+  user,
+  conversationId,
+  {
+    includeArchived =
+      false
+  } = {}
+){
+
+  const ownerId =
+    getTeacherAIConversationOwnerId(
+      user
+    );
+
+
+  if(
+    !ownerId
+  ){
+
+    const error =
+      new Error(
+        "Kabezya conversation ownership could not be verified."
+      );
+
+
+    error.statusCode =
+      401;
+
+
+    throw error;
+
+  }
+
+
+  if(
+    !isValidObjectId(
+      conversationId
+    )
+  ){
+
+    const error =
+      new Error(
+        "A valid Kabezya conversation is required."
+      );
+
+
+    error.statusCode =
+      400;
+
+
+    throw error;
+
+  }
+
+
+  const query = {
+
+    _id:
+      normalizeId(
+        conversationId
+      ),
+
+    teacherId:
+      ownerId
+
+  };
+
+
+  if(
+    !includeArchived
+  ){
+
+    query.status =
+      "active";
+
+  }
+
+
+  const conversation =
+    await TeacherAIConversation
+      .findOne(
+        query
+      );
+
+
+  if(
+    !conversation
+  ){
+
+    const error =
+      new Error(
+        "Kabezya conversation not found."
+      );
+
+
+    error.statusCode =
+      404;
+
+
+    throw error;
+
+  }
+
+
+  return conversation;
+
+}
+
+
+/* =========================================================
+   BUILD MESSAGE PAYLOAD
+========================================================= */
+
+function buildTeacherAIMessagePayload(
+  body = {}
+){
+
+  const role =
+    safeString(
+      body?.role,
+      50
+    )
+      .toLowerCase();
+
+
+  if(
+    ![
+      "user",
+      "assistant"
+    ].includes(
+      role
+    )
+  ){
+
+    const error =
+      new Error(
+        "A valid conversation message role is required."
+      );
+
+
+    error.statusCode =
+      400;
+
+
+    throw error;
+
+  }
+
+
+  const content =
+    safeString(
+      body?.content,
+      30000
+    );
+
+
+  const responseSnapshot =
+    normalizeTeacherAIResponseSnapshot(
+      body?.responseSnapshot
+    );
+
+
+  /*
+    User messages always require readable text.
+
+    Assistant messages may contain a structured snapshot,
+    although normally they also include readable content.
+  */
+
+  if(
+    !content &&
+    !(
+      role ===
+        "assistant" &&
+      responseSnapshot
+    )
+  ){
+
+    const error =
+      new Error(
+        "Conversation message content is required."
+      );
+
+
+    error.statusCode =
+      400;
+
+
+    throw error;
+
+  }
+
+
+  return {
+
+    role,
+
+    content,
+
+    mode:
+      normalizeTeacherAIConversationMode(
+        body?.mode
+      ),
+
+    classId:
+      normalizeOptionalObjectId(
+        body?.classId
+      ),
+
+    studentId:
+      normalizeOptionalObjectId(
+        body?.studentId
+      ),
+
+    assignmentId:
+      normalizeOptionalObjectId(
+        body?.assignmentId
+      ),
+
+    submissionId:
+      normalizeOptionalObjectId(
+        body?.submissionId
+      ),
+
+    quizId:
+      normalizeOptionalObjectId(
+        body?.quizId
+      ),
+
+    responseSnapshot,
+
+    model:
+      safeString(
+        body?.model,
+        200
+      ),
+
+    inputTokens:
+      Math.max(
+        0,
+        Number(
+          body?.inputTokens ||
+          0
+        )
+      ),
+
+    outputTokens:
+      Math.max(
+        0,
+        Number(
+          body?.outputTokens ||
+          0
+        )
+      ),
+
+    totalTokens:
+      Math.max(
+        0,
+        Number(
+          body?.totalTokens ||
+          0
+        )
+      ),
+
+    responseTimeMs:
+      Math.max(
+        0,
+        Number(
+          body?.responseTimeMs ||
+          0
+        )
+      ),
+
+    createdAt:
+      new Date()
+
+  };
+
+}
+
+
+/* =========================================================
+   CREATE CONVERSATION
+
+   POST /api/kabezya/teacher/conversations
+========================================================= */
+
+router.post(
+  "/teacher/conversations",
+
+  auth,
+
+  requireTeacherKabezya,
+
+  async(
+    req,
+    res
+  ) => {
+
+    try{
+
+      const ownerId =
+        getTeacherAIConversationOwnerId(
+          req.user
+        );
+
+
+      if(
+        !ownerId
+      ){
+
+        return res
+          .status(
+            401
+          )
+          .json({
+
+            ok:
+              false,
+
+            message:
+              "Authentication is required."
+
+          });
+
+      }
+
+
+      const initialMessage =
+        safeString(
+          req.body?.message ||
+          req.body?.prompt,
+          30000
+        );
+
+
+      const requestedTitle =
+        safeString(
+          req.body?.title,
+          180
+        );
+
+
+      const title =
+        requestedTitle
+          ? normalizeTeacherAIConversationTitle(
+              requestedTitle
+            )
+          : initialMessage
+            ? buildTeacherAIConversationTitle(
+                initialMessage
+              )
+            : "New conversation";
+
+
+      const conversation =
+        new TeacherAIConversation({
+
+          teacherId:
+            ownerId,
+
+          schoolId:
+            normalizeOptionalObjectId(
+              getUserSchoolId(
+                req.user
+              )
+            ),
+
+          title,
+
+          mode:
+            normalizeTeacherAIConversationMode(
+              req.body?.mode
+            ),
+
+          classId:
+            normalizeOptionalObjectId(
+              req.body?.classId
+            ),
+
+          studentId:
+            normalizeOptionalObjectId(
+              req.body?.studentId
+            ),
+
+          assignmentId:
+            normalizeOptionalObjectId(
+              req.body?.assignmentId
+            ),
+
+          submissionId:
+            normalizeOptionalObjectId(
+              req.body?.submissionId
+            ),
+
+          quizId:
+            normalizeOptionalObjectId(
+              req.body?.quizId
+            ),
+
+          status:
+            "active",
+
+          messages:[]
+
+        });
+
+
+      /*
+        Optional initial user message.
+
+        This is useful when the frontend creates the
+        conversation as the first prompt is sent.
+      */
+
+      if(
+        initialMessage
+      ){
+
+        conversation.messages.push({
+
+          role:
+            "user",
+
+          content:
+            initialMessage,
+
+          mode:
+            conversation.mode,
+
+          classId:
+            conversation.classId,
+
+          studentId:
+            conversation.studentId,
+
+          assignmentId:
+            conversation.assignmentId,
+
+          submissionId:
+            conversation.submissionId,
+
+          quizId:
+            conversation.quizId,
+
+          createdAt:
+            new Date()
+
+        });
+
+      }
+
+
+      conversation.ensureTitle();
+
+
+      await conversation.save();
+
+
+      return res
+        .status(
+          201
+        )
+        .json({
+
+          ok:
+            true,
+
+          conversation:
+            serializeTeacherAIConversation(
+              conversation
+            )
+
+        });
+
+    }catch(
+      error
+    ){
+
+      console.error(
+        "teacherKabezya create conversation error:",
+        error?.message ||
+        error
+      );
+
+
+      return sendRouteError(
+        res,
+        error,
+        "Kabezya could not create the conversation."
+      );
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   RECENT CONVERSATIONS
+
+   GET /api/kabezya/teacher/conversations
+
+   Query:
+     limit=30
+========================================================= */
+
+router.get(
+  "/teacher/conversations",
+
+  auth,
+
+  requireTeacherKabezya,
+
+  async(
+    req,
+    res
+  ) => {
+
+    try{
+
+      const ownerId =
+        getTeacherAIConversationOwnerId(
+          req.user
+        );
+
+
+      if(
+        !ownerId
+      ){
+
+        return res
+          .status(
+            401
+          )
+          .json({
+
+            ok:
+              false,
+
+            message:
+              "Authentication is required."
+
+          });
+
+      }
+
+
+      const requestedLimit =
+        Number(
+          req.query?.limit ||
+          30
+        );
+
+
+      const limit =
+        Math.min(
+          100,
+          Math.max(
+            1,
+            Number.isFinite(
+              requestedLimit
+            )
+              ? Math.floor(
+                  requestedLimit
+                )
+              : 30
+          )
+        );
+
+
+      const conversations =
+        await TeacherAIConversation
+          .find({
+
+            teacherId:
+              ownerId,
+
+            status:
+              "active"
+
+          })
+          .sort({
+
+            lastMessageAt:
+              -1,
+
+            updatedAt:
+              -1
+
+          })
+          .limit(
+            limit
+          )
+          .lean();
+
+
+      return res.json({
+
+        ok:
+          true,
+
+        conversations:
+          conversations
+            .map(
+              conversation =>
+                serializeTeacherAIConversation(
+                  conversation,
+                  {
+                    includeMessages:
+                      false
+                  }
+                )
+            )
+            .filter(
+              Boolean
+            )
+
+      });
+
+    }catch(
+      error
+    ){
+
+      console.error(
+        "teacherKabezya recent conversations error:",
+        error?.message ||
+        error
+      );
+
+
+      return sendRouteError(
+        res,
+        error,
+        "Kabezya could not load recent conversations."
+      );
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   OPEN ONE CONVERSATION
+
+   GET /api/kabezya/teacher/conversations/:conversationId
+========================================================= */
+
+router.get(
+  "/teacher/conversations/:conversationId",
+
+  auth,
+
+  requireTeacherKabezya,
+
+  async(
+    req,
+    res
+  ) => {
+
+    try{
+
+      const conversation =
+        await loadOwnedTeacherAIConversation(
+          req.user,
+          req.params
+            .conversationId
+        );
+
+
+      return res.json({
+
+        ok:
+          true,
+
+        conversation:
+          serializeTeacherAIConversation(
+            conversation
+          )
+
+      });
+
+    }catch(
+      error
+    ){
+
+      console.error(
+        "teacherKabezya load conversation error:",
+        error?.message ||
+        error
+      );
+
+
+      return sendRouteError(
+        res,
+        error,
+        "Kabezya could not load the conversation."
+      );
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   UPDATE CONVERSATION
+
+   PATCH /api/kabezya/teacher/conversations/:conversationId
+
+   Supports:
+   - title
+   - mode
+   - active context
+========================================================= */
+
+router.patch(
+  "/teacher/conversations/:conversationId",
+
+  auth,
+
+  requireTeacherKabezya,
+
+  async(
+    req,
+    res
+  ) => {
+
+    try{
+
+      const conversation =
+        await loadOwnedTeacherAIConversation(
+          req.user,
+          req.params
+            .conversationId
+        );
+
+
+      /* ===================================================
+         TITLE
+      =================================================== */
+
+      if(
+        Object.prototype
+          .hasOwnProperty.call(
+            req.body ||
+            {},
+            "title"
+          )
+      ){
+
+        conversation.title =
+          normalizeTeacherAIConversationTitle(
+            req.body?.title
+          );
+
+      }
+
+
+      /* ===================================================
+         MODE
+      =================================================== */
+
+      if(
+        Object.prototype
+          .hasOwnProperty.call(
+            req.body ||
+            {},
+            "mode"
+          )
+      ){
+
+        conversation.mode =
+          normalizeTeacherAIConversationMode(
+            req.body?.mode
+          );
+
+      }
+
+
+      /* ===================================================
+         CONTEXT
+      =================================================== */
+
+      if(
+        Object.prototype
+          .hasOwnProperty.call(
+            req.body ||
+            {},
+            "classId"
+          )
+      ){
+
+        conversation.classId =
+          normalizeOptionalObjectId(
+            req.body?.classId
+          );
+
+      }
+
+
+      if(
+        Object.prototype
+          .hasOwnProperty.call(
+            req.body ||
+            {},
+            "studentId"
+          )
+      ){
+
+        conversation.studentId =
+          normalizeOptionalObjectId(
+            req.body?.studentId
+          );
+
+      }
+
+
+      if(
+        Object.prototype
+          .hasOwnProperty.call(
+            req.body ||
+            {},
+            "assignmentId"
+          )
+      ){
+
+        conversation.assignmentId =
+          normalizeOptionalObjectId(
+            req.body?.assignmentId
+          );
+
+      }
+
+
+      if(
+        Object.prototype
+          .hasOwnProperty.call(
+            req.body ||
+            {},
+            "submissionId"
+          )
+      ){
+
+        conversation.submissionId =
+          normalizeOptionalObjectId(
+            req.body?.submissionId
+          );
+
+      }
+
+
+      if(
+        Object.prototype
+          .hasOwnProperty.call(
+            req.body ||
+            {},
+            "quizId"
+          )
+      ){
+
+        conversation.quizId =
+          normalizeOptionalObjectId(
+            req.body?.quizId
+          );
+
+      }
+
+
+      await conversation.save();
+
+
+      return res.json({
+
+        ok:
+          true,
+
+        conversation:
+          serializeTeacherAIConversation(
+            conversation
+          )
+
+      });
+
+    }catch(
+      error
+    ){
+
+      console.error(
+        "teacherKabezya update conversation error:",
+        error?.message ||
+        error
+      );
+
+
+      return sendRouteError(
+        res,
+        error,
+        "Kabezya could not update the conversation."
+      );
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   APPEND MESSAGE
+
+   POST
+   /api/kabezya/teacher/conversations/:conversationId/messages
+
+   Used after:
+   - teacher sends prompt
+   - real Kabezya response arrives
+========================================================= */
+
+router.post(
+  "/teacher/conversations/:conversationId/messages",
+
+  auth,
+
+  requireTeacherKabezya,
+
+  async(
+    req,
+    res
+  ) => {
+
+    try{
+
+      const conversation =
+        await loadOwnedTeacherAIConversation(
+          req.user,
+          req.params
+            .conversationId
+        );
+
+
+      const messagePayload =
+        buildTeacherAIMessagePayload(
+          req.body
+        );
+
+
+      conversation.messages.push(
+        messagePayload
+      );
+
+
+      /*
+        Synchronize the conversation-level active context
+        with the latest message when supplied.
+      */
+
+      conversation.mode =
+        messagePayload.mode ||
+        conversation.mode;
+
+
+      if(
+        messagePayload.classId
+      ){
+
+        conversation.classId =
+          messagePayload.classId;
+
+      }
+
+
+      if(
+        messagePayload.studentId
+      ){
+
+        conversation.studentId =
+          messagePayload.studentId;
+
+      }
+
+
+      if(
+        messagePayload.assignmentId
+      ){
+
+        conversation.assignmentId =
+          messagePayload.assignmentId;
+
+      }
+
+
+      if(
+        messagePayload.submissionId
+      ){
+
+        conversation.submissionId =
+          messagePayload.submissionId;
+
+      }
+
+
+      if(
+        messagePayload.quizId
+      ){
+
+        conversation.quizId =
+          messagePayload.quizId;
+
+      }
+
+
+      /*
+        The model also provides ensureTitle().
+      */
+
+      conversation.ensureTitle();
+
+
+      await conversation.save();
+
+
+      const storedMessage =
+        conversation.messages[
+          conversation.messages.length -
+          1
+        ];
+
+
+      return res
+        .status(
+          201
+        )
+        .json({
+
+          ok:
+            true,
+
+          message:
+            serializeTeacherAIMessage(
+              storedMessage
+            ),
+
+          conversation:
+            serializeTeacherAIConversation(
+              conversation,
+              {
+                includeMessages:
+                  false
+              }
+            )
+
+        });
+
+    }catch(
+      error
+    ){
+
+      console.error(
+        "teacherKabezya append conversation message error:",
+        error?.message ||
+        error
+      );
+
+
+      return sendRouteError(
+        res,
+        error,
+        "Kabezya could not save the conversation message."
+      );
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   EDIT USER MESSAGE
+
+   PATCH
+   /api/kabezya/teacher/conversations/:conversationId/messages/:messageId
+
+   ChatGPT-style behavior:
+
+   Editing an earlier user prompt invalidates every response
+   generated after that prompt.
+
+   Therefore:
+     1. update the selected user message
+     2. remove every later message
+     3. frontend resends the edited prompt
+     4. new conversation branch continues from there
+========================================================= */
+
+router.patch(
+  "/teacher/conversations/:conversationId/messages/:messageId",
+
+  auth,
+
+  requireTeacherKabezya,
+
+  async(
+    req,
+    res
+  ) => {
+
+    try{
+
+      const conversation =
+        await loadOwnedTeacherAIConversation(
+          req.user,
+          req.params
+            .conversationId
+        );
+
+
+      const messageId =
+        normalizeId(
+          req.params
+            .messageId
+        );
+
+
+      if(
+        !isValidObjectId(
+          messageId
+        )
+      ){
+
+        return res
+          .status(
+            400
+          )
+          .json({
+
+            ok:
+              false,
+
+            message:
+              "A valid conversation message is required."
+
+          });
+
+      }
+
+
+      const messageIndex =
+        conversation.messages
+          .findIndex(
+            message =>
+              sameId(
+                message?._id,
+                messageId
+              )
+          );
+
+
+      if(
+        messageIndex <
+        0
+      ){
+
+        return res
+          .status(
+            404
+          )
+          .json({
+
+            ok:
+              false,
+
+            message:
+              "Conversation message not found."
+
+          });
+
+      }
+
+
+      const message =
+        conversation.messages[
+          messageIndex
+        ];
+
+
+      if(
+        message.role !==
+        "user"
+      ){
+
+        return res
+          .status(
+            400
+          )
+          .json({
+
+            ok:
+              false,
+
+            message:
+              "Only teacher messages can be edited."
+
+          });
+
+      }
+
+
+      const content =
+        safeString(
+          req.body?.content,
+          30000
+        );
+
+
+      if(
+        !content
+      ){
+
+        return res
+          .status(
+            400
+          )
+          .json({
+
+            ok:
+              false,
+
+            message:
+              "The edited message cannot be empty."
+
+          });
+
+      }
+
+
+      /* ===================================================
+         PRESERVE ORIGINAL CONTENT
+      =================================================== */
+
+      if(
+        !message.edited &&
+        !safeString(
+          message.originalContent
+        )
+      ){
+
+        message.originalContent =
+          message.content;
+
+      }
+
+
+      message.content =
+        content;
+
+
+      message.edited =
+        true;
+
+
+      message.editedAt =
+        new Date();
+
+
+      /* ===================================================
+         CHATGPT-STYLE BRANCH RESET
+
+         Remove all messages generated after the edited turn.
+      =================================================== */
+
+      conversation.messages =
+        conversation.messages
+          .slice(
+            0,
+            messageIndex +
+            1
+          );
+
+
+      conversation.response =
+        undefined;
+
+
+      /*
+        If first message changed, update title automatically.
+      */
+
+      const firstUserIndex =
+        conversation.messages
+          .findIndex(
+            item =>
+              item?.role ===
+              "user"
+          );
+
+
+      if(
+        firstUserIndex ===
+        messageIndex
+      ){
+
+        conversation.title =
+          buildTeacherAIConversationTitle(
+            content
+          );
+
+      }
+
+
+      await conversation.save();
+
+
+      return res.json({
+
+        ok:
+          true,
+
+        conversation:
+          serializeTeacherAIConversation(
+            conversation
+          ),
+
+        editedMessage:
+          serializeTeacherAIMessage(
+            conversation.messages[
+              conversation.messages.length -
+              1
+            ]
+          ),
+
+        regenerate:
+          true
+
+      });
+
+    }catch(
+      error
+    ){
+
+      console.error(
+        "teacherKabezya edit conversation message error:",
+        error?.message ||
+        error
+      );
+
+
+      return sendRouteError(
+        res,
+        error,
+        "Kabezya could not edit the conversation message."
+      );
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   ARCHIVE / REMOVE CONVERSATION
+
+   DELETE /api/kabezya/teacher/conversations/:conversationId
+
+   Soft deletion is intentional:
+   - removes it from Recent Conversations
+   - avoids accidental irreversible loss
+   - supports future recovery/audit functionality
+========================================================= */
+
+router.delete(
+  "/teacher/conversations/:conversationId",
+
+  auth,
+
+  requireTeacherKabezya,
+
+  async(
+    req,
+    res
+  ) => {
+
+    try{
+
+      const conversation =
+        await loadOwnedTeacherAIConversation(
+          req.user,
+          req.params
+            .conversationId
+        );
+
+
+      conversation.status =
+        "archived";
+
+
+      await conversation.save();
+
+
+      return res.json({
+
+        ok:
+          true,
+
+        message:
+          "Conversation removed from recent conversations.",
+
+        conversationId:
+          normalizeId(
+            conversation._id
+          )
+
+      });
+
+    }catch(
+      error
+    ){
+
+      console.error(
+        "teacherKabezya remove conversation error:",
+        error?.message ||
+        error
+      );
+
+
+      return sendRouteError(
+        res,
+        error,
+        "Kabezya could not remove the conversation."
+      );
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   RESTORE ARCHIVED CONVERSATION
+
+   PATCH
+   /api/kabezya/teacher/conversations/:conversationId/restore
+========================================================= */
+
+router.patch(
+  "/teacher/conversations/:conversationId/restore",
+
+  auth,
+
+  requireTeacherKabezya,
+
+  async(
+    req,
+    res
+  ) => {
+
+    try{
+
+      const conversation =
+        await loadOwnedTeacherAIConversation(
+          req.user,
+          req.params
+            .conversationId,
+          {
+            includeArchived:
+              true
+          }
+        );
+
+
+      conversation.status =
+        "active";
+
+
+      conversation.lastMessageAt =
+        new Date();
+
+
+      await conversation.save();
+
+
+      return res.json({
+
+        ok:
+          true,
+
+        conversation:
+          serializeTeacherAIConversation(
+            conversation
+          )
+
+      });
+
+    }catch(
+      error
+    ){
+
+      console.error(
+        "teacherKabezya restore conversation error:",
+        error?.message ||
+        error
+      );
+
+
+      return sendRouteError(
+        res,
+        error,
+        "Kabezya could not restore the conversation."
+      );
+
+    }
+
+  }
+);
+
 
 
 /* =========================================================
