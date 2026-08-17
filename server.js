@@ -111,10 +111,35 @@ const developmentOrigins = [
   "http://127.0.0.1:5500"
 ];
 
+
+/*
+  Capacitor Android WebView origin.
+
+  AIFT Android packages the frontend locally rather than
+  loading the Vercel website remotely.
+
+  capacitor.config.json uses:
+
+    hostname: "localhost"
+    androidScheme: "https"
+
+  Therefore Android web requests are made from:
+
+    https://localhost
+
+  Keep this separate from normal browser-development origins
+  so native application access remains explicit and auditable.
+*/
+const capacitorOrigins = [
+  "https://localhost"
+];
+
+
 const allowedOrigins = new Set([
   ...PRODUCTION_FRONTEND_ORIGINS,
   ...configuredFrontendOrigins,
-  ...developmentOrigins
+  ...developmentOrigins,
+  ...capacitorOrigins
 ]);
 
 function normalizeOrigin(origin) {
