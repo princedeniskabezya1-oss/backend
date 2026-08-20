@@ -581,6 +581,225 @@ performanceMetrics: {
 },
 
 /* ============================================
+   SCHOOL STUDIO SETTINGS
+============================================ */
+
+schoolStudioSettings: {
+
+  /* --------------------------------------------
+     GENERAL
+  -------------------------------------------- */
+
+  general: {
+
+    language: {
+      type: String,
+      enum: [
+        "en"
+      ],
+      default: "en"
+    },
+
+    timezone: {
+      type: String,
+      default: "Asia/Manila",
+      trim: true
+    },
+
+    weekStart: {
+      type: String,
+      enum: [
+        "monday",
+        "sunday"
+      ],
+      default: "monday"
+    }
+
+  },
+
+
+  /* --------------------------------------------
+     APPEARANCE
+  -------------------------------------------- */
+
+  appearance: {
+
+    theme: {
+      type: String,
+      enum: [
+        "light",
+        "dark",
+        "system"
+      ],
+      default: "system"
+    },
+
+    compactInterface: {
+      type: Boolean,
+      default: false
+    },
+
+    rememberSidebar: {
+      type: Boolean,
+      default: true
+    }
+
+  },
+
+
+  /* --------------------------------------------
+     NOTIFICATIONS
+  -------------------------------------------- */
+
+  notifications: {
+
+    assignments: {
+      type: Boolean,
+      default: true
+    },
+
+    attendance: {
+      type: Boolean,
+      default: true
+    },
+
+    messages: {
+      type: Boolean,
+      default: true
+    },
+
+    career: {
+      type: Boolean,
+      default: true
+    },
+
+    security: {
+      type: Boolean,
+      default: true
+    },
+
+    schoolUpdates: {
+      type: Boolean,
+      default: true
+    },
+
+    teacherActivity: {
+      type: Boolean,
+      default: true
+    },
+
+    studentActivity: {
+      type: Boolean,
+      default: true
+    }
+
+  },
+
+
+  /* --------------------------------------------
+     PUBLIC PRIVACY
+  -------------------------------------------- */
+
+  privacy: {
+
+    publicProfile: {
+      type: Boolean,
+      default: true
+    },
+
+    discoverable: {
+      type: Boolean,
+      default: true
+    },
+
+    showLocation: {
+      type: Boolean,
+      default: true
+    },
+
+    showWebsite: {
+      type: Boolean,
+      default: true
+    },
+
+    showStatistics: {
+      type: Boolean,
+      default: false
+    },
+
+    showPrograms: {
+      type: Boolean,
+      default: true
+    },
+
+    teacherPerformanceRestricted: {
+      type: Boolean,
+      default: true
+    },
+
+    studentAnalyticsRestricted: {
+      type: Boolean,
+      default: true
+    }
+
+  },
+
+
+  /* --------------------------------------------
+     ACCESSIBILITY
+  -------------------------------------------- */
+
+  accessibility: {
+
+    reducedMotion: {
+      type: Boolean,
+      default: false
+    },
+
+    highContrast: {
+      type: Boolean,
+      default: false
+    },
+
+    largerText: {
+      type: Boolean,
+      default: false
+    }
+
+  },
+
+
+  /* --------------------------------------------
+     DATA / ACCOUNT PREFERENCES
+  -------------------------------------------- */
+
+  data: {
+
+    allowAnalytics: {
+      type: Boolean,
+      default: true
+    },
+
+    allowProductImprovement: {
+      type: Boolean,
+      default: true
+    },
+
+    exportRequestedAt: {
+      type: Date,
+      default: null
+    },
+
+    deactivatedAt: {
+      type: Date,
+      default: null
+    }
+
+  }
+
+},
+
+/* ============================================
    STUDENT STUDIO SETTINGS
 ============================================ */
 studentStudioSettings: {
