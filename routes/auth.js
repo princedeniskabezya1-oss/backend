@@ -263,6 +263,216 @@ router.post("/create-first-admin", async (req, res) => {
     });
   }
 });
+
+/* ============================================
+   CHANGE CURRENT USER PASSWORD
+
+   PATCH /api/auth/change-password
+============================================ */
+router.patch("/change-password", auth, async (req, res) => {
+  try {
+
+    const {
+      currentPassword,
+      newPassword,
+      confirmPassword
+    } = req.body || {};
+
+
+    /* =========================================
+       REQUIRED FIELDS
+    ========================================= */
+
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({
+        message:
+          "Current password and new password are required"
+      });
+    }
+
+
+    /* =========================================
+       CONFIRMATION
+    ========================================= */
+
+    if (
+      confirmPassword !== undefined &&
+      String(newPassword) !== String(confirmPassword)
+    ) {
+      return res.status(400).json({
+        message:
+          "New password and confirmation do not match"
+      });
+    }
+
+
+    /* =========================================
+       PASSWORD REQUIREMENTS
+    ========================================= */
+
+    const cleanNewPassword =
+      String(newPassword);
+
+
+    if (cleanNewPassword.length < 8) {
+      return res.status(400).json({
+        message:
+          "New password must be at least 8 characters"
+      });
+    }
+
+
+    if (cleanNewPassword.length > 128) {
+      return res.status(400).json({
+        message:
+          "New password is too long"
+      });
+    }
+
+
+    /*
+      Require a reasonable mix without making
+      passwords unnecessarily difficult to use.
+    */
+
+    const hasLetter =
+      /[A-Za-z]/.test(cleanNewPassword);
+
+    const hasNumber =
+      /\d/.test(cleanNewPassword);
+
+
+    if (!hasLetter || !hasNumber) {
+      return res.status(400).json({
+        message:
+          "New password must contain at least one letter and one number"
+      });
+    }
+
+
+    /* =========================================
+       LOAD USER WITH PASSWORD
+
+       Do not depend on req.user.password.
+       The auth middleware may intentionally
+       exclude the password field.
+    ========================================= */
+
+    const user = await User.findById(
+      req.user._id || req.user.id
+    );
+
+
+    if (!user) {
+      return res.status(404).json({
+        message:
+          "User account not found"
+      });
+    }
+
+
+    if (!user.password) {
+      return res.status(400).json({
+        message:
+          "Password authentication is not available for this account"
+      });
+    }
+
+
+    /* =========================================
+       VERIFY CURRENT PASSWORD
+    ========================================= */
+
+    const currentPasswordMatches =
+      await bcrypt.compare(
+        String(currentPassword),
+        user.password
+      );
+
+
+    if (!currentPasswordMatches) {
+      return res.status(400).json({
+        message:
+          "Current password is incorrect"
+      });
+    }
+
+
+    /* =========================================
+       PREVENT REUSING CURRENT PASSWORD
+    ========================================= */
+
+    const sameAsCurrent =
+      await bcrypt.compare(
+        cleanNewPassword,
+        user.password
+      );
+
+
+    if (sameAsCurrent) {
+      return res.status(400).json({
+        message:
+          "New password must be different from your current password"
+      });
+    }
+
+
+    /* =========================================
+       HASH NEW PASSWORD
+    ========================================= */
+
+    const salt =
+      await bcrypt.genSalt(12);
+
+
+    const hashedPassword =
+      await bcrypt.hash(
+        cleanNewPassword,
+        salt
+      );
+
+
+    user.password =
+      hashedPassword;
+
+
+    /*
+      We will use this field in the next security
+      step to invalidate older JWT sessions.
+
+      Make sure passwordChangedAt is added to
+      User.js in Step 7B below.
+    */
+
+    user.passwordChangedAt =
+      new Date();
+
+
+    await user.save();
+
+
+    return res.json({
+      message:
+        "Password changed successfully"
+    });
+
+  } catch (error) {
+
+    console.error(
+      "CHANGE PASSWORD ERROR:",
+      error
+    );
+
+
+    return res.status(500).json({
+      message:
+        "Failed to change password"
+    });
+
+  }
+});
+
+
 /* ============================================
    RESET ADMIN PASSWORD
 ============================================ */
