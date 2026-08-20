@@ -886,6 +886,453 @@ router.post(
 
 
 /* ============================================
+   ACTIVE AUTH SESSIONS
+
+   GET /api/auth/sessions
+============================================ */
+
+router.get(
+  "/sessions",
+  auth,
+  async (req, res) => {
+
+    try {
+
+      const userId =
+        req.user._id ||
+        req.user.id;
+
+
+      const currentSessionId =
+        String(
+          req.auth?.sessionId ||
+          ""
+        );
+
+
+      const now =
+        new Date();
+
+
+      const sessions =
+        await AuthSession.find({
+
+          userId,
+
+          revokedAt:
+            null,
+
+          expiresAt: {
+            $gt: now
+          }
+
+        })
+          .sort({
+            lastActiveAt: -1,
+            createdAt: -1
+          })
+          .lean();
+
+
+      const safeSessions =
+        sessions.map(
+          session => {
+
+            const rawIp =
+              String(
+                session.ipAddress ||
+                ""
+              );
+
+
+            /*
+              Do not expose the full IP address
+              in the UI.
+
+              Keep only a masked representation.
+            */
+
+            let maskedIp =
+              null;
+
+
+            if(rawIp){
+
+              if(
+                rawIp.includes(":")
+              ){
+
+                /*
+                  IPv6
+                */
+
+                const parts =
+                  rawIp.split(":");
+
+
+                maskedIp =
+                  parts
+                    .slice(0, 3)
+                    .join(":") +
+                  ":••••";
+
+              }else{
+
+                /*
+                  IPv4
+                */
+
+                const parts =
+                  rawIp.split(".");
+
+
+                if(
+                  parts.length === 4
+                ){
+
+                  maskedIp =
+                    `${parts[0]}.${parts[1]}.•••.•••`;
+
+                }else{
+
+                  maskedIp =
+                    "Hidden";
+
+                }
+
+              }
+
+            }
+
+
+            return {
+
+              sessionId:
+                session.sessionId,
+
+              current:
+                session.sessionId ===
+                currentSessionId,
+
+              deviceName:
+                session.deviceName ||
+                "Unknown device",
+
+              deviceType:
+                session.deviceType ||
+                "unknown",
+
+              browser:
+                session.browser ||
+                "Unknown browser",
+
+              operatingSystem:
+                session.operatingSystem ||
+                "Unknown OS",
+
+              maskedIp,
+
+              createdAt:
+                session.createdAt,
+
+              lastActiveAt:
+                session.lastActiveAt,
+
+              expiresAt:
+                session.expiresAt
+
+            };
+
+          }
+        );
+
+
+      return res.json({
+
+        sessions:
+          safeSessions,
+
+        total:
+          safeSessions.length
+
+      });
+
+
+    } catch (error) {
+
+      console.error(
+        "GET AUTH SESSIONS ERROR:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+
+          message:
+            "Failed to load active sessions"
+
+        });
+
+    }
+
+  }
+);
+
+
+/* ============================================
+   REVOKE ONE SESSION
+
+   DELETE /api/auth/sessions/:sessionId
+============================================ */
+
+router.delete(
+  "/sessions/:sessionId",
+  auth,
+  async (req, res) => {
+
+    try {
+
+      const userId =
+        req.user._id ||
+        req.user.id;
+
+
+      const targetSessionId =
+        String(
+          req.params.sessionId ||
+          ""
+        )
+          .trim();
+
+
+      if(!targetSessionId){
+
+        return res
+          .status(400)
+          .json({
+
+            message:
+              "Session ID is required"
+
+          });
+
+      }
+
+
+      const targetSession =
+        await AuthSession.findOne({
+
+          userId,
+
+          sessionId:
+            targetSessionId
+
+        });
+
+
+      if(!targetSession){
+
+        return res
+          .status(404)
+          .json({
+
+            message:
+              "Session not found"
+
+          });
+
+      }
+
+
+      if(targetSession.revokedAt){
+
+        return res.json({
+
+          message:
+            "Session is already signed out"
+
+        });
+
+      }
+
+
+      targetSession.revokedAt =
+        new Date();
+
+
+      targetSession.revokedReason =
+        "logout";
+
+
+      await targetSession.save();
+
+
+      const currentSessionId =
+        String(
+          req.auth?.sessionId ||
+          ""
+        );
+
+
+      const current =
+        targetSessionId ===
+        currentSessionId;
+
+
+      return res.json({
+
+        message:
+          current
+            ? "Current session signed out successfully"
+            : "Session signed out successfully",
+
+        currentSessionRevoked:
+          current
+
+      });
+
+
+    } catch (error) {
+
+      console.error(
+        "REVOKE AUTH SESSION ERROR:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+
+          message:
+            "Failed to sign out session"
+
+        });
+
+    }
+
+  }
+);
+
+
+/* ============================================
+   SIGN OUT ALL OTHER DEVICES
+
+   POST /api/auth/sessions/logout-others
+============================================ */
+
+router.post(
+  "/sessions/logout-others",
+  auth,
+  async (req, res) => {
+
+    try {
+
+      const userId =
+        req.user._id ||
+        req.user.id;
+
+
+      const currentSessionId =
+        String(
+          req.auth?.sessionId ||
+          ""
+        )
+          .trim();
+
+
+      if(!currentSessionId){
+
+        return res
+          .status(401)
+          .json({
+
+            message:
+              "Current session is unavailable"
+
+          });
+
+      }
+
+
+      const result =
+        await AuthSession.updateMany(
+
+          {
+
+            userId,
+
+            sessionId: {
+              $ne:
+                currentSessionId
+            },
+
+            revokedAt:
+              null,
+
+            expiresAt: {
+              $gt:
+                new Date()
+            }
+
+          },
+
+          {
+
+            $set: {
+
+              revokedAt:
+                new Date(),
+
+              revokedReason:
+                "logout_others"
+
+            }
+
+          }
+
+        );
+
+
+      return res.json({
+
+        message:
+          "Other devices signed out successfully",
+
+        revokedCount:
+          Number(
+            result.modifiedCount ||
+            0
+          )
+
+      });
+
+
+    } catch (error) {
+
+      console.error(
+        "LOGOUT OTHER SESSIONS ERROR:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+
+          message:
+            "Failed to sign out other devices"
+
+        });
+
+    }
+
+  }
+);
+
+/* ============================================
    GET CURRENT USER
 ============================================ */
 
