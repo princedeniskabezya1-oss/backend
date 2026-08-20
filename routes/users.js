@@ -559,6 +559,940 @@ router.get("/me", auth, async (req, res) => {
 });
 
 /* ============================================
+   SCHOOL STUDIO SETTINGS
+============================================ */
+
+const SCHOOL_STUDIO_SETTINGS_DEFAULTS =
+  Object.freeze({
+
+    general: {
+
+      language: "en",
+
+      timezone: "Asia/Manila",
+
+      weekStart: "monday"
+
+    },
+
+
+    appearance: {
+
+      theme: "system",
+
+      compactInterface: false,
+
+      rememberSidebar: true
+
+    },
+
+
+    notifications: {
+
+      assignments: true,
+
+      attendance: true,
+
+      messages: true,
+
+      career: true,
+
+      security: true,
+
+      schoolUpdates: true,
+
+      teacherActivity: true,
+
+      studentActivity: true
+
+    },
+
+
+    privacy: {
+
+      publicProfile: true,
+
+      discoverable: true,
+
+      showLocation: true,
+
+      showWebsite: true,
+
+      showStatistics: false,
+
+      showPrograms: true,
+
+      teacherPerformanceRestricted: true,
+
+      studentAnalyticsRestricted: true
+
+    },
+
+
+    accessibility: {
+
+      reducedMotion: false,
+
+      highContrast: false,
+
+      largerText: false
+
+    },
+
+
+    data: {
+
+      allowAnalytics: true,
+
+      allowProductImprovement: true,
+
+      exportRequestedAt: null,
+
+      deactivatedAt: null
+
+    }
+
+  });
+
+
+/* ============================================
+   SCHOOL SETTINGS HELPERS
+============================================ */
+
+function isPlainSchoolSettingsObject(
+  value
+) {
+
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  );
+
+}
+
+
+function mergeSchoolStudioSettings(
+  settings = {}
+) {
+
+  const source =
+    isPlainSchoolSettingsObject(
+      settings
+    )
+      ? settings
+      : {};
+
+
+  return {
+
+    general: {
+
+      ...SCHOOL_STUDIO_SETTINGS_DEFAULTS
+        .general,
+
+      ...(isPlainSchoolSettingsObject(
+        source.general
+      )
+        ? source.general
+        : {})
+
+    },
+
+
+    appearance: {
+
+      ...SCHOOL_STUDIO_SETTINGS_DEFAULTS
+        .appearance,
+
+      ...(isPlainSchoolSettingsObject(
+        source.appearance
+      )
+        ? source.appearance
+        : {})
+
+    },
+
+
+    notifications: {
+
+      ...SCHOOL_STUDIO_SETTINGS_DEFAULTS
+        .notifications,
+
+      ...(isPlainSchoolSettingsObject(
+        source.notifications
+      )
+        ? source.notifications
+        : {})
+
+    },
+
+
+    privacy: {
+
+      ...SCHOOL_STUDIO_SETTINGS_DEFAULTS
+        .privacy,
+
+      ...(isPlainSchoolSettingsObject(
+        source.privacy
+      )
+        ? source.privacy
+        : {})
+
+    },
+
+
+    accessibility: {
+
+      ...SCHOOL_STUDIO_SETTINGS_DEFAULTS
+        .accessibility,
+
+      ...(isPlainSchoolSettingsObject(
+        source.accessibility
+      )
+        ? source.accessibility
+        : {})
+
+    },
+
+
+    data: {
+
+      ...SCHOOL_STUDIO_SETTINGS_DEFAULTS
+        .data,
+
+      ...(isPlainSchoolSettingsObject(
+        source.data
+      )
+        ? source.data
+        : {})
+
+    }
+
+  };
+
+}
+
+
+function applySchoolBooleanSetting(
+  target,
+  source,
+  field
+) {
+
+  if (
+    typeof source[field] ===
+    "boolean"
+  ) {
+
+    target[field] =
+      source[field];
+
+  }
+
+}
+
+
+/* ============================================
+   GET SCHOOL STUDIO SETTINGS
+
+   GET /api/users/me/school-studio-settings
+============================================ */
+
+router.get(
+  "/me/school-studio-settings",
+  auth,
+  async (req, res) => {
+
+    try {
+
+      const role =
+        String(
+          req.user.role || ""
+        ).toLowerCase();
+
+
+      if (
+        ![
+          "school",
+          "admin"
+        ].includes(role)
+      ) {
+
+        return res
+          .status(403)
+          .json({
+
+            message:
+              "Only school accounts can access School Studio settings."
+
+          });
+
+      }
+
+
+      const user =
+        await User.findById(
+          req.user._id ||
+          req.user.id
+        )
+          .select(
+            "role schoolStudioSettings"
+          )
+          .lean();
+
+
+      if (!user) {
+
+        return res
+          .status(404)
+          .json({
+
+            message:
+              "School account not found."
+
+          });
+
+      }
+
+
+      const settings =
+        mergeSchoolStudioSettings(
+          user.schoolStudioSettings
+        );
+
+
+      return res.json({
+
+        settings
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        "GET SCHOOL STUDIO SETTINGS ERROR:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+
+          message:
+            "Failed to load School Studio settings."
+
+        });
+
+    }
+
+  }
+);
+
+
+/* ============================================
+   UPDATE SCHOOL STUDIO SETTINGS
+
+   PATCH /api/users/me/school-studio-settings
+============================================ */
+
+router.patch(
+  "/me/school-studio-settings",
+  auth,
+  async (req, res) => {
+
+    try {
+
+      const role =
+        String(
+          req.user.role || ""
+        ).toLowerCase();
+
+
+      if (
+        ![
+          "school",
+          "admin"
+        ].includes(role)
+      ) {
+
+        return res
+          .status(403)
+          .json({
+
+            message:
+              "Only school accounts can update School Studio settings."
+
+          });
+
+      }
+
+
+      const user =
+        await User.findById(
+          req.user._id ||
+          req.user.id
+        );
+
+
+      if (!user) {
+
+        return res
+          .status(404)
+          .json({
+
+            message:
+              "School account not found."
+
+          });
+
+      }
+
+
+      const body =
+        isPlainSchoolSettingsObject(
+          req.body
+        )
+          ? req.body
+          : {};
+
+
+      /*
+        Support either:
+
+        {
+          general: {...},
+          privacy: {...}
+        }
+
+        or:
+
+        {
+          settings: {
+            general: {...},
+            privacy: {...}
+          }
+        }
+      */
+
+      const incoming =
+        isPlainSchoolSettingsObject(
+          body.settings
+        )
+          ? body.settings
+          : body;
+
+
+      const current =
+        mergeSchoolStudioSettings(
+          user.schoolStudioSettings
+        );
+
+
+      /* ========================================
+         GENERAL
+      ======================================== */
+
+      if (
+        isPlainSchoolSettingsObject(
+          incoming.general
+        )
+      ) {
+
+        const general =
+          incoming.general;
+
+
+        if (
+          typeof general.language ===
+          "string"
+        ) {
+
+          const language =
+            general.language
+              .trim()
+              .toLowerCase();
+
+
+          if (
+            ![
+              "en"
+            ].includes(language)
+          ) {
+
+            return res
+              .status(400)
+              .json({
+
+                message:
+                  "Unsupported language setting."
+
+              });
+
+          }
+
+
+          current.general.language =
+            language;
+
+        }
+
+
+        if (
+          typeof general.timezone ===
+          "string"
+        ) {
+
+          const timezone =
+            general.timezone
+              .trim();
+
+
+          if (
+            !timezone ||
+            timezone.length > 100
+          ) {
+
+            return res
+              .status(400)
+              .json({
+
+                message:
+                  "Invalid timezone setting."
+
+              });
+
+          }
+
+
+          /*
+            Validate against the runtime's
+            Intl timezone database.
+          */
+
+          try {
+
+            new Intl.DateTimeFormat(
+              "en-US",
+              {
+                timeZone:
+                  timezone
+              }
+            ).format();
+
+          } catch {
+
+            return res
+              .status(400)
+              .json({
+
+                message:
+                  "Invalid timezone setting."
+
+              });
+
+          }
+
+
+          current.general.timezone =
+            timezone;
+
+        }
+
+
+        if (
+          typeof general.weekStart ===
+          "string"
+        ) {
+
+          const weekStart =
+            general.weekStart
+              .trim()
+              .toLowerCase();
+
+
+          if (
+            ![
+              "monday",
+              "sunday"
+            ].includes(
+              weekStart
+            )
+          ) {
+
+            return res
+              .status(400)
+              .json({
+
+                message:
+                  "Invalid week start setting."
+
+              });
+
+          }
+
+
+          current.general.weekStart =
+            weekStart;
+
+        }
+
+      }
+
+
+      /* ========================================
+         APPEARANCE
+      ======================================== */
+
+      if (
+        isPlainSchoolSettingsObject(
+          incoming.appearance
+        )
+      ) {
+
+        const appearance =
+          incoming.appearance;
+
+
+        if (
+          typeof appearance.theme ===
+          "string"
+        ) {
+
+          const theme =
+            appearance.theme
+              .trim()
+              .toLowerCase();
+
+
+          if (
+            ![
+              "light",
+              "dark",
+              "system"
+            ].includes(theme)
+          ) {
+
+            return res
+              .status(400)
+              .json({
+
+                message:
+                  "Invalid theme setting."
+
+              });
+
+          }
+
+
+          current.appearance.theme =
+            theme;
+
+        }
+
+
+        applySchoolBooleanSetting(
+          current.appearance,
+          appearance,
+          "compactInterface"
+        );
+
+
+        applySchoolBooleanSetting(
+          current.appearance,
+          appearance,
+          "rememberSidebar"
+        );
+
+      }
+
+
+      /* ========================================
+         NOTIFICATIONS
+      ======================================== */
+
+      if (
+        isPlainSchoolSettingsObject(
+          incoming.notifications
+        )
+      ) {
+
+        const notifications =
+          incoming.notifications;
+
+
+        [
+          "assignments",
+          "attendance",
+          "messages",
+          "career",
+          "security",
+          "schoolUpdates",
+          "teacherActivity",
+          "studentActivity"
+
+        ].forEach(
+          field => {
+
+            applySchoolBooleanSetting(
+              current.notifications,
+              notifications,
+              field
+            );
+
+          }
+        );
+
+      }
+
+
+      /* ========================================
+         PRIVACY
+      ======================================== */
+
+      if (
+        isPlainSchoolSettingsObject(
+          incoming.privacy
+        )
+      ) {
+
+        const privacy =
+          incoming.privacy;
+
+
+        [
+          "publicProfile",
+          "discoverable",
+          "showLocation",
+          "showWebsite",
+          "showStatistics",
+          "showPrograms",
+          "teacherPerformanceRestricted",
+          "studentAnalyticsRestricted"
+
+        ].forEach(
+          field => {
+
+            applySchoolBooleanSetting(
+              current.privacy,
+              privacy,
+              field
+            );
+
+          }
+        );
+
+      }
+
+
+      /* ========================================
+         ACCESSIBILITY
+      ======================================== */
+
+      if (
+        isPlainSchoolSettingsObject(
+          incoming.accessibility
+        )
+      ) {
+
+        const accessibility =
+          incoming.accessibility;
+
+
+        [
+          "reducedMotion",
+          "highContrast",
+          "largerText"
+
+        ].forEach(
+          field => {
+
+            applySchoolBooleanSetting(
+              current.accessibility,
+              accessibility,
+              field
+            );
+
+          }
+        );
+
+      }
+
+
+      /* ========================================
+         DATA PREFERENCES
+
+         IMPORTANT:
+         exportRequestedAt and deactivatedAt
+         cannot be written from this generic
+         settings endpoint.
+
+         Dedicated protected actions will handle
+         those later.
+      ======================================== */
+
+      if (
+        isPlainSchoolSettingsObject(
+          incoming.data
+        )
+      ) {
+
+        const data =
+          incoming.data;
+
+
+        applySchoolBooleanSetting(
+          current.data,
+          data,
+          "allowAnalytics"
+        );
+
+
+        applySchoolBooleanSetting(
+          current.data,
+          data,
+          "allowProductImprovement"
+        );
+
+      }
+
+
+      /* ========================================
+         SAVE
+      ======================================== */
+
+      user.set(
+        "schoolStudioSettings",
+        current
+      );
+
+
+      await user.save();
+
+
+      /*
+        Keep the existing generic profile privacy
+        fields synchronized with School Studio.
+
+        These already exist in User.js.
+      */
+
+      const profileChanges = {};
+
+
+      if (
+        typeof current
+          .privacy
+          .publicProfile ===
+        "boolean"
+      ) {
+
+        profileChanges.isPublic =
+          current
+            .privacy
+            .publicProfile;
+
+      }
+
+
+      if (
+        typeof current
+          .privacy
+          .discoverable ===
+        "boolean"
+      ) {
+
+        profileChanges.allowProfileIndexing =
+          current
+            .privacy
+            .discoverable;
+
+      }
+
+
+      if (
+        Object.keys(
+          profileChanges
+        ).length
+      ) {
+
+        await User.updateOne(
+          {
+            _id: user._id
+          },
+          {
+            $set:
+              profileChanges
+          }
+        );
+
+      }
+
+
+      const savedUser =
+        await User.findById(
+          user._id
+        )
+          .select(
+            "schoolStudioSettings"
+          )
+          .lean();
+
+
+      return res.json({
+
+        message:
+          "School Studio settings updated successfully.",
+
+        settings:
+          mergeSchoolStudioSettings(
+            savedUser
+              ?.schoolStudioSettings
+          )
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        "UPDATE SCHOOL STUDIO SETTINGS ERROR:",
+        error
+      );
+
+
+      if (
+        error?.name ===
+        "ValidationError"
+      ) {
+
+        return res
+          .status(400)
+          .json({
+
+            message:
+              "One or more School Studio settings are invalid."
+
+          });
+
+      }
+
+
+      return res
+        .status(500)
+        .json({
+
+          message:
+            "Failed to update School Studio settings."
+
+        });
+
+    }
+
+  }
+);
+
+/* ============================================
    STUDENT STUDIO SETTINGS
 ============================================ */
 
