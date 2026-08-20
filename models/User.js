@@ -19,10 +19,15 @@ const UserSchema = new mongoose.Schema(
       trim: true
     },
 
-    password: {
-      type: String,
-      required: true
-    },
+password: {
+  type: String,
+  required: true
+},
+
+passwordChangedAt: {
+  type: Date,
+  default: null
+},
 
     /* ============================================
        ROLE SYSTEM
