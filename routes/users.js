@@ -3510,9 +3510,83 @@ router.get("/suggestions", auth, async (req, res) => {
 
 
 /* ============================================
-   SCHOOL DATA EXPORT REQUEST
+   ACCOUNT SELF-SERVICE HELPERS
+============================================ */
+
+function getSelfServiceAccountType(
+  user
+) {
+
+  const role =
+    String(
+      user?.role ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+
+  if (
+    role === "student" ||
+    role === "talent"
+  ) {
+
+    return "student";
+
+  }
+
+
+  if (
+    role === "school"
+  ) {
+
+    return "school";
+
+  }
+
+
+  return null;
+
+}
+
+
+function getSelfServiceAccountLabel(
+  user
+) {
+
+  return (
+    getSelfServiceAccountType(
+      user
+    ) === "school"
+      ? "School"
+      : "Student"
+  );
+
+}
+
+
+function canUseAccountSelfService(
+  user
+) {
+
+  return Boolean(
+    getSelfServiceAccountType(
+      user
+    )
+  );
+
+}
+
+
+/* ============================================
+   ACCOUNT DATA EXPORT REQUEST
 
    POST /api/users/me/data-export-request
+
+   Supported:
+   - school
+   - student
+   - legacy talent/student account
 ============================================ */
 
 router.post(
@@ -3522,53 +3596,83 @@ router.post(
 
     try {
 
-      if(
-        String(req.user.role || "") !==
-        "school"
-      ){
+      /* ========================================
+         ACCOUNT TYPE
+      ======================================== */
 
-        return res.status(403).json({
-          message:
-            "Only school accounts can request a school data export."
-        });
+      if (
+        !canUseAccountSelfService(
+          req.user
+        )
+      ) {
+
+        return res
+          .status(403)
+          .json({
+
+            message:
+              "This account type cannot request a data export through this endpoint."
+
+          });
 
       }
 
 
       const user =
         await User.findById(
-          req.user._id || req.user.id
+          req.user._id ||
+          req.user.id
         );
 
 
-      if(!user){
+      if (!user) {
 
-        return res.status(404).json({
-          message:
-            "School account not found"
-        });
+        return res
+          .status(404)
+          .json({
+
+            message:
+              "Account not found."
+
+          });
 
       }
+
+
+      const accountType =
+        getSelfServiceAccountType(
+          user
+        );
+
+
+      const accountLabel =
+        getSelfServiceAccountLabel(
+          user
+        );
 
 
       const now =
         new Date();
 
 
-      /*
-        Prevent repeated export requests from being
-        submitted continuously.
+      /* ========================================
+         REQUEST RATE LIMIT
 
-        One request every 24 hours is enough until
-        the real export worker is connected.
-      */
+         One accepted request per 24 hours.
 
-      if(user.dataExportRequestedAt){
+         This is server-side protection and must
+         not depend on frontend button state.
+      ======================================== */
+
+      if (
+        user.dataExportRequestedAt
+      ) {
 
         const previous =
           new Date(
             user.dataExportRequestedAt
-          ).getTime();
+          )
+            .getTime();
 
 
         const elapsed =
@@ -3577,74 +3681,108 @@ router.post(
 
 
         const oneDay =
-          24 * 60 * 60 * 1000;
+          24 *
+          60 *
+          60 *
+          1000;
 
 
-        if(
-          Number.isFinite(previous) &&
+        if (
+          Number.isFinite(
+            previous
+          ) &&
+          elapsed >= 0 &&
           elapsed < oneDay
-        ){
+        ) {
 
-          return res.status(429).json({
+          return res
+            .status(429)
+            .json({
 
-            message:
-              "A data export was already requested recently. Please wait before requesting another export.",
+              message:
+                "A data export was already requested recently. Please wait before requesting another export.",
 
-            requestedAt:
-              user.dataExportRequestedAt
+              requestedAt:
+                user.dataExportRequestedAt,
 
-          });
+              retryAfterMs:
+                oneDay -
+                elapsed
+
+            });
 
         }
 
       }
 
 
+      /* ========================================
+         RECORD REQUEST
+      ======================================== */
+
       user.dataExportRequestedAt =
         now;
 
 
-      if(
-        user.schoolStudioSettings?.data
-      ){
+      /*
+        Preserve the existing School Studio
+        bookkeeping when this is a school account.
+      */
 
-        user.schoolStudioSettings.data.exportRequestedAt =
+      if (
+        accountType === "school" &&
+        user.schoolStudioSettings?.data
+      ) {
+
+        user
+          .schoolStudioSettings
+          .data
+          .exportRequestedAt =
           now;
 
       }
 
 
-      await user.save();
-
-
-      return res.status(202).json({
-
-        message:
-          "School data export requested successfully.",
-
-        requestedAt:
-          now,
-
-        status:
-          "requested"
-
+      await user.save({
+        validateModifiedOnly:
+          true
       });
 
 
-    }catch(error){
+      return res
+        .status(202)
+        .json({
+
+          message:
+            `${accountLabel} data export requested successfully.`,
+
+          requestedAt:
+            now,
+
+          status:
+            "requested",
+
+          accountType
+
+        });
+
+
+    } catch (error) {
 
       console.error(
-        "SCHOOL DATA EXPORT REQUEST ERROR:",
+        "ACCOUNT DATA EXPORT REQUEST ERROR:",
         error
       );
 
 
-      return res.status(500).json({
+      return res
+        .status(500)
+        .json({
 
-        message:
-          "Failed to request school data export"
+          message:
+            "Failed to request account data export."
 
-      });
+        });
 
     }
 
@@ -3653,9 +3791,14 @@ router.post(
 
 
 /* ============================================
-   DEACTIVATE SCHOOL ACCOUNT
+   DEACTIVATE ACCOUNT
 
    POST /api/users/me/deactivate
+
+   Password verification is required.
+
+   All active sessions are revoked after the
+   account state has been persisted.
 ============================================ */
 
 router.post(
@@ -3665,15 +3808,24 @@ router.post(
 
     try {
 
-      if(
-        String(req.user.role || "") !==
-        "school"
-      ){
+      /* ========================================
+         ACCOUNT TYPE
+      ======================================== */
 
-        return res.status(403).json({
-          message:
-            "Only school accounts can use this action."
-        });
+      if (
+        !canUseAccountSelfService(
+          req.user
+        )
+      ) {
+
+        return res
+          .status(403)
+          .json({
+
+            message:
+              "This account type cannot be deactivated through this endpoint."
+
+          });
 
       }
 
@@ -3682,68 +3834,141 @@ router.post(
         password,
         reason
       } =
-        req.body || {};
+        req.body ||
+        {};
 
 
-      if(!password){
+      if (
+        !password
+      ) {
 
-        return res.status(400).json({
-          message:
-            "Password is required to deactivate the account."
-        });
+        return res
+          .status(400)
+          .json({
+
+            message:
+              "Password is required to deactivate the account."
+
+          });
 
       }
 
 
       const user =
         await User.findById(
-          req.user._id || req.user.id
+          req.user._id ||
+          req.user.id
         );
 
 
-      if(
+      if (
         !user ||
         !user.password
-      ){
+      ) {
 
-        return res.status(404).json({
-          message:
-            "School account not found"
-        });
+        return res
+          .status(404)
+          .json({
+
+            message:
+              "Account not found."
+
+          });
 
       }
 
 
+      const accountType =
+        getSelfServiceAccountType(
+          user
+        );
+
+
+      const accountLabel =
+        getSelfServiceAccountLabel(
+          user
+        );
+
+
+      /* ========================================
+         VERIFY PASSWORD
+      ======================================== */
+
       const passwordMatches =
         await bcrypt.compare(
-          String(password),
+          String(
+            password
+          ),
           user.password
         );
 
 
-      if(!passwordMatches){
+      if (
+        !passwordMatches
+      ) {
 
-        return res.status(400).json({
-          message:
-            "Password is incorrect"
-        });
+        return res
+          .status(400)
+          .json({
+
+            message:
+              "Password is incorrect."
+
+          });
 
       }
 
 
-      if(
+      /* ========================================
+         EXISTING DELETION REQUEST
+
+         An account already pending deletion
+         should not be converted into a normal
+         deactivation.
+      ======================================== */
+
+      if (
+        user.deletionRequestedAt
+      ) {
+
+        return res
+          .status(409)
+          .json({
+
+            message:
+              "This account is already pending deletion.",
+
+            deletionRequestedAt:
+              user.deletionRequestedAt,
+
+            deletionScheduledFor:
+              user.deletionScheduledFor ||
+              null
+
+          });
+
+      }
+
+
+      /* ========================================
+         IDEMPOTENT DEACTIVATION
+      ======================================== */
+
+      if (
         user.status ===
         "deactivated"
-      ){
+      ) {
 
         return res.json({
 
           message:
-            "School account is already deactivated.",
+            `${accountLabel} account is already deactivated.`,
 
           deactivatedAt:
             user.deactivatedAt ||
-            null
+            null,
+
+          accountType
 
         });
 
@@ -3753,6 +3978,10 @@ router.post(
       const now =
         new Date();
 
+
+      /* ========================================
+         ACCOUNT STATE
+      ======================================== */
 
       user.status =
         "deactivated";
@@ -3775,41 +4004,60 @@ router.post(
         null;
 
 
-      if(
-        user.schoolStudioSettings?.data
-      ){
+      /*
+        Preserve School Studio's current data
+        bookkeeping for school accounts.
 
-        user.schoolStudioSettings.data.deactivatedAt =
+        Student Studio does not need a duplicate
+        deactivatedAt field because the top-level
+        account field is authoritative.
+      */
+
+      if (
+        accountType === "school" &&
+        user.schoolStudioSettings?.data
+      ) {
+
+        user
+          .schoolStudioSettings
+          .data
+          .deactivatedAt =
           now;
 
       }
 
 
-      await user.save();
+      await user.save({
+        validateModifiedOnly:
+          true
+      });
 
 
-      /*
-        Immediately revoke every active login.
-      */
+      /* ========================================
+         REVOKE EVERY ACTIVE SESSION
+      ======================================== */
 
       await AuthSession.updateMany(
 
         {
+
           userId:
             user._id,
 
           revokedAt:
             null
+
         },
 
         {
+
           $set: {
 
             revokedAt:
               now,
 
             revokedReason:
-              "security_action"
+              "account_deactivated"
 
           }
 
@@ -3821,28 +4069,32 @@ router.post(
       return res.json({
 
         message:
-          "School account deactivated successfully.",
+          `${accountLabel} account deactivated successfully.`,
 
         deactivatedAt:
-          now
+          now,
+
+        accountType
 
       });
 
 
-    }catch(error){
+    } catch (error) {
 
       console.error(
-        "DEACTIVATE SCHOOL ACCOUNT ERROR:",
+        "DEACTIVATE ACCOUNT ERROR:",
         error
       );
 
 
-      return res.status(500).json({
+      return res
+        .status(500)
+        .json({
 
-        message:
-          "Failed to deactivate school account"
+          message:
+            "Failed to deactivate account."
 
-      });
+        });
 
     }
 
@@ -3851,13 +4103,17 @@ router.post(
 
 
 /* ============================================
-   REQUEST SCHOOL ACCOUNT DELETION
+   REQUEST ACCOUNT DELETION
 
    POST /api/users/me/delete-account-request
 
    IMPORTANT:
-   This does NOT directly remove MongoDB records.
-   It records a controlled deletion request.
+
+   This does NOT immediately remove MongoDB
+   records.
+
+   The account is disabled immediately and a
+   controlled deletion date is recorded.
 ============================================ */
 
 router.post(
@@ -3867,15 +4123,24 @@ router.post(
 
     try {
 
-      if(
-        String(req.user.role || "") !==
-        "school"
-      ){
+      /* ========================================
+         ACCOUNT TYPE
+      ======================================== */
 
-        return res.status(403).json({
-          message:
-            "Only school accounts can request school account deletion."
-        });
+      if (
+        !canUseAccountSelfService(
+          req.user
+        )
+      ) {
+
+        return res
+          .status(403)
+          .json({
+
+            message:
+              "This account type cannot request account deletion through this endpoint."
+
+          });
 
       }
 
@@ -3884,72 +4149,119 @@ router.post(
         password,
         confirmation
       } =
-        req.body || {};
+        req.body ||
+        {};
 
 
-      if(
+      if (
         !password ||
         !confirmation
-      ){
+      ) {
 
-        return res.status(400).json({
+        return res
+          .status(400)
+          .json({
 
-          message:
-            "Password and confirmation are required."
+            message:
+              "Password and confirmation are required."
 
-        });
+          });
 
       }
 
 
       const user =
         await User.findById(
-          req.user._id || req.user.id
+          req.user._id ||
+          req.user.id
         );
 
 
-      if(
+      if (
         !user ||
         !user.password
-      ){
+      ) {
 
-        return res.status(404).json({
-          message:
-            "School account not found"
-        });
+        return res
+          .status(404)
+          .json({
+
+            message:
+              "Account not found."
+
+          });
 
       }
 
 
+      const accountType =
+        getSelfServiceAccountType(
+          user
+        );
+
+
+      const accountLabel =
+        getSelfServiceAccountLabel(
+          user
+        );
+
+
+      /* ========================================
+         VERIFY PASSWORD
+      ======================================== */
+
       const passwordMatches =
         await bcrypt.compare(
-          String(password),
+          String(
+            password
+          ),
           user.password
         );
 
 
-      if(!passwordMatches){
+      if (
+        !passwordMatches
+      ) {
 
-        return res.status(400).json({
-          message:
-            "Password is incorrect"
-        });
+        return res
+          .status(400)
+          .json({
+
+            message:
+              "Password is incorrect."
+
+          });
 
       }
 
 
-      /*
-        Require the exact school name.
+      /* ========================================
+         DESTRUCTIVE CONFIRMATION
 
-        This gives destructive account actions a
-        deliberate confirmation step.
-      */
+         School:
+           requires exact school/account name.
+
+         Student:
+           requires exact student's account name.
+
+         We intentionally keep this case-sensitive
+         and exact after trimming whitespace.
+      ======================================== */
 
       const expectedConfirmation =
         String(
-          user.name ||
-          user.companyName ||
-          ""
+
+          accountType === "school"
+            ? (
+                user.name ||
+                user.companyName ||
+                ""
+              )
+            : (
+                user.name ||
+                ""
+              )
+
         )
           .trim();
 
@@ -3962,25 +4274,36 @@ router.post(
           .trim();
 
 
-      if(
+      if (
         !expectedConfirmation ||
         suppliedConfirmation !==
         expectedConfirmation
-      ){
+      ) {
 
-        return res.status(400).json({
+        return res
+          .status(400)
+          .json({
 
-          message:
-            "Confirmation does not match the school name."
+            message:
+              accountType === "school"
+                ? "Confirmation does not match the school account name."
+                : "Confirmation does not match your account name.",
 
-        });
+            confirmationRequired:
+              expectedConfirmation
+
+          });
 
       }
 
 
-      if(
+      /* ========================================
+         IDEMPOTENT REQUEST
+      ======================================== */
+
+      if (
         user.deletionRequestedAt
-      ){
+      ) {
 
         return res.json({
 
@@ -3992,7 +4315,12 @@ router.post(
 
           scheduledFor:
             user.deletionScheduledFor ||
-            null
+            null,
+
+          status:
+            "pending_deletion",
+
+          accountType
 
         });
 
@@ -4003,21 +4331,28 @@ router.post(
         new Date();
 
 
-      /*
-        30-day deletion window.
+      /* ========================================
+         30-DAY DELETION WINDOW
 
-        A future cleanup/admin process can permanently
-        remove eligible data after this date.
-      */
+         A separate deletion worker/admin process
+         must permanently remove eligible records
+         after this time.
+
+         This endpoint intentionally does not
+         physically delete MongoDB documents.
+      ======================================== */
 
       const scheduledFor =
         new Date(
+
           now.getTime() +
+
           30 *
           24 *
           60 *
           60 *
           1000
+
         );
 
 
@@ -4038,33 +4373,37 @@ router.post(
         now;
 
 
-      await user.save();
+      await user.save({
+        validateModifiedOnly:
+          true
+      });
 
 
-      /*
-        Immediately close all sessions so the account
-        cannot continue being used after requesting
-        deletion.
-      */
+      /* ========================================
+         REVOKE EVERY ACTIVE SESSION
+      ======================================== */
 
       await AuthSession.updateMany(
 
         {
+
           userId:
             user._id,
 
           revokedAt:
             null
+
         },
 
         {
+
           $set: {
 
             revokedAt:
               now,
 
             revokedReason:
-              "security_action"
+              "account_deletion_requested"
 
           }
 
@@ -4073,36 +4412,42 @@ router.post(
       );
 
 
-      return res.status(202).json({
+      return res
+        .status(202)
+        .json({
 
-        message:
-          "School account deletion requested successfully.",
+          message:
+            `${accountLabel} account deletion requested successfully.`,
 
-        requestedAt:
-          now,
+          requestedAt:
+            now,
 
-        scheduledFor,
+          scheduledFor,
 
-        status:
-          "pending_deletion"
+          status:
+            "pending_deletion",
 
-      });
+          accountType
+
+        });
 
 
-    }catch(error){
+    } catch (error) {
 
       console.error(
-        "SCHOOL ACCOUNT DELETE REQUEST ERROR:",
+        "ACCOUNT DELETE REQUEST ERROR:",
         error
       );
 
 
-      return res.status(500).json({
+      return res
+        .status(500)
+        .json({
 
-        message:
-          "Failed to request school account deletion"
+          message:
+            "Failed to request account deletion."
 
-      });
+        });
 
     }
 
