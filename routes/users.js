@@ -4444,7 +4444,22 @@ router.get("/suggestions", auth, async (req, res) => {
 
 
 /* ============================================
-   ACCOUNT SELF-SERVICE HELPERS
+   ACCOUNT SELF-SERVICE
+   SCHOOL / TEACHER / STUDENT
+
+   Protected authenticated account lifecycle:
+   - data export
+   - deactivation
+   - deletion request
+
+   IMPORTANT:
+   These routes operate only on the authenticated
+   user's own account.
+============================================ */
+
+
+/* ============================================
+   SUPPORTED SELF-SERVICE ACCOUNT TYPE
 ============================================ */
 
 function getSelfServiceAccountType(
@@ -4461,6 +4476,24 @@ function getSelfServiceAccountType(
 
 
   if (
+    role === "school"
+  ) {
+
+    return "school";
+
+  }
+
+
+  if (
+    role === "teacher"
+  ) {
+
+    return "teacher";
+
+  }
+
+
+  if (
     role === "student" ||
     role === "talent"
   ) {
@@ -4470,34 +4503,52 @@ function getSelfServiceAccountType(
   }
 
 
-  if (
-    role === "school"
-  ) {
-
-    return "school";
-
-  }
-
-
   return null;
 
 }
 
 
+/* ============================================
+   ACCOUNT DISPLAY LABEL
+============================================ */
+
 function getSelfServiceAccountLabel(
   user
 ) {
 
-  return (
+  const accountType =
     getSelfServiceAccountType(
       user
-    ) === "school"
-      ? "School"
-      : "Student"
-  );
+    );
+
+
+  switch (
+    accountType
+  ) {
+
+    case "school":
+      return "School";
+
+
+    case "teacher":
+      return "Teacher";
+
+
+    case "student":
+      return "Student";
+
+
+    default:
+      return "Account";
+
+  }
 
 }
 
+
+/* ============================================
+   SELF-SERVICE AUTHORIZATION
+============================================ */
 
 function canUseAccountSelfService(
   user
@@ -4513,25 +4564,71 @@ function canUseAccountSelfService(
 
 
 /* ============================================
-   ACCOUNT DATA EXPORT REQUEST
+   ACCOUNT CONFIRMATION NAME
+============================================ */
+
+function getSelfServiceConfirmationName(
+  user
+) {
+
+  const accountType =
+    getSelfServiceAccountType(
+      user
+    );
+
+
+  if (
+    accountType === "school"
+  ) {
+
+    return String(
+
+      user?.name ||
+      user?.schoolName ||
+      user?.companyName ||
+      ""
+
+    )
+      .trim();
+
+  }
+
+
+  return String(
+    user?.name ||
+    ""
+  )
+    .trim();
+
+}
+
+
+/* ============================================
+   DATA EXPORT REQUEST
 
    POST /api/users/me/data-export-request
 
    Supported:
    - school
+   - teacher
    - student
-   - legacy talent/student account
+   - legacy talent
+
+   One accepted request per 24 hours.
 ============================================ */
 
 router.post(
   "/me/data-export-request",
   auth,
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
 
     try {
 
       /* ========================================
-         ACCOUNT TYPE
+         ACCOUNT AUTHORIZATION
       ======================================== */
 
       if (
@@ -4552,6 +4649,10 @@ router.post(
       }
 
 
+      /* ========================================
+         LOAD ACCOUNT
+      ======================================== */
+
       const user =
         await User.findById(
           req.user._id ||
@@ -4567,6 +4668,24 @@ router.post(
 
             message:
               "Account not found."
+
+          });
+
+      }
+
+
+      if (
+        !canUseAccountSelfService(
+          user
+        )
+      ) {
+
+        return res
+          .status(403)
+          .json({
+
+            message:
+              "This account type cannot request a data export."
 
           });
 
@@ -4590,19 +4709,19 @@ router.post(
 
 
       /* ========================================
-         REQUEST RATE LIMIT
+         SERVER-SIDE RATE LIMIT
 
-         One accepted request per 24 hours.
+         One successful request every 24 hours.
 
-         This is server-side protection and must
-         not depend on frontend button state.
+         Frontend button state is not trusted for
+         enforcing this limit.
       ======================================== */
 
       if (
         user.dataExportRequestedAt
       ) {
 
-        const previous =
+        const previousRequest =
           new Date(
             user.dataExportRequestedAt
           )
@@ -4611,10 +4730,10 @@ router.post(
 
         const elapsed =
           Date.now() -
-          previous;
+          previousRequest;
 
 
-        const oneDay =
+        const oneDayMs =
           24 *
           60 *
           60 *
@@ -4623,10 +4742,10 @@ router.post(
 
         if (
           Number.isFinite(
-            previous
+            previousRequest
           ) &&
           elapsed >= 0 &&
-          elapsed < oneDay
+          elapsed < oneDayMs
         ) {
 
           return res
@@ -4640,7 +4759,7 @@ router.post(
                 user.dataExportRequestedAt,
 
               retryAfterMs:
-                oneDay -
+                oneDayMs -
                 elapsed
 
             });
@@ -4659,8 +4778,8 @@ router.post(
 
 
       /*
-        Preserve the existing School Studio
-        bookkeeping when this is a school account.
+        Preserve the existing School Studio data
+        timestamp if this is a school account.
       */
 
       if (
@@ -4678,8 +4797,10 @@ router.post(
 
 
       await user.save({
+
         validateModifiedOnly:
           true
+
       });
 
 
@@ -4701,7 +4822,9 @@ router.post(
         });
 
 
-    } catch (error) {
+    } catch (
+      error
+    ) {
 
       console.error(
         "ACCOUNT DATA EXPORT REQUEST ERROR:",
@@ -4729,21 +4852,28 @@ router.post(
 
    POST /api/users/me/deactivate
 
-   Password verification is required.
+   Requires:
+   - authenticated account
+   - supported account role
+   - current password
 
-   All active sessions are revoked after the
-   account state has been persisted.
+   Result:
+   - account becomes deactivated
+   - all active sessions are revoked
 ============================================ */
 
 router.post(
   "/me/deactivate",
   auth,
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
 
     try {
 
       /* ========================================
-         ACCOUNT TYPE
+         AUTHORIZATION
       ======================================== */
 
       if (
@@ -4772,6 +4902,10 @@ router.post(
         {};
 
 
+      /* ========================================
+         PASSWORD REQUIRED
+      ======================================== */
+
       if (
         !password
       ) {
@@ -4787,6 +4921,10 @@ router.post(
 
       }
 
+
+      /* ========================================
+         LOAD ACCOUNT
+      ======================================== */
 
       const user =
         await User.findById(
@@ -4812,6 +4950,24 @@ router.post(
       }
 
 
+      if (
+        !canUseAccountSelfService(
+          user
+        )
+      ) {
+
+        return res
+          .status(403)
+          .json({
+
+            message:
+              "This account cannot be deactivated through self-service."
+
+          });
+
+      }
+
+
       const accountType =
         getSelfServiceAccountType(
           user
@@ -4830,10 +4986,13 @@ router.post(
 
       const passwordMatches =
         await bcrypt.compare(
+
           String(
             password
           ),
+
           user.password
+
         );
 
 
@@ -4856,9 +5015,8 @@ router.post(
       /* ========================================
          EXISTING DELETION REQUEST
 
-         An account already pending deletion
-         should not be converted into a normal
-         deactivation.
+         A pending-deletion account should not be
+         converted back into ordinary deactivation.
       ======================================== */
 
       if (
@@ -4939,12 +5097,11 @@ router.post(
 
 
       /*
-        Preserve School Studio's current data
-        bookkeeping for school accounts.
+        School Studio maintains its existing
+        dedicated timestamp.
 
-        Student Studio does not need a duplicate
-        deactivatedAt field because the top-level
-        account field is authoritative.
+        Teacher and Student use the authoritative
+        top-level lifecycle fields.
       */
 
       if (
@@ -4961,9 +5118,15 @@ router.post(
       }
 
 
+      /* ========================================
+         SAVE ACCOUNT FIRST
+      ======================================== */
+
       await user.save({
+
         validateModifiedOnly:
           true
+
       });
 
 
@@ -5013,7 +5176,9 @@ router.post(
       });
 
 
-    } catch (error) {
+    } catch (
+      error
+    ) {
 
       console.error(
         "DEACTIVATE ACCOUNT ERROR:",
@@ -5042,23 +5207,26 @@ router.post(
    POST /api/users/me/delete-account-request
 
    IMPORTANT:
+   ---------------------------------------------------------
+   This does NOT immediately destroy MongoDB records.
 
-   This does NOT immediately remove MongoDB
-   records.
-
-   The account is disabled immediately and a
-   controlled deletion date is recorded.
+   The authenticated account is disabled immediately,
+   all sessions are revoked, and deletion is scheduled
+   for the controlled deletion process.
 ============================================ */
 
 router.post(
   "/me/delete-account-request",
   auth,
-  async (req, res) => {
+  async (
+    req,
+    res
+  ) => {
 
     try {
 
       /* ========================================
-         ACCOUNT TYPE
+         AUTHORIZATION
       ======================================== */
 
       if (
@@ -5087,6 +5255,10 @@ router.post(
         {};
 
 
+      /* ========================================
+         REQUIRED INPUT
+      ======================================== */
+
       if (
         !password ||
         !confirmation
@@ -5103,6 +5275,10 @@ router.post(
 
       }
 
+
+      /* ========================================
+         LOAD ACCOUNT
+      ======================================== */
 
       const user =
         await User.findById(
@@ -5128,6 +5304,24 @@ router.post(
       }
 
 
+      if (
+        !canUseAccountSelfService(
+          user
+        )
+      ) {
+
+        return res
+          .status(403)
+          .json({
+
+            message:
+              "This account cannot request deletion through self-service."
+
+          });
+
+      }
+
+
       const accountType =
         getSelfServiceAccountType(
           user
@@ -5146,10 +5340,13 @@ router.post(
 
       const passwordMatches =
         await bcrypt.compare(
+
           String(
             password
           ),
+
           user.password
+
         );
 
 
@@ -5170,34 +5367,13 @@ router.post(
 
 
       /* ========================================
-         DESTRUCTIVE CONFIRMATION
-
-         School:
-           requires exact school/account name.
-
-         Student:
-           requires exact student's account name.
-
-         We intentionally keep this case-sensitive
-         and exact after trimming whitespace.
+         EXACT DESTRUCTIVE CONFIRMATION
       ======================================== */
 
       const expectedConfirmation =
-        String(
-
-          accountType === "school"
-            ? (
-                user.name ||
-                user.companyName ||
-                ""
-              )
-            : (
-                user.name ||
-                ""
-              )
-
-        )
-          .trim();
+        getSelfServiceConfirmationName(
+          user
+        );
 
 
       const suppliedConfirmation =
@@ -5221,7 +5397,9 @@ router.post(
             message:
               accountType === "school"
                 ? "Confirmation does not match the school account name."
-                : "Confirmation does not match your account name.",
+                : accountType === "teacher"
+                  ? "Confirmation does not match your teacher account name."
+                  : "Confirmation does not match your account name.",
 
             confirmationRequired:
               expectedConfirmation
@@ -5232,7 +5410,7 @@ router.post(
 
 
       /* ========================================
-         IDEMPOTENT REQUEST
+         IDEMPOTENT DELETE REQUEST
       ======================================== */
 
       if (
@@ -5266,14 +5444,13 @@ router.post(
 
 
       /* ========================================
-         30-DAY DELETION WINDOW
+         30-DAY CONTROLLED DELETION WINDOW
 
-         A separate deletion worker/admin process
-         must permanently remove eligible records
-         after this time.
+         Permanent physical deletion belongs to
+         a separate trusted worker/admin process.
 
-         This endpoint intentionally does not
-         physically delete MongoDB documents.
+         The browser never directly deletes the
+         account document.
       ======================================== */
 
       const scheduledFor =
@@ -5289,6 +5466,10 @@ router.post(
 
         );
 
+
+      /* ========================================
+         ACCOUNT LIFECYCLE STATE
+      ======================================== */
 
       user.deletionRequestedAt =
         now;
@@ -5307,9 +5488,15 @@ router.post(
         now;
 
 
+      /* ========================================
+         SAVE
+      ======================================== */
+
       await user.save({
+
         validateModifiedOnly:
           true
+
       });
 
 
@@ -5366,7 +5553,9 @@ router.post(
         });
 
 
-    } catch (error) {
+    } catch (
+      error
+    ) {
 
       console.error(
         "ACCOUNT DELETE REQUEST ERROR:",
