@@ -39,11 +39,50 @@ role: {
   index: true
 },
 
-    status: {
-      type: String,
-      enum: ["active", "suspended"],
-      default: "active"
-    },
+/* ============================================
+   ACCOUNT STATUS / LIFECYCLE
+============================================ */
+
+status: {
+  type: String,
+
+  enum: [
+    "active",
+    "suspended",
+    "deactivated"
+  ],
+
+  default: "active",
+
+  index: true
+},
+
+deactivatedAt: {
+  type: Date,
+  default: null
+},
+
+deactivationReason: {
+  type: String,
+  default: null,
+  trim: true,
+  maxlength: 500
+},
+
+dataExportRequestedAt: {
+  type: Date,
+  default: null
+},
+
+deletionRequestedAt: {
+  type: Date,
+  default: null
+},
+
+deletionScheduledFor: {
+  type: Date,
+  default: null
+},
 
     /* ============================================
        REFERRAL SYSTEM
