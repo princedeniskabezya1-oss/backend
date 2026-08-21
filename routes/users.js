@@ -559,6 +559,940 @@ router.get("/me", auth, async (req, res) => {
   }
 });
 
+
+/* ============================================
+   TEACHER STUDIO SETTINGS
+============================================ */
+
+
+/* ============================================
+   TEACHER STUDIO SETTINGS DEFAULTS
+============================================ */
+
+const TEACHER_STUDIO_SETTINGS_DEFAULTS =
+  Object.freeze({
+
+    /* -----------------------------------------
+       APPEARANCE
+    ----------------------------------------- */
+
+    theme:
+      "light",
+
+    compactMode:
+      false,
+
+    rememberSidebar:
+      true,
+
+
+    /* -----------------------------------------
+       TEACHING
+    ----------------------------------------- */
+
+    gradingReminders:
+      true,
+
+    attendanceReminders:
+      true,
+
+
+    /* -----------------------------------------
+       NOTIFICATIONS
+    ----------------------------------------- */
+
+    notifications:
+      true,
+
+    emailNotifications:
+      true,
+
+    messageNotifications:
+      true,
+
+    scheduleReminders:
+      true,
+
+
+    /* -----------------------------------------
+       KABEZYA AI
+    ----------------------------------------- */
+
+    kabezyaClassContext:
+      true,
+
+    kabezyaConversationHistory:
+      true,
+
+
+    /* -----------------------------------------
+       PRIVACY
+    ----------------------------------------- */
+
+    profileDiscovery:
+      true,
+
+    activityVisibility:
+      false,
+
+    teachingActivityVisibility:
+      false,
+
+
+    /* -----------------------------------------
+       ACCESSIBILITY
+    ----------------------------------------- */
+
+    reducedMotion:
+      false,
+
+    highContrast:
+      false,
+
+    largerText:
+      false
+
+  });
+
+
+/* ============================================
+   TEACHER SETTINGS ALLOWED FIELDS
+============================================ */
+
+const TEACHER_STUDIO_BOOLEAN_FIELDS =
+  Object.freeze([
+
+    "compactMode",
+
+    "rememberSidebar",
+
+    "gradingReminders",
+
+    "attendanceReminders",
+
+    "notifications",
+
+    "emailNotifications",
+
+    "messageNotifications",
+
+    "scheduleReminders",
+
+    "kabezyaClassContext",
+
+    "kabezyaConversationHistory",
+
+    "profileDiscovery",
+
+    "activityVisibility",
+
+    "teachingActivityVisibility",
+
+    "reducedMotion",
+
+    "highContrast",
+
+    "largerText"
+
+  ]);
+
+
+const TEACHER_STUDIO_ALLOWED_FIELDS =
+  Object.freeze([
+
+    "theme",
+
+    ...TEACHER_STUDIO_BOOLEAN_FIELDS
+
+  ]);
+
+
+/* ============================================
+   TEACHER SETTINGS HELPERS
+============================================ */
+
+function isPlainTeacherSettingsObject(
+  value
+) {
+
+  return Boolean(
+
+    value &&
+
+    typeof value ===
+      "object" &&
+
+    !Array.isArray(
+      value
+    )
+
+  );
+
+}
+
+
+/* ============================================
+   NORMALIZE TEACHER THEME
+============================================ */
+
+function normalizeTeacherStudioTheme(
+  value
+) {
+
+  const normalized =
+    String(
+      value ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+
+  if (
+    normalized === "light" ||
+    normalized === "dark" ||
+    normalized === "system"
+  ) {
+
+    return normalized;
+
+  }
+
+
+  return null;
+
+}
+
+
+/* ============================================
+   MERGE TEACHER SETTINGS
+
+   Always return the complete sanitized settings
+   contract.
+
+   Missing MongoDB fields are filled from defaults.
+============================================ */
+
+function mergeTeacherStudioSettings(
+  settings = {}
+) {
+
+  const source =
+    isPlainTeacherSettingsObject(
+      settings
+    )
+      ? settings
+      : {};
+
+
+  const merged = {
+
+    ...TEACHER_STUDIO_SETTINGS_DEFAULTS
+
+  };
+
+
+  /* ========================================
+     THEME
+  ======================================== */
+
+  const theme =
+    normalizeTeacherStudioTheme(
+      source.theme
+    );
+
+
+  if (theme) {
+
+    merged.theme =
+      theme;
+
+  }
+
+
+  /* ========================================
+     BOOLEAN SETTINGS
+  ======================================== */
+
+  TEACHER_STUDIO_BOOLEAN_FIELDS
+    .forEach(
+      field => {
+
+        if (
+          typeof source[field] ===
+          "boolean"
+        ) {
+
+          merged[field] =
+            source[field];
+
+        }
+
+      }
+    );
+
+
+  return merged;
+
+}
+
+
+/* ============================================
+   VALIDATE TEACHER SETTINGS PATCH
+
+   Returns:
+   {
+     valid,
+     settings,
+     message
+   }
+============================================ */
+
+function validateTeacherStudioSettingsPatch(
+  incoming
+) {
+
+  if (
+    !isPlainTeacherSettingsObject(
+      incoming
+    )
+  ) {
+
+    return {
+
+      valid:
+        false,
+
+      settings:
+        null,
+
+      message:
+        "Settings must be an object."
+
+    };
+
+  }
+
+
+  const keys =
+    Object.keys(
+      incoming
+    );
+
+
+  if (
+    !keys.length
+  ) {
+
+    return {
+
+      valid:
+        false,
+
+      settings:
+        null,
+
+      message:
+        "No Teacher Studio settings were provided."
+
+    };
+
+  }
+
+
+  /* ========================================
+     BLOCK UNKNOWN FIELDS
+
+     This prevents arbitrary MongoDB properties
+     from being written through this endpoint.
+  ======================================== */
+
+  const unknownFields =
+    keys.filter(
+      field =>
+        !TEACHER_STUDIO_ALLOWED_FIELDS
+          .includes(
+            field
+          )
+    );
+
+
+  if (
+    unknownFields.length
+  ) {
+
+    return {
+
+      valid:
+        false,
+
+      settings:
+        null,
+
+      message:
+        `Unsupported Teacher Studio setting${
+          unknownFields.length === 1
+            ? ""
+            : "s"
+        }: ${unknownFields.join(", ")}`
+
+    };
+
+  }
+
+
+  const sanitized =
+    {};
+
+
+  /* ========================================
+     THEME
+  ======================================== */
+
+  if (
+    Object.prototype
+      .hasOwnProperty
+      .call(
+        incoming,
+        "theme"
+      )
+  ) {
+
+    const theme =
+      normalizeTeacherStudioTheme(
+        incoming.theme
+      );
+
+
+    if (!theme) {
+
+      return {
+
+        valid:
+          false,
+
+        settings:
+          null,
+
+        message:
+          "Theme must be light, dark, or system."
+
+      };
+
+    }
+
+
+    sanitized.theme =
+      theme;
+
+  }
+
+
+  /* ========================================
+     BOOLEAN FIELDS
+  ======================================== */
+
+  for (
+    const field
+    of TEACHER_STUDIO_BOOLEAN_FIELDS
+  ) {
+
+    if (
+      !Object.prototype
+        .hasOwnProperty
+        .call(
+          incoming,
+          field
+        )
+    ) {
+
+      continue;
+
+    }
+
+
+    if (
+      typeof incoming[field] !==
+      "boolean"
+    ) {
+
+      return {
+
+        valid:
+          false,
+
+        settings:
+          null,
+
+        message:
+          `${field} must be true or false.`
+
+      };
+
+    }
+
+
+    sanitized[field] =
+      incoming[field];
+
+  }
+
+
+  return {
+
+    valid:
+      true,
+
+    settings:
+      sanitized,
+
+    message:
+      null
+
+  };
+
+}
+
+
+/* ============================================
+   REQUIRE TEACHER ACCOUNT
+
+   This endpoint belongs to the authenticated
+   teacher themselves.
+
+   Schools cannot alter Teacher Studio personal
+   preferences through this route.
+============================================ */
+
+function requireTeacherStudioAccount(
+  req,
+  res
+) {
+
+  const role =
+    String(
+      req.user?.role ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+
+  if (
+    role !==
+    "teacher"
+  ) {
+
+    res
+      .status(403)
+      .json({
+
+        message:
+          "Only a teacher account can access Teacher Studio settings."
+
+      });
+
+
+    return false;
+
+  }
+
+
+  return true;
+
+}
+
+
+/* ============================================
+   GET TEACHER STUDIO SETTINGS
+
+   GET /api/users/me/teacher-studio-settings
+============================================ */
+
+router.get(
+  "/me/teacher-studio-settings",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try {
+
+      /* ======================================
+         ROLE AUTHORIZATION
+      ====================================== */
+
+      if (
+        !requireTeacherStudioAccount(
+          req,
+          res
+        )
+      ) {
+
+        return;
+
+      }
+
+
+      /* ======================================
+         LOAD ACCOUNT
+      ====================================== */
+
+      const user =
+        await User.findById(
+          req.user._id ||
+          req.user.id
+        )
+          .select(
+            "_id role teacherStudioSettings"
+          )
+          .lean();
+
+
+      if (!user) {
+
+        return res
+          .status(404)
+          .json({
+
+            message:
+              "Teacher account not found."
+
+          });
+
+      }
+
+
+      /* ======================================
+         SANITIZED COMPLETE SETTINGS CONTRACT
+      ====================================== */
+
+      const settings =
+        mergeTeacherStudioSettings(
+          user.teacherStudioSettings
+        );
+
+
+      return res.json({
+
+        settings
+
+      });
+
+
+    } catch (
+      error
+    ) {
+
+      console.error(
+        "GET TEACHER STUDIO SETTINGS ERROR:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+
+          message:
+            "Failed to load Teacher Studio settings."
+
+        });
+
+    }
+
+  }
+);
+
+
+/* ============================================
+   UPDATE TEACHER STUDIO SETTINGS
+
+   PATCH /api/users/me/teacher-studio-settings
+
+   Supports partial updates.
+
+   Example:
+   {
+     "theme": "dark"
+   }
+
+   or:
+
+   {
+     "notifications": false,
+     "reducedMotion": true
+   }
+============================================ */
+
+router.patch(
+  "/me/teacher-studio-settings",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try {
+
+      /* ======================================
+         ROLE AUTHORIZATION
+      ====================================== */
+
+      if (
+        !requireTeacherStudioAccount(
+          req,
+          res
+        )
+      ) {
+
+        return;
+
+      }
+
+
+      /* ======================================
+         VALIDATE REQUEST
+      ====================================== */
+
+      const validation =
+        validateTeacherStudioSettingsPatch(
+          req.body
+        );
+
+
+      if (
+        !validation.valid
+      ) {
+
+        return res
+          .status(400)
+          .json({
+
+            message:
+              validation.message
+
+          });
+
+      }
+
+
+      /* ======================================
+         LOAD TEACHER
+      ====================================== */
+
+      const user =
+        await User.findById(
+          req.user._id ||
+          req.user.id
+        );
+
+
+      if (!user) {
+
+        return res
+          .status(404)
+          .json({
+
+            message:
+              "Teacher account not found."
+
+          });
+
+      }
+
+
+      if (
+        String(
+          user.role ||
+          ""
+        )
+          .trim()
+          .toLowerCase() !==
+        "teacher"
+      ) {
+
+        return res
+          .status(403)
+          .json({
+
+            message:
+              "This account is not a Teacher account."
+
+          });
+
+      }
+
+
+      /* ======================================
+         CURRENT SETTINGS
+      ====================================== */
+
+      const current =
+        mergeTeacherStudioSettings(
+          user.teacherStudioSettings
+        );
+
+
+      /* ======================================
+         APPLY ONLY SANITIZED CHANGES
+      ====================================== */
+
+      Object.entries(
+        validation.settings
+      )
+        .forEach(
+          ([
+            field,
+            value
+          ]) => {
+
+            current[field] =
+              value;
+
+          }
+        );
+
+
+      /* ======================================
+         SAVE
+
+         Using one authoritative settings object
+         avoids stale nested-field mutations.
+      ====================================== */
+
+      user.set(
+        "teacherStudioSettings",
+        current
+      );
+
+
+      await user.save({
+
+        validateModifiedOnly:
+          true
+
+      });
+
+
+      /* ======================================
+         KEEP GLOBAL PROFILE DISCOVERY IN SYNC
+
+         Teacher Studio:
+           profileDiscovery
+
+         Existing global profile field:
+           allowProfileIndexing
+
+         This keeps supported profile surfaces from
+         disagreeing with Teacher Settings.
+      ====================================== */
+
+      if (
+        Object.prototype
+          .hasOwnProperty
+          .call(
+            validation.settings,
+            "profileDiscovery"
+          )
+      ) {
+
+        await User.updateOne(
+
+          {
+            _id:
+              user._id
+          },
+
+          {
+            $set: {
+
+              allowProfileIndexing:
+                current.profileDiscovery
+
+            }
+          }
+
+        );
+
+      }
+
+
+      /* ======================================
+         RETURN FRESH DATABASE STATE
+      ====================================== */
+
+      const savedUser =
+        await User.findById(
+          user._id
+        )
+          .select(
+            "teacherStudioSettings"
+          )
+          .lean();
+
+
+      const savedSettings =
+        mergeTeacherStudioSettings(
+          savedUser
+            ?.teacherStudioSettings
+        );
+
+
+      return res.json({
+
+        message:
+          "Teacher Studio settings updated successfully.",
+
+        settings:
+          savedSettings
+
+      });
+
+
+    } catch (
+      error
+    ) {
+
+      console.error(
+        "UPDATE TEACHER STUDIO SETTINGS ERROR:",
+        error
+      );
+
+
+      if (
+        error?.name ===
+        "ValidationError"
+      ) {
+
+        return res
+          .status(400)
+          .json({
+
+            message:
+              "One or more Teacher Studio settings are invalid."
+
+          });
+
+      }
+
+
+      return res
+        .status(500)
+        .json({
+
+          message:
+            "Failed to update Teacher Studio settings."
+
+        });
+
+    }
+
+  }
+);
+
+
 /* ============================================
    SCHOOL STUDIO SETTINGS
 ============================================ */
