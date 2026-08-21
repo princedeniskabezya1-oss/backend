@@ -628,38 +628,90 @@ router.post(
       }
 
 
-      if (
-        user.status ===
-        "suspended"
-      ) {
+/* ========================================
+   ACCOUNT ACCESS STATUS
+======================================== */
 
-        return res
-          .status(403)
-          .json({
+if (
+  user.status ===
+  "suspended"
+) {
 
-            message:
-              "Account suspended"
+  return res
+    .status(403)
+    .json({
 
-          });
+      message:
+        "Account suspended",
 
-      }
+      code:
+        "ACCOUNT_SUSPENDED"
+
+    });
+
+}
 
 
-      if (
-        user.isBlockedByEmployer ===
-        true
-      ) {
+if (
+  user.status ===
+  "deactivated"
+) {
 
-        return res
-          .status(403)
-          .json({
+  const deletionPending =
+    Boolean(
+      user.deletionRequestedAt
+    );
 
-            message:
-              "Your employer has restricted access to this account."
 
-          });
+  return res
+    .status(403)
+    .json({
 
-      }
+      message:
+        deletionPending
+          ? "This account is pending deletion and cannot be signed in."
+          : "This account has been deactivated.",
+
+      code:
+        deletionPending
+          ? "ACCOUNT_PENDING_DELETION"
+          : "ACCOUNT_DEACTIVATED",
+
+      deactivatedAt:
+        user.deactivatedAt ||
+        null,
+
+      deletionRequestedAt:
+        user.deletionRequestedAt ||
+        null,
+
+      deletionScheduledFor:
+        user.deletionScheduledFor ||
+        null
+
+    });
+
+}
+
+
+if (
+  user.isBlockedByEmployer ===
+  true
+) {
+
+  return res
+    .status(403)
+    .json({
+
+      message:
+        "Your employer has restricted access to this account.",
+
+      code:
+        "EMPLOYER_RESTRICTED"
+
+    });
+
+}
 
 
       const isMatch =
