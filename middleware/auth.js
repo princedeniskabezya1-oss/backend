@@ -176,48 +176,90 @@ module.exports =
       }
 
 
-      /* ============================================
-         ACCOUNT STATUS
-      ============================================ */
+/* ============================================
+   ACCOUNT STATUS
+============================================ */
 
-      if (
-        user.status ===
-        "suspended"
-      ) {
+if (
+  user.status ===
+  "suspended"
+) {
 
-        return res
-          .status(403)
-          .json({
+  return res
+    .status(403)
+    .json({
 
-            message:
-              "Account suspended",
+      message:
+        "Account suspended",
 
-            code:
-              "ACCOUNT_SUSPENDED"
+      code:
+        "ACCOUNT_SUSPENDED"
 
-          });
+    });
 
-      }
+}
 
 
-      if (
-        user.isBlockedByEmployer ===
-        true
-      ) {
+if (
+  user.status ===
+  "deactivated"
+) {
 
-        return res
-          .status(403)
-          .json({
+  const deletionPending =
+    Boolean(
+      user.deletionRequestedAt
+    );
 
-            message:
-              "Your employer has restricted access to this account.",
 
-            code:
-              "EMPLOYER_RESTRICTED"
+  return res
+    .status(403)
+    .json({
 
-          });
+      message:
+        deletionPending
+          ? "This account is pending deletion and can no longer be used."
+          : "This account has been deactivated.",
 
-      }
+      code:
+        deletionPending
+          ? "ACCOUNT_PENDING_DELETION"
+          : "ACCOUNT_DEACTIVATED",
+
+      deactivatedAt:
+        user.deactivatedAt ||
+        null,
+
+      deletionRequestedAt:
+        user.deletionRequestedAt ||
+        null,
+
+      deletionScheduledFor:
+        user.deletionScheduledFor ||
+        null
+
+    });
+
+}
+
+
+if (
+  user.isBlockedByEmployer ===
+  true
+) {
+
+  return res
+    .status(403)
+    .json({
+
+      message:
+        "Your employer has restricted access to this account.",
+
+      code:
+        "EMPLOYER_RESTRICTED"
+
+    });
+
+}
 
 
       /* ============================================
