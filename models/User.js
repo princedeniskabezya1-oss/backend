@@ -624,6 +624,136 @@ performanceMetrics: {
   }
 },
 
+
+/* ============================================
+   TEACHER STUDIO SETTINGS
+============================================ */
+
+teacherStudioSettings: {
+
+  /* --------------------------------------------
+     APPEARANCE
+  -------------------------------------------- */
+
+  theme: {
+    type: String,
+    enum: [
+      "light",
+      "dark",
+      "system"
+    ],
+    default: "light"
+  },
+
+  compactMode: {
+    type: Boolean,
+    default: false
+  },
+
+  rememberSidebar: {
+    type: Boolean,
+    default: true
+  },
+
+
+  /* --------------------------------------------
+     TEACHING
+  -------------------------------------------- */
+
+  gradingReminders: {
+    type: Boolean,
+    default: true
+  },
+
+  attendanceReminders: {
+    type: Boolean,
+    default: true
+  },
+
+
+  /* --------------------------------------------
+     NOTIFICATIONS
+  -------------------------------------------- */
+
+  notifications: {
+    type: Boolean,
+    default: true
+  },
+
+  emailNotifications: {
+    type: Boolean,
+    default: true
+  },
+
+  messageNotifications: {
+    type: Boolean,
+    default: true
+  },
+
+  scheduleReminders: {
+    type: Boolean,
+    default: true
+  },
+
+
+  /* --------------------------------------------
+     KABEZYA AI
+  -------------------------------------------- */
+
+  kabezyaClassContext: {
+    type: Boolean,
+    default: true
+  },
+
+  kabezyaConversationHistory: {
+    type: Boolean,
+    default: true
+  },
+
+
+  /* --------------------------------------------
+     PRIVACY
+  -------------------------------------------- */
+
+  profileDiscovery: {
+    type: Boolean,
+    default: true
+  },
+
+  activityVisibility: {
+    type: Boolean,
+    default: false
+  },
+
+  teachingActivityVisibility: {
+    type: Boolean,
+    default: false
+  },
+
+
+  /* --------------------------------------------
+     ACCESSIBILITY
+  -------------------------------------------- */
+
+  reducedMotion: {
+    type: Boolean,
+    default: false
+  },
+
+  highContrast: {
+    type: Boolean,
+    default: false
+  },
+
+  largerText: {
+    type: Boolean,
+    default: false
+  }
+
+},
+
+
+    
 /* ============================================
    SCHOOL STUDIO SETTINGS
 ============================================ */
