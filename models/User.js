@@ -843,14 +843,46 @@ schoolStudioSettings: {
 
 },
 
+
 /* ============================================
    STUDENT STUDIO SETTINGS
 ============================================ */
+
 studentStudioSettings: {
+
+  /* --------------------------------------------
+     APPEARANCE
+  -------------------------------------------- */
+
+  appearance: {
+
+    theme: {
+      type: String,
+      enum: [
+        "light",
+        "dark",
+        "system"
+      ],
+      default: "system"
+    },
+
+    compactInterface: {
+      type: Boolean,
+      default: false
+    },
+
+    rememberSidebar: {
+      type: Boolean,
+      default: true
+    }
+
+  },
+
 
   /* --------------------------------------------
      LEARNING
   -------------------------------------------- */
+
   learning: {
 
     studyReminders: {
@@ -884,6 +916,7 @@ studentStudioSettings: {
   /* --------------------------------------------
      NOTIFICATIONS
   -------------------------------------------- */
+
   notifications: {
 
     assignments: {
@@ -922,6 +955,7 @@ studentStudioSettings: {
   /* --------------------------------------------
      KABEZYA AI
   -------------------------------------------- */
+
   ai: {
 
     personalization: {
@@ -950,6 +984,7 @@ studentStudioSettings: {
   /* --------------------------------------------
      PRIVACY
   -------------------------------------------- */
+
   privacy: {
 
     portfolioVisibility: {
@@ -985,14 +1020,10 @@ studentStudioSettings: {
   /* --------------------------------------------
      ACCESSIBILITY
   -------------------------------------------- */
+
   accessibility: {
 
     reducedMotion: {
-      type: Boolean,
-      default: false
-    },
-
-    compactInterface: {
       type: Boolean,
       default: false
     },
