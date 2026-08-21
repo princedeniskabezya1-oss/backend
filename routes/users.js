@@ -1493,12 +1493,33 @@ router.patch(
   }
 );
 
+
+
 /* ============================================
    STUDENT STUDIO SETTINGS
 ============================================ */
 
 const STUDENT_STUDIO_SETTINGS_DEFAULTS =
   Object.freeze({
+
+    /* -----------------------------------------
+       APPEARANCE
+    ----------------------------------------- */
+
+    appearance: {
+
+      theme: "light",
+
+      compactInterface: false,
+
+      rememberSidebar: true
+
+    },
+
+
+    /* -----------------------------------------
+       LEARNING
+    ----------------------------------------- */
 
     learning: {
 
@@ -1514,6 +1535,10 @@ const STUDENT_STUDIO_SETTINGS_DEFAULTS =
 
     },
 
+
+    /* -----------------------------------------
+       NOTIFICATIONS
+    ----------------------------------------- */
 
     notifications: {
 
@@ -1532,6 +1557,10 @@ const STUDENT_STUDIO_SETTINGS_DEFAULTS =
     },
 
 
+    /* -----------------------------------------
+       KABEZYA AI
+    ----------------------------------------- */
+
     ai: {
 
       personalization: true,
@@ -1544,6 +1573,10 @@ const STUDENT_STUDIO_SETTINGS_DEFAULTS =
 
     },
 
+
+    /* -----------------------------------------
+       PRIVACY
+    ----------------------------------------- */
 
     privacy: {
 
@@ -1559,11 +1592,13 @@ const STUDENT_STUDIO_SETTINGS_DEFAULTS =
     },
 
 
+    /* -----------------------------------------
+       ACCESSIBILITY
+    ----------------------------------------- */
+
     accessibility: {
 
       reducedMotion: false,
-
-      compactInterface: false,
 
       highContrast: false,
 
@@ -1574,19 +1609,50 @@ const STUDENT_STUDIO_SETTINGS_DEFAULTS =
   });
 
 
+/* ============================================
+   STUDENT SETTINGS HELPERS
+============================================ */
+
+function isPlainSettingsObject(
+  value
+) {
+
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value)
+  );
+
+}
+
+
 function mergeStudentStudioSettings(
   settings = {}
 ) {
 
   const source =
-    settings &&
-    typeof settings === "object" &&
-    !Array.isArray(settings)
+    isPlainSettingsObject(
+      settings
+    )
       ? settings
       : {};
 
 
   return {
+
+    appearance: {
+
+      ...STUDENT_STUDIO_SETTINGS_DEFAULTS
+        .appearance,
+
+      ...(isPlainSettingsObject(
+        source.appearance
+      )
+        ? source.appearance
+        : {})
+
+    },
+
 
     learning: {
 
@@ -1662,28 +1728,74 @@ function mergeStudentStudioSettings(
 }
 
 
-function isPlainSettingsObject(value) {
-  return (
-    value !== null &&
-    typeof value === "object" &&
-    !Array.isArray(value)
-  );
-}
-
-
 function applyBooleanSetting(
   target,
   source,
   field
 ) {
-  if (typeof source[field] === "boolean") {
-    target[field] = source[field];
+
+  if (
+    !target ||
+    !source
+  ) {
+
+    return;
+
   }
+
+
+  if (
+    typeof source[field] ===
+    "boolean"
+  ) {
+
+    target[field] =
+      source[field];
+
+  }
+
+}
+
+
+/* ============================================
+   STUDENT STUDIO ROLE ACCESS
+============================================ */
+
+function canAccessStudentStudioSettings(
+  user
+) {
+
+  const role =
+    String(
+      user?.role ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+
+  /*
+    "talent" remains supported because the current
+    Student Studio frontend already accepts legacy
+    talent accounts.
+
+    Admin is retained for platform support/admin use.
+  */
+
+  return [
+    "student",
+    "talent",
+    "admin"
+  ].includes(
+    role
+  );
+
 }
 
 
 /* ============================================
    GET STUDENT STUDIO SETTINGS
+
    GET /api/users/me/student-studio-settings
 ============================================ */
 
@@ -1691,55 +1803,88 @@ router.get(
   "/me/student-studio-settings",
   auth,
   async (req, res) => {
+
     try {
+
       if (
-        !["student", "admin"].includes(
-          String(req.user.role || "").toLowerCase()
+        !canAccessStudentStudioSettings(
+          req.user
         )
       ) {
-        return res.status(403).json({
-          message:
-            "Student Studio settings are only available to student accounts."
-        });
+
+        return res
+          .status(403)
+          .json({
+
+            message:
+              "Student Studio settings are only available to student accounts."
+
+          });
+
       }
 
+
       const user =
-        await User.findById(req.user._id)
+        await User.findById(
+          req.user._id ||
+          req.user.id
+        )
           .select(
             "_id role studentStudioSettings"
           )
           .lean();
 
+
       if (!user) {
-        return res.status(404).json({
-          message: "User not found."
-        });
+
+        return res
+          .status(404)
+          .json({
+
+            message:
+              "User not found."
+
+          });
+
       }
 
+
       return res.json({
+
         settings:
           mergeStudentStudioSettings(
             user.studentStudioSettings
           )
+
       });
 
+
     } catch (error) {
+
       console.error(
         "GET STUDENT STUDIO SETTINGS ERROR:",
         error
       );
 
-      return res.status(500).json({
-        message:
-          "Failed to load Student Studio settings."
-      });
+
+      return res
+        .status(500)
+        .json({
+
+          message:
+            "Failed to load Student Studio settings."
+
+        });
+
     }
+
   }
 );
 
 
 /* ============================================
    UPDATE STUDENT STUDIO SETTINGS
+
    PATCH /api/users/me/student-studio-settings
 ============================================ */
 
@@ -1747,46 +1892,164 @@ router.patch(
   "/me/student-studio-settings",
   auth,
   async (req, res) => {
+
     try {
+
       if (
-        !["student", "admin"].includes(
-          String(req.user.role || "").toLowerCase()
+        !canAccessStudentStudioSettings(
+          req.user
         )
       ) {
-        return res.status(403).json({
-          message:
-            "Student Studio settings are only available to student accounts."
-        });
+
+        return res
+          .status(403)
+          .json({
+
+            message:
+              "Student Studio settings are only available to student accounts."
+
+          });
+
       }
 
+
+      /* =========================================
+         REQUEST BODY
+      ========================================= */
+
       const incoming =
-        isPlainSettingsObject(req.body?.settings)
+        isPlainSettingsObject(
+          req.body?.settings
+        )
           ? req.body.settings
           : req.body;
 
-      if (!isPlainSettingsObject(incoming)) {
-        return res.status(400).json({
-          message:
-            "A valid settings object is required."
-        });
+
+      if (
+        !isPlainSettingsObject(
+          incoming
+        )
+      ) {
+
+        return res
+          .status(400)
+          .json({
+
+            message:
+              "A valid settings object is required."
+
+          });
+
       }
 
+
       const user =
-        await User.findById(req.user._id);
+        await User.findById(
+          req.user._id ||
+          req.user.id
+        );
+
 
       if (!user) {
-        return res.status(404).json({
-          message: "User not found."
-        });
+
+        return res
+          .status(404)
+          .json({
+
+            message:
+              "User not found."
+
+          });
+
       }
 
 
       const current =
         mergeStudentStudioSettings(
-          user.studentStudioSettings?.toObject
-            ? user.studentStudioSettings.toObject()
+
+          user.studentStudioSettings
+            ?.toObject
+
+            ? user.studentStudioSettings
+                .toObject()
+
             : user.studentStudioSettings
+
         );
+
+
+      /* =========================================
+         APPEARANCE
+      ========================================= */
+
+      if (
+        isPlainSettingsObject(
+          incoming.appearance
+        )
+      ) {
+
+        const appearance =
+          incoming.appearance;
+
+
+        if (
+          appearance.theme !==
+          undefined
+        ) {
+
+          const theme =
+            String(
+              appearance.theme ||
+              ""
+            )
+              .trim()
+              .toLowerCase();
+
+
+          if (
+            ![
+              "light",
+              "dark",
+              "system"
+            ].includes(
+              theme
+            )
+          ) {
+
+            return res
+              .status(400)
+              .json({
+
+                message:
+                  "Invalid Student Studio theme."
+
+              });
+
+          }
+
+
+          current
+            .appearance
+            .theme =
+            theme;
+
+        }
+
+
+        applyBooleanSetting(
+          current.appearance,
+          appearance,
+          "compactInterface"
+        );
+
+
+        applyBooleanSetting(
+          current.appearance,
+          appearance,
+          "rememberSidebar"
+        );
+
+      }
 
 
       /* =========================================
@@ -1805,15 +2068,18 @@ router.patch(
           "continueLearning",
           "autoplayNextLesson",
           "rememberLastClass"
-        ].forEach(field => {
 
-          applyBooleanSetting(
-            current.learning,
-            incoming.learning,
-            field
-          );
+        ].forEach(
+          field => {
 
-        });
+            applyBooleanSetting(
+              current.learning,
+              incoming.learning,
+              field
+            );
+
+          }
+        );
 
       }
 
@@ -1835,15 +2101,18 @@ router.patch(
           "messages",
           "certificates",
           "career"
-        ].forEach(field => {
 
-          applyBooleanSetting(
-            current.notifications,
-            incoming.notifications,
-            field
-          );
+        ].forEach(
+          field => {
 
-        });
+            applyBooleanSetting(
+              current.notifications,
+              incoming.notifications,
+              field
+            );
+
+          }
+        );
 
       }
 
@@ -1863,15 +2132,18 @@ router.patch(
           "classContext",
           "learningHistory",
           "suggestions"
-        ].forEach(field => {
 
-          applyBooleanSetting(
-            current.ai,
-            incoming.ai,
-            field
-          );
+        ].forEach(
+          field => {
 
-        });
+            applyBooleanSetting(
+              current.ai,
+              incoming.ai,
+              field
+            );
+
+          }
+        );
 
       }
 
@@ -1895,20 +2167,22 @@ router.patch(
           undefined
         ) {
 
+          const visibility =
+            String(
+              privacy
+                .portfolioVisibility ||
+              ""
+            )
+              .trim()
+              .toLowerCase();
+
+
           const allowedVisibility =
             new Set([
               "public",
               "connections",
               "private"
             ]);
-
-
-          const visibility =
-            String(
-              privacy.portfolioVisibility
-            )
-              .trim()
-              .toLowerCase();
 
 
           if (
@@ -1920,8 +2194,10 @@ router.patch(
             return res
               .status(400)
               .json({
+
                 message:
                   "Invalid portfolio visibility."
+
               });
 
           }
@@ -1939,15 +2215,18 @@ router.patch(
           "profileDiscovery",
           "activityVisibility",
           "certificateVisibility"
-        ].forEach(field => {
 
-          applyBooleanSetting(
-            current.privacy,
-            privacy,
-            field
-          );
+        ].forEach(
+          field => {
 
-        });
+            applyBooleanSetting(
+              current.privacy,
+              privacy,
+              field
+            );
+
+          }
+        );
 
       }
 
@@ -1964,63 +2243,120 @@ router.patch(
 
         [
           "reducedMotion",
-          "compactInterface",
           "highContrast",
           "largerText"
-        ].forEach(field => {
 
-          applyBooleanSetting(
-            current.accessibility,
-            incoming.accessibility,
-            field
-          );
+        ].forEach(
+          field => {
 
-        });
+            applyBooleanSetting(
+              current.accessibility,
+              incoming.accessibility,
+              field
+            );
+
+          }
+        );
 
       }
 
 
-      user.studentStudioSettings =
-        current;
+      /* =========================================
+         SAVE
+      ========================================= */
+
+      user.set(
+        "studentStudioSettings",
+        current
+      );
+
 
       await user.save({
-        validateModifiedOnly: true
+        validateModifiedOnly:
+          true
       });
 
 
+      /*
+        Read the saved object again.
+
+        This makes the API response reflect the
+        actual persisted MongoDB/Mongoose state.
+      */
+
+      const savedUser =
+        await User.findById(
+          user._id
+        )
+          .select(
+            "_id role studentStudioSettings"
+          )
+          .lean();
+
+
+      if (!savedUser) {
+
+        return res
+          .status(404)
+          .json({
+
+            message:
+              "User account could not be reloaded."
+
+          });
+
+      }
+
+
       return res.json({
+
         message:
           "Student Studio settings updated successfully.",
 
         settings:
           mergeStudentStudioSettings(
-            user.studentStudioSettings?.toObject
-              ? user.studentStudioSettings.toObject()
-              : user.studentStudioSettings
+            savedUser.studentStudioSettings
           )
+
       });
 
+
     } catch (error) {
+
       console.error(
         "UPDATE STUDENT STUDIO SETTINGS ERROR:",
         error
       );
 
+
       if (
         error?.name ===
         "ValidationError"
       ) {
-        return res.status(400).json({
-          message:
-            "One or more Student Studio settings are invalid."
-        });
+
+        return res
+          .status(400)
+          .json({
+
+            message:
+              "One or more Student Studio settings are invalid."
+
+          });
+
       }
 
-      return res.status(500).json({
-        message:
-          "Failed to update Student Studio settings."
-      });
+
+      return res
+        .status(500)
+        .json({
+
+          message:
+            "Failed to update Student Studio settings."
+
+        });
+
     }
+
   }
 );
 
