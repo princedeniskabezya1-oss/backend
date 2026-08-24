@@ -2828,6 +2828,228 @@ router.get(
   }
 );
 
+/* =========================================================
+   AIFT CLASS LEARNING EXPERIENCE
+   FILE: routes/classes.js
+
+   PASTE THIS ENTIRE BLOCK IMMEDIATELY BEFORE your existing:
+   PATCH /api/classes/:id/builder
+========================================================= */
+
+function isLearningContentPublished(item) {
+  const status = String(item?.status || "").trim().toLowerCase();
+  return item?.published === true || status === "published" || status === "active";
+}
+
+function isLearningContentArchived(item) {
+  return String(item?.status || "").trim().toLowerCase() === "archived";
+}
+
+router.get("/:id/learning", auth, async (req, res) => {
+  try {
+    const classId = normalizeObjectId(req.params.id);
+    const role = normalizeRole(req.user?.role);
+
+    if (!classId) {
+      return res.status(400).json({ message:"A valid class ID is required." });
+    }
+
+    const classDoc = await Class.findById(classId)
+      .populate("schoolId", "name schoolName profileImage schoolLogo")
+      .populate("teacherId", "name email profileImage avatar role subject department")
+      .populate("studentIds", "name email profileImage avatar course role")
+      .lean();
+
+    if (!classDoc) {
+      return res.status(404).json({ message:"Class not found." });
+    }
+
+    if (!canViewClassBuilder(req.user, classDoc)) {
+      return res.status(403).json({ message:"You are not allowed to open this class." });
+    }
+
+    const viewerId = normalizeObjectId(req.user?._id);
+
+    const enrolledStudentIds = Array.isArray(classDoc.studentIds)
+      ? classDoc.studentIds.map(normalizeObjectId).filter(Boolean)
+      : [];
+
+    if (role === "student" && !enrolledStudentIds.includes(viewerId)) {
+      return res.status(403).json({ message:"You are not enrolled in this class." });
+    }
+
+    const [rawModules, rawLessons, rawQuizzes, rawAssignments] = await Promise.all([
+      ClassModule.find({ classId }).sort({ order:1, createdAt:1 }).lean(),
+      ClassLesson.find({ classId }).sort({ order:1, createdAt:1 }).lean(),
+      Quiz.find({ classId }).sort({ createdAt:1 }).lean(),
+      Assignment.find({ classId }).sort({ dueDate:1, createdAt:1 }).lean()
+    ]);
+
+    const studentSafe = role === "student";
+
+    const lessons = rawLessons.filter(lesson =>
+      studentSafe
+        ? isLearningContentPublished(lesson)
+        : !isLearningContentArchived(lesson)
+    );
+
+    const visibleLessonIds = new Set(
+      lessons.map(lesson => normalizeObjectId(lesson._id)).filter(Boolean)
+    );
+
+    const modules = rawModules.filter(module => {
+      if (isLearningContentArchived(module)) return false;
+      if (!studentSafe) return true;
+      if (isLearningContentPublished(module)) return true;
+
+      const moduleId = normalizeObjectId(module._id);
+
+      return lessons.some(lesson =>
+        normalizeObjectId(lesson.moduleId || lesson.module) === moduleId
+      );
+    });
+
+    const quizzes = rawQuizzes.filter(quiz => {
+      if (isLearningContentArchived(quiz)) return false;
+      if (studentSafe && !isLearningContentPublished(quiz)) return false;
+
+      const lessonId = normalizeObjectId(quiz.lessonId || quiz.lesson);
+
+      return !lessonId || visibleLessonIds.has(lessonId);
+    });
+
+    const assignments = rawAssignments.filter(assignment => {
+      if (isLearningContentArchived(assignment)) return false;
+      if (studentSafe && !isLearningContentPublished(assignment)) return false;
+
+      const lessonId = normalizeObjectId(assignment.lessonId || assignment.lesson);
+
+      return !lessonId || visibleLessonIds.has(lessonId);
+    });
+
+    let lessonProgress = [];
+
+    if (role === "student") {
+      lessonProgress = await LessonProgress.find({
+        classId,
+        studentId:req.user._id
+      })
+        .sort({ updatedAt:-1 })
+        .lean();
+    }
+
+    return res.json({
+      class:classDoc,
+      modules,
+      lessons,
+      quizzes,
+      assignments,
+      lessonProgress,
+      viewer:{ _id:req.user._id, role },
+      permissions:{
+        canView:true,
+        canTrackProgress:role === "student",
+        canManage:Boolean(canManageAssignedClass(req.user, classDoc)),
+        viewMode:role === "student" ? "learner" : "instructor"
+      }
+    });
+  } catch (err) {
+    console.error("GET class learning experience error:", err);
+
+    return res.status(500).json({
+      message:"Failed to load the class learning experience."
+    });
+  }
+});
+
+router.patch("/:id/learning/lessons/:lessonId/progress", auth, async (req, res) => {
+  try {
+    const role = normalizeRole(req.user?.role);
+
+    if (role !== "student") {
+      return res.status(403).json({
+        message:"Only students can save personal Lesson progress."
+      });
+    }
+
+    const classId = normalizeObjectId(req.params.id);
+    const lessonId = normalizeObjectId(req.params.lessonId);
+
+    if (!classId || !lessonId) {
+      return res.status(400).json({
+        message:"A valid class and Lesson ID are required."
+      });
+    }
+
+    const classDoc = await Class.findById(classId).lean();
+
+    if (!classDoc) {
+      return res.status(404).json({ message:"Class not found." });
+    }
+
+    const enrolledStudentIds = Array.isArray(classDoc.studentIds)
+      ? classDoc.studentIds.map(normalizeObjectId).filter(Boolean)
+      : [];
+
+    const studentId = normalizeObjectId(req.user._id);
+
+    if (!enrolledStudentIds.includes(studentId)) {
+      return res.status(403).json({ message:"You are not enrolled in this class." });
+    }
+
+    const lesson = await ClassLesson.findOne({ _id:lessonId, classId });
+
+    if (!lesson) {
+      return res.status(404).json({ message:"Lesson not found in this class." });
+    }
+
+    if (!isLearningContentPublished(lesson)) {
+      return res.status(403).json({
+        message:"This Lesson is not available to students."
+      });
+    }
+
+    const completed = req.body?.completed === true;
+
+    let progress = await LessonProgress.findOne({
+      classId,
+      lessonId,
+      studentId:req.user._id
+    });
+
+    if (!progress) {
+      progress = new LessonProgress({
+        schoolId:classDoc.schoolId,
+        classId,
+        moduleId:lesson.moduleId || lesson.module || null,
+        lessonId,
+        studentId:req.user._id
+      });
+    }
+
+    progress.status = completed ? "completed" : "in_progress";
+    progress.progressPercent = completed ? 100 : 0;
+    progress.completedAt = completed ? new Date() : null;
+
+    if ("lastActivityAt" in progress) {
+      progress.lastActivityAt = new Date();
+    }
+
+    await progress.save();
+
+    return res.json({
+      message:completed ? "Lesson completed." : "Lesson marked in progress.",
+      progress:progress.toObject()
+    });
+  } catch (err) {
+    console.error("PATCH class Lesson progress error:", err);
+
+    return res.status(500).json({
+      message:"Failed to save Lesson progress."
+    });
+  }
+});
+
 /* =====================================================
    UPDATE CLASS BUILDER
    PATCH /api/classes/:id/builder
