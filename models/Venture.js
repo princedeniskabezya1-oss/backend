@@ -144,6 +144,117 @@ const VentureSchema =
 
         default:[]
       },
+             /* =====================================================
+         BUILDER DETAILS
+      ====================================================== */
+
+      location:{
+        type:String,
+
+        trim:true,
+
+        maxlength:160,
+
+        default:""
+      },
+
+
+      solutionStatus:{
+        type:String,
+
+        enum:[
+          "",
+          "concept",
+          "prototype",
+          "mvp",
+          "beta",
+          "live",
+          "operating"
+        ],
+
+        default:""
+      },
+
+
+      marketSize:{
+        type:String,
+
+        trim:true,
+
+        maxlength:300,
+
+        default:""
+      },
+
+
+      customerType:{
+        type:String,
+
+        enum:[
+          "",
+          "consumer",
+          "business",
+          "schools",
+          "government",
+          "nonprofits",
+          "mixed"
+        ],
+
+        default:""
+      },
+
+
+      marketReach:{
+        type:String,
+
+        enum:[
+          "",
+          "local",
+          "regional",
+          "national",
+          "southeast_asia",
+          "global"
+        ],
+
+        default:""
+      },
+
+
+      revenueModel:{
+        type:String,
+
+        enum:[
+          "",
+          "subscription",
+          "product_sales",
+          "service_fee",
+          "transaction_fee",
+          "marketplace",
+          "advertising",
+          "licensing",
+          "sponsorship",
+          "grant_funded",
+          "nonprofit",
+          "other"
+        ],
+
+        default:""
+      },
+
+
+      revenueStatus:{
+        type:String,
+
+        enum:[
+          "",
+          "pre_revenue",
+          "first_sales",
+          "recurring_revenue",
+          "profitable"
+        ],
+
+        default:""
+      },
 
 
       /* =====================================================
@@ -311,11 +422,74 @@ const VentureSchema =
 
         default:""
       },
+             fundingStage:{
+        type:String,
+
+        enum:[
+          "",
+          "pre_seed",
+          "seed",
+          "growth",
+          "project_funding",
+          "grant",
+          "not_applicable"
+        ],
+
+        default:""
+      },
+
+
+      fundingDeadline:{
+        type:Date,
+
+        default:null
+      },
+
+
+      supportMessage:{
+        type:String,
+
+        trim:true,
+
+        maxlength:2000,
+
+        default:""
+      },
 
 
       /* =====================================================
          TEAM
       ====================================================== */
+
+             founderRole:{
+        type:String,
+
+        trim:true,
+
+        maxlength:120,
+
+        default:""
+      },
+
+
+      founderBio:{
+        type:String,
+
+        trim:true,
+
+        maxlength:1200,
+
+        default:""
+      },
+
+
+      teamSize:{
+        type:Number,
+
+        min:1,
+
+        default:1
+      },
 
       teamMembers:[
         {
@@ -413,6 +587,15 @@ const VentureSchema =
           min:0,
 
           default:0
+        },
+                 growth:{
+          type:String,
+
+          trim:true,
+
+          maxlength:300,
+
+          default:""
         },
 
 
