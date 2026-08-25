@@ -1185,6 +1185,125 @@ router.post(
               req.body.tags
             ),
 
+          location:
+            safeString(
+              req.body.location,
+              160
+            ),
+
+          solutionStatus:
+            [
+              "",
+              "concept",
+              "prototype",
+              "mvp",
+              "beta",
+              "live",
+              "operating"
+            ].includes(
+              String(
+                req.body.solutionStatus ||
+                ""
+              )
+            )
+              ? String(
+                  req.body.solutionStatus ||
+                  ""
+                )
+              : "",
+
+          marketSize:
+            safeString(
+              req.body.marketSize,
+              300
+            ),
+
+          customerType:
+            [
+              "",
+              "consumer",
+              "business",
+              "schools",
+              "government",
+              "nonprofits",
+              "mixed"
+            ].includes(
+              String(
+                req.body.customerType ||
+                ""
+              )
+            )
+              ? String(
+                  req.body.customerType ||
+                  ""
+                )
+              : "",
+
+          marketReach:
+            [
+              "",
+              "local",
+              "regional",
+              "national",
+              "southeast_asia",
+              "global"
+            ].includes(
+              String(
+                req.body.marketReach ||
+                ""
+              )
+            )
+              ? String(
+                  req.body.marketReach ||
+                  ""
+                )
+              : "",
+
+          revenueModel:
+            [
+              "",
+              "subscription",
+              "product_sales",
+              "service_fee",
+              "transaction_fee",
+              "marketplace",
+              "advertising",
+              "licensing",
+              "sponsorship",
+              "grant_funded",
+              "nonprofit",
+              "other"
+            ].includes(
+              String(
+                req.body.revenueModel ||
+                ""
+              )
+            )
+              ? String(
+                  req.body.revenueModel ||
+                  ""
+                )
+              : "",
+
+          revenueStatus:
+            [
+              "",
+              "pre_revenue",
+              "first_sales",
+              "recurring_revenue",
+              "profitable"
+            ].includes(
+              String(
+                req.body.revenueStatus ||
+                ""
+              )
+            )
+              ? String(
+                  req.body.revenueStatus ||
+                  ""
+                )
+              : "",
+
           problem:
             safeString(
               req.body.problem,
@@ -1215,6 +1334,156 @@ router.post(
                 .competitiveAdvantage,
               3000
             ),
+
+
+          /* ===============================================
+             TRACTION
+          =============================================== */
+
+          traction:{
+
+            users:
+              Math.max(
+                0,
+                Number(
+                  req.body
+                    ?.traction
+                    ?.users
+                ) ||
+                0
+              ),
+
+            customers:
+              Math.max(
+                0,
+                Number(
+                  req.body
+                    ?.traction
+                    ?.customers
+                ) ||
+                0
+              ),
+
+            revenue:
+              Math.max(
+                0,
+                Number(
+                  req.body
+                    ?.traction
+                    ?.revenue
+                ) ||
+                0
+              ),
+
+            pilots:
+              Math.max(
+                0,
+                Number(
+                  req.body
+                    ?.traction
+                    ?.pilots
+                ) ||
+                0
+              ),
+
+            partnerships:
+              Math.max(
+                0,
+                Number(
+                  req.body
+                    ?.traction
+                    ?.partnerships
+                ) ||
+                0
+              ),
+
+            growth:
+              safeString(
+                req.body
+                  ?.traction
+                  ?.growth,
+                300
+              ),
+
+            description:
+              safeString(
+                req.body
+                  ?.traction
+                  ?.description,
+                2000
+              )
+
+          },
+
+
+          /* ===============================================
+             FOUNDER + TEAM
+          =============================================== */
+
+          founderRole:
+            safeString(
+              req.body.founderRole,
+              120
+            ),
+
+          founderBio:
+            safeString(
+              req.body.founderBio,
+              1200
+            ),
+
+          teamSize:
+            Math.max(
+              1,
+              Number(
+                req.body.teamSize
+              ) ||
+              1
+            ),
+
+          teamMembers:
+            Array.isArray(
+              req.body.teamMembers
+            )
+              ? req.body.teamMembers
+                  .slice(
+                    0,
+                    30
+                  )
+                  .map(
+                    member => ({
+                      userId:
+                        isValidId(
+                          member?.userId
+                        )
+                          ? member.userId
+                          : null,
+
+                      name:
+                        safeString(
+                          member?.name,
+                          120
+                        ),
+
+                      role:
+                        safeString(
+                          member?.role,
+                          120
+                        ),
+
+                      bio:
+                        safeString(
+                          member?.bio,
+                          500
+                        )
+                    })
+                  )
+              : [],
+
+
+          /* ===============================================
+             FUNDING
+          =============================================== */
 
           fundingGoal:
             Math.max(
@@ -1279,6 +1548,40 @@ router.post(
               2500
             ),
 
+          fundingStage:
+            [
+              "",
+              "pre_seed",
+              "seed",
+              "growth",
+              "project_funding",
+              "grant",
+              "not_applicable"
+            ].includes(
+              String(
+                req.body.fundingStage ||
+                ""
+              )
+            )
+              ? String(
+                  req.body.fundingStage ||
+                  ""
+                )
+              : "",
+
+          fundingDeadline:
+            req.body.fundingDeadline
+              ? new Date(
+                  req.body.fundingDeadline
+                )
+              : null,
+
+          supportMessage:
+            safeString(
+              req.body.supportMessage,
+              2000
+            ),
+
           logoUrl:
             safeString(
               req.body.logoUrl,
@@ -1309,6 +1612,96 @@ router.post(
               req.body.demoUrl,
               1000
             ),
+
+
+          /* ===============================================
+             PITCH DOCUMENTS
+          =============================================== */
+
+          documents:
+            Array.isArray(
+              req.body.documents
+            )
+              ? req.body.documents
+                  .slice(
+                    0,
+                    20
+                  )
+                  .map(
+                    document => {
+
+                      const allowedTypes =
+                        new Set([
+                          "pitch-deck",
+                          "business-plan",
+                          "financials",
+                          "research",
+                          "prototype",
+                          "other"
+                        ]);
+
+
+                      const allowedVisibility =
+                        new Set([
+                          "public",
+                          "interested-only",
+                          "private"
+                        ]);
+
+
+                      const type =
+                        safeString(
+                          document?.type,
+                          40
+                        );
+
+
+                      const documentVisibility =
+                        safeString(
+                          document?.visibility,
+                          40
+                        );
+
+
+                      return {
+
+                        name:
+                          safeString(
+                            document?.name ||
+                            document?.originalName,
+                            180
+                          ),
+
+                        type:
+                          allowedTypes.has(
+                            type
+                          )
+                            ? type
+                            : "other",
+
+                        url:
+                          safeString(
+                            document?.url ||
+                            document?.secureUrl,
+                            1000
+                          ),
+
+                        visibility:
+                          allowedVisibility.has(
+                            documentVisibility
+                          )
+                            ? documentVisibility
+                            : "private"
+
+                      };
+
+                    }
+                  )
+                  .filter(
+                    document =>
+                      document.url
+                  )
+              : [],
 
           visibility,
 
@@ -1356,6 +1749,98 @@ router.post(
   }
 );
 
+/* =========================================================
+   OWNER VENTURE DETAIL
+   GET /api/ventures/:id/manage
+========================================================= */
+
+router.get(
+  "/:id/manage",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try{
+
+      if(
+        !isValidId(
+          req.params.id
+        )
+      ){
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "Invalid venture ID"
+          });
+
+      }
+
+
+      const venture =
+        await populateVenture(
+          Venture.findById(
+            req.params.id
+          )
+        );
+
+
+      if(!venture){
+
+        return res
+          .status(404)
+          .json({
+            message:
+              "Venture not found"
+          });
+
+      }
+
+
+      if(
+        !canManageVenture(
+          req.user,
+          venture
+        )
+      ){
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Not allowed to manage this venture"
+          });
+
+      }
+
+
+      return res.json(
+        venture
+      );
+
+
+    }catch(error){
+
+      console.error(
+        "GET /api/ventures/:id/manage error:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          message:
+            "Failed to load venture for editing"
+        });
+
+    }
+
+  }
+);
 
 /* =========================================================
    VENTURE DETAIL
@@ -1526,6 +2011,10 @@ router.patch(
 
         industry:100,
 
+        location:160,
+
+        marketSize:300,
+
         problem:5000,
 
         solution:5000,
@@ -1539,6 +2028,12 @@ router.patch(
         fundingPurpose:3000,
 
         investmentNotes:2500,
+
+        founderRole:120,
+
+        founderBio:1200,
+
+        supportMessage:2000,
 
         logoUrl:1000,
 
@@ -1744,6 +2239,396 @@ router.patch(
             req.body
               .seekingInvestment
           );
+
+      }
+
+
+      /* =====================================================
+         BUILDER ENUM FIELDS
+      ====================================================== */
+
+      const enumUpdates = {
+
+        solutionStatus:
+          new Set([
+            "",
+            "concept",
+            "prototype",
+            "mvp",
+            "beta",
+            "live",
+            "operating"
+          ]),
+
+        customerType:
+          new Set([
+            "",
+            "consumer",
+            "business",
+            "schools",
+            "government",
+            "nonprofits",
+            "mixed"
+          ]),
+
+        marketReach:
+          new Set([
+            "",
+            "local",
+            "regional",
+            "national",
+            "southeast_asia",
+            "global"
+          ]),
+
+        revenueModel:
+          new Set([
+            "",
+            "subscription",
+            "product_sales",
+            "service_fee",
+            "transaction_fee",
+            "marketplace",
+            "advertising",
+            "licensing",
+            "sponsorship",
+            "grant_funded",
+            "nonprofit",
+            "other"
+          ]),
+
+        revenueStatus:
+          new Set([
+            "",
+            "pre_revenue",
+            "first_sales",
+            "recurring_revenue",
+            "profitable"
+          ]),
+
+        fundingStage:
+          new Set([
+            "",
+            "pre_seed",
+            "seed",
+            "growth",
+            "project_funding",
+            "grant",
+            "not_applicable"
+          ])
+
+      };
+
+
+      for(
+        const [
+          field,
+          allowedValues
+        ]
+        of Object.entries(
+          enumUpdates
+        )
+      ){
+
+        if(
+          req.body[field] ===
+          undefined
+        ){
+          continue;
+        }
+
+
+        const value =
+          String(
+            req.body[field] ||
+            ""
+          );
+
+
+        if(
+          allowedValues.has(
+            value
+          )
+        ){
+
+          venture[field] =
+            value;
+
+        }
+
+      }
+
+
+      /* =====================================================
+         TEAM
+      ====================================================== */
+
+      if(
+        req.body.teamSize !==
+        undefined
+      ){
+
+        venture.teamSize =
+          Math.max(
+            1,
+            Number(
+              req.body.teamSize
+            ) ||
+            1
+          );
+
+      }
+
+
+      if(
+        req.body.teamMembers !==
+        undefined
+      ){
+
+        venture.teamMembers =
+          Array.isArray(
+            req.body.teamMembers
+          )
+            ? req.body.teamMembers
+                .slice(
+                  0,
+                  30
+                )
+                .map(
+                  member => ({
+                    userId:
+                      isValidId(
+                        member?.userId
+                      )
+                        ? member.userId
+                        : null,
+
+                    name:
+                      safeString(
+                        member?.name,
+                        120
+                      ),
+
+                    role:
+                      safeString(
+                        member?.role,
+                        120
+                      ),
+
+                    bio:
+                      safeString(
+                        member?.bio,
+                        500
+                      )
+                  })
+                )
+            : [];
+
+      }
+
+
+      /* =====================================================
+         TRACTION
+      ====================================================== */
+
+      if(
+        req.body.traction &&
+        typeof req.body.traction ===
+          "object"
+      ){
+
+        const traction =
+          req.body.traction;
+
+
+        [
+          "users",
+          "customers",
+          "revenue",
+          "pilots",
+          "partnerships"
+        ].forEach(
+          field => {
+
+            if(
+              traction[field] !==
+              undefined
+            ){
+
+              venture.traction[field] =
+                Math.max(
+                  0,
+                  Number(
+                    traction[field]
+                  ) ||
+                  0
+                );
+
+            }
+
+          }
+        );
+
+
+        if(
+          traction.growth !==
+          undefined
+        ){
+
+          venture.traction.growth =
+            safeString(
+              traction.growth,
+              300
+            );
+
+        }
+
+
+        if(
+          traction.description !==
+          undefined
+        ){
+
+          venture.traction.description =
+            safeString(
+              traction.description,
+              2000
+            );
+
+        }
+
+      }
+
+
+      /* =====================================================
+         FUNDING DEADLINE
+      ====================================================== */
+
+      if(
+        req.body.fundingDeadline !==
+        undefined
+      ){
+
+        if(
+          !req.body.fundingDeadline
+        ){
+
+          venture.fundingDeadline =
+            null;
+
+        }else{
+
+          const fundingDate =
+            new Date(
+              req.body.fundingDeadline
+            );
+
+
+          venture.fundingDeadline =
+            Number.isNaN(
+              fundingDate.getTime()
+            )
+              ? null
+              : fundingDate;
+
+        }
+
+      }
+
+
+      /* =====================================================
+         DOCUMENTS
+      ====================================================== */
+
+      if(
+        req.body.documents !==
+        undefined
+      ){
+
+        const allowedDocumentTypes =
+          new Set([
+            "pitch-deck",
+            "business-plan",
+            "financials",
+            "research",
+            "prototype",
+            "other"
+          ]);
+
+
+        const allowedDocumentVisibility =
+          new Set([
+            "public",
+            "interested-only",
+            "private"
+          ]);
+
+
+        venture.documents =
+          Array.isArray(
+            req.body.documents
+          )
+            ? req.body.documents
+                .slice(
+                  0,
+                  20
+                )
+                .map(
+                  document => {
+
+                    const type =
+                      safeString(
+                        document?.type,
+                        40
+                      );
+
+
+                    const visibility =
+                      safeString(
+                        document?.visibility,
+                        40
+                      );
+
+
+                    return {
+
+                      name:
+                        safeString(
+                          document?.name ||
+                          document?.originalName,
+                          180
+                        ),
+
+                      type:
+                        allowedDocumentTypes.has(
+                          type
+                        )
+                          ? type
+                          : "other",
+
+                      url:
+                        safeString(
+                          document?.url ||
+                          document?.secureUrl,
+                          1000
+                        ),
+
+                      visibility:
+                        allowedDocumentVisibility.has(
+                          visibility
+                        )
+                          ? visibility
+                          : "private"
+
+                    };
+
+                  }
+                )
+                .filter(
+                  document =>
+                    document.url
+                )
+            : [];
 
       }
 
