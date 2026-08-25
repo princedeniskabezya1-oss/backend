@@ -29,10 +29,20 @@ const classRoutes = require("./routes/classes");
 const projectRoutes = require("./routes/projects");
 const assignmentRoutes = require("./routes/Assignment");
 const submissionRoutes = require("./routes/submissions");
-const opportunityRoutes = require("./routes/opportunities");
-const schoolCompanyPartnershipRoutes = require("./routes/schoolCompanyPartnerships");
+const opportunityRoutes =
+  require("./routes/opportunities");
+
+const schoolCompanyPartnershipRoutes =
+  require("./routes/schoolCompanyPartnerships");
+
 const internshipApplicationRoutes =
   require("./routes/internshipApplications");
+
+const scholarshipRoutes =
+  require("./routes/scholarships");
+
+const scholarshipApplicationRoutes =
+  require("./routes/scholarshipApplications");
 
 const schoolUpdateRoutes =
   require("./routes/schoolUpdates");
@@ -378,20 +388,63 @@ app.use("/api/classes", classRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/assignments", assignmentRoutes);
 app.use("/api/submissions", submissionRoutes);
+/* ============================================
+   CAREER HUB
+============================================ */
+
+/* ============================================
+   OPPORTUNITIES
+============================================ */
+
 app.use(
   "/api/opportunities",
   opportunityRoutes
 );
+
+
+/* ============================================
+   SCHOOL ↔ COMPANY PARTNERSHIPS
+============================================ */
 
 app.use(
   "/api/school-company-partnerships",
   schoolCompanyPartnershipRoutes
 );
 
+
+/* ============================================
+   INTERNSHIP APPLICATIONS
+============================================ */
+
 app.use(
   "/api/internship-applications",
   internshipApplicationRoutes
 );
+
+
+/* ============================================
+   SCHOLARSHIPS
+============================================ */
+
+app.use(
+  "/api/scholarships",
+  scholarshipRoutes
+);
+
+
+/* ============================================
+   SCHOLARSHIP APPLICATIONS
+============================================ */
+
+app.use(
+  "/api/scholarship-applications",
+  scholarshipApplicationRoutes
+);
+
+
+/* ============================================
+   STUDENT VENTURES
+============================================ */
 
 app.use(
   "/api/ventures",
