@@ -31,11 +31,23 @@ const assignmentRoutes = require("./routes/Assignment");
 const submissionRoutes = require("./routes/submissions");
 const opportunityRoutes = require("./routes/opportunities");
 const schoolCompanyPartnershipRoutes = require("./routes/schoolCompanyPartnerships");
-const internshipApplicationRoutes = require("./routes/internshipApplications");
-const schoolUpdateRoutes = require("./routes/schoolUpdates");
-const attendanceRoutes = require("./routes/attendance");
-const analyticsRoutes = require("./routes/analytics");
-const savedRoutes = require("./routes/saved");
+const internshipApplicationRoutes =
+  require("./routes/internshipApplications");
+
+const schoolUpdateRoutes =
+  require("./routes/schoolUpdates");
+
+const attendanceRoutes =
+  require("./routes/attendance");
+
+const analyticsRoutes =
+  require("./routes/analytics");
+
+const savedRoutes =
+  require("./routes/saved");
+
+const ventureRoutes =
+  require("./routes/ventures");
 const groupRoutes = require("./routes/groups");
 const conversationRoutes = require("./routes/conversations");
 const meetingRoutes = require("./routes/meetings");
@@ -366,11 +378,35 @@ app.use("/api/classes", classRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/assignments", assignmentRoutes);
 app.use("/api/submissions", submissionRoutes);
-app.use("/api/opportunities", opportunityRoutes);
-app.use("/api/school-company-partnerships", schoolCompanyPartnershipRoutes);
-app.use("/api/internship-applications", internshipApplicationRoutes);
-app.use("/api/school-updates", schoolUpdateRoutes);
-app.use("/api/attendance", attendanceRoutes);
+app.use(
+  "/api/opportunities",
+  opportunityRoutes
+);
+
+app.use(
+  "/api/school-company-partnerships",
+  schoolCompanyPartnershipRoutes
+);
+
+app.use(
+  "/api/internship-applications",
+  internshipApplicationRoutes
+);
+
+app.use(
+  "/api/ventures",
+  ventureRoutes
+);
+
+app.use(
+  "/api/school-updates",
+  schoolUpdateRoutes
+);
+
+app.use(
+  "/api/attendance",
+  attendanceRoutes
+);
 
 /*
   Analytics endpoints:
