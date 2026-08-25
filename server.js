@@ -44,6 +44,12 @@ const scholarshipRoutes =
 const scholarshipApplicationRoutes =
   require("./routes/scholarshipApplications");
 
+const careerEventRoutes =
+  require("./routes/careerEvents");
+
+const careerEventRegistrationRoutes =
+  require("./routes/careerEventRegistrations");
+
 const schoolUpdateRoutes =
   require("./routes/schoolUpdates");
 
@@ -426,6 +432,10 @@ app.use(
    SCHOLARSHIPS
 ============================================ */
 
+/* ============================================
+   SCHOLARSHIPS
+============================================ */
+
 app.use(
   "/api/scholarships",
   scholarshipRoutes
@@ -439,6 +449,26 @@ app.use(
 app.use(
   "/api/scholarship-applications",
   scholarshipApplicationRoutes
+);
+
+
+/* ============================================
+   CAREER EVENTS
+============================================ */
+
+app.use(
+  "/api/career-events",
+  careerEventRoutes
+);
+
+
+/* ============================================
+   CAREER EVENT REGISTRATIONS
+============================================ */
+
+app.use(
+  "/api/career-event-registrations",
+  careerEventRegistrationRoutes
 );
 
 
