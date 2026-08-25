@@ -2864,19 +2864,87 @@ router.get("/:id/learning", auth, async (req, res) => {
       return res.status(404).json({ message:"Class not found." });
     }
 
-    if (!canViewClassBuilder(req.user, classDoc)) {
-      return res.status(403).json({ message:"You are not allowed to open this class." });
-    }
+/* =========================================================
+   CLASS LEARNING ACCESS
+========================================================= */
 
-    const viewerId = normalizeObjectId(req.user?._id);
+const viewerId =
+  normalizeObjectId(
+    req.user?._id
+  );
 
-    const enrolledStudentIds = Array.isArray(classDoc.studentIds)
-      ? classDoc.studentIds.map(normalizeObjectId).filter(Boolean)
-      : [];
 
-    if (role === "student" && !enrolledStudentIds.includes(viewerId)) {
-      return res.status(403).json({ message:"You are not enrolled in this class." });
-    }
+const enrolledStudentIds =
+  Array.isArray(
+    classDoc.studentIds
+  )
+    ? classDoc.studentIds
+        .map(
+          normalizeObjectId
+        )
+        .filter(Boolean)
+
+    : [];
+
+
+/* =========================================================
+   STUDENT ACCESS
+
+   Students do NOT need Class Builder permission.
+
+   They only need to be enrolled in this specific class.
+========================================================= */
+
+if(
+  role === "student"
+){
+
+  const isEnrolled =
+    enrolledStudentIds.includes(
+      viewerId
+    );
+
+
+  if(!isEnrolled){
+
+    return res.status(403).json({
+      message:
+        "You are not enrolled in this class."
+    });
+
+  }
+
+}
+
+
+/* =========================================================
+   SCHOOL / TEACHER / ADMIN ACCESS
+
+   Instructor-type accounts must still be authorized
+   to manage/view this specific class.
+========================================================= */
+
+else{
+
+  const canViewInstructorClass =
+    Boolean(
+      canViewClassBuilder(
+        req.user,
+        classDoc
+      )
+    );
+
+
+  if(!canViewInstructorClass){
+
+    return res.status(403).json({
+      message:
+        "You are not allowed to open this class."
+    });
+
+  }
+
+}
 
     const [rawModules, rawLessons, rawQuizzes, rawAssignments] = await Promise.all([
       ClassModule.find({ classId }).sort({ order:1, createdAt:1 }).lean(),
