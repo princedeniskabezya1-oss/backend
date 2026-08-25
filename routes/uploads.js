@@ -1201,4 +1201,754 @@ router.post(
   }
 );
 
+/* =========================================================
+   AIFT VENTURE UPLOADS
+========================================================= */
+
+const VENTURE_UPLOAD_ROLES =
+  new Set([
+    "student",
+    "talent",
+    "teacher",
+    "school",
+    "employer",
+    "agent",
+    "admin"
+  ]);
+
+
+const VENTURE_IMAGE_TYPES =
+  new Set([
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp"
+  ]);
+
+
+const VENTURE_DOCUMENT_TYPES =
+  new Set([
+
+    /* Images */
+    "image/jpeg",
+    "image/jpg",
+    "image/png",
+    "image/webp",
+
+    /* PDF */
+    "application/pdf",
+
+    /* Word */
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+
+    /* PowerPoint */
+    "application/vnd.ms-powerpoint",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+
+    /* Excel */
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+
+    /* Text / CSV */
+    "text/plain",
+    "text/csv",
+    "application/csv"
+  ]);
+
+
+const MAX_VENTURE_IMAGE_SIZE =
+  8 * 1024 * 1024;
+
+
+const MAX_VENTURE_DOCUMENT_SIZE =
+  20 * 1024 * 1024;
+
+
+const MAX_VENTURE_DOCUMENTS =
+  10;
+
+
+/* =========================================================
+   VENTURE UPLOAD PERMISSION
+========================================================= */
+
+function userCanUploadVentureAsset(
+  req
+) {
+
+  const role =
+    String(
+      req.user?.role ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+
+  return VENTURE_UPLOAD_ROLES.has(
+    role
+  );
+
+}
+
+
+/* =========================================================
+   VENTURE IMAGE VALIDATION
+========================================================= */
+
+function validateVentureImageFile(
+  file
+) {
+
+  if (!file) {
+
+    return {
+      valid:false,
+      status:400,
+      message:
+        "Please select an image to upload."
+    };
+
+  }
+
+
+  const mimeType =
+    String(
+      file.mimetype ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+
+  if (
+    !VENTURE_IMAGE_TYPES.has(
+      mimeType
+    )
+  ) {
+
+    return {
+      valid:false,
+      status:400,
+      message:
+        "Venture images must be JPG, PNG, or WEBP files."
+    };
+
+  }
+
+
+  if (
+    Number(
+      file.size ||
+      0
+    ) >
+    MAX_VENTURE_IMAGE_SIZE
+  ) {
+
+    return {
+      valid:false,
+      status:413,
+      message:
+        "Venture images must be 8 MB or smaller."
+    };
+
+  }
+
+
+  return {
+    valid:true,
+    status:200,
+    message:""
+  };
+
+}
+
+
+/* =========================================================
+   POST /api/uploads/venture-logo
+========================================================= */
+
+router.post(
+  "/venture-logo",
+  auth,
+  singleFileUpload(
+    "file"
+  ),
+  async (
+    req,
+    res
+  ) => {
+
+    try {
+
+      if (
+        !userCanUploadVentureAsset(
+          req
+        )
+      ) {
+
+        return res
+          .status(403)
+          .json({
+            success:false,
+            message:
+              "Your account is not allowed to upload Venture assets."
+          });
+
+      }
+
+
+      const validation =
+        validateVentureImageFile(
+          req.file
+        );
+
+
+      if (
+        !validation.valid
+      ) {
+
+        return res
+          .status(
+            validation.status
+          )
+          .json({
+            success:false,
+            message:
+              validation.message
+          });
+
+      }
+
+
+      const userId =
+        getAuthenticatedUserId(
+          req
+        );
+
+
+      if (!userId) {
+
+        return res
+          .status(401)
+          .json({
+            success:false,
+            message:
+              "Your authenticated account could not be identified."
+          });
+
+      }
+
+
+      const result =
+        await uploadBufferToCloudinary(
+          req.file.buffer,
+          {
+            folder:
+              [
+                "aift",
+                "ventures",
+                userId,
+                "logos"
+              ].join("/"),
+
+            resourceType:
+              "image",
+
+            transformation:[
+              {
+                width:1200,
+                height:1200,
+                crop:"limit",
+                quality:"auto",
+                fetch_format:"auto"
+              }
+            ]
+          }
+        );
+
+
+      return res
+        .status(201)
+        .json({
+          ...cloudinaryResponse(
+            result,
+            req.file,
+            "image"
+          ),
+
+          assetType:
+            "venture-logo",
+
+          mimeType:
+            String(
+              req.file.mimetype ||
+              ""
+            ),
+
+          uploadedBy:
+            userId,
+
+          uploadedAt:
+            new Date()
+              .toISOString()
+        });
+
+
+    } catch (error) {
+
+      console.error(
+        "Venture logo upload error:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          success:false,
+          message:
+            error?.message ||
+            "Failed to upload the Venture logo."
+        });
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   POST /api/uploads/venture-cover
+========================================================= */
+
+router.post(
+  "/venture-cover",
+  auth,
+  singleFileUpload(
+    "file"
+  ),
+  async (
+    req,
+    res
+  ) => {
+
+    try {
+
+      if (
+        !userCanUploadVentureAsset(
+          req
+        )
+      ) {
+
+        return res
+          .status(403)
+          .json({
+            success:false,
+            message:
+              "Your account is not allowed to upload Venture assets."
+          });
+
+      }
+
+
+      const validation =
+        validateVentureImageFile(
+          req.file
+        );
+
+
+      if (
+        !validation.valid
+      ) {
+
+        return res
+          .status(
+            validation.status
+          )
+          .json({
+            success:false,
+            message:
+              validation.message
+          });
+
+      }
+
+
+      const userId =
+        getAuthenticatedUserId(
+          req
+        );
+
+
+      if (!userId) {
+
+        return res
+          .status(401)
+          .json({
+            success:false,
+            message:
+              "Your authenticated account could not be identified."
+          });
+
+      }
+
+
+      const result =
+        await uploadBufferToCloudinary(
+          req.file.buffer,
+          {
+            folder:
+              [
+                "aift",
+                "ventures",
+                userId,
+                "covers"
+              ].join("/"),
+
+            resourceType:
+              "image",
+
+            transformation:[
+              {
+                width:2400,
+                height:1350,
+                crop:"limit",
+                quality:"auto",
+                fetch_format:"auto"
+              }
+            ]
+          }
+        );
+
+
+      return res
+        .status(201)
+        .json({
+          ...cloudinaryResponse(
+            result,
+            req.file,
+            "image"
+          ),
+
+          assetType:
+            "venture-cover",
+
+          mimeType:
+            String(
+              req.file.mimetype ||
+              ""
+            ),
+
+          uploadedBy:
+            userId,
+
+          uploadedAt:
+            new Date()
+              .toISOString()
+        });
+
+
+    } catch (error) {
+
+      console.error(
+        "Venture cover upload error:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          success:false,
+          message:
+            error?.message ||
+            "Failed to upload the Venture banner."
+        });
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   POST /api/uploads/venture-documents
+========================================================= */
+
+router.post(
+  "/venture-documents",
+  auth,
+  multipleFileUpload(
+    "files",
+    MAX_VENTURE_DOCUMENTS
+  ),
+  async (
+    req,
+    res
+  ) => {
+
+    try {
+
+      if (
+        !userCanUploadVentureAsset(
+          req
+        )
+      ) {
+
+        return res
+          .status(403)
+          .json({
+            success:false,
+            message:
+              "Your account is not allowed to upload Venture documents."
+          });
+
+      }
+
+
+      const files =
+        Array.isArray(
+          req.files
+        )
+          ? req.files
+          : [];
+
+
+      if (
+        !files.length
+      ) {
+
+        return res
+          .status(400)
+          .json({
+            success:false,
+            message:
+              "Please select at least one Venture document."
+          });
+
+      }
+
+
+      const userId =
+        getAuthenticatedUserId(
+          req
+        );
+
+
+      if (!userId) {
+
+        return res
+          .status(401)
+          .json({
+            success:false,
+            message:
+              "Your authenticated account could not be identified."
+          });
+
+      }
+
+
+      for (
+        const file of
+        files
+      ) {
+
+        const mimeType =
+          String(
+            file?.mimetype ||
+            ""
+          )
+            .trim()
+            .toLowerCase();
+
+
+        if (
+          !VENTURE_DOCUMENT_TYPES.has(
+            mimeType
+          )
+        ) {
+
+          return res
+            .status(400)
+            .json({
+              success:false,
+              message:
+                `${
+                  file.originalname ||
+                  "A selected document"
+                } is not a supported Venture document type.`
+            });
+
+        }
+
+
+        if (
+          Number(
+            file.size ||
+            0
+          ) >
+          MAX_VENTURE_DOCUMENT_SIZE
+        ) {
+
+          return res
+            .status(413)
+            .json({
+              success:false,
+              message:
+                `${
+                  file.originalname ||
+                  "A selected document"
+                } is larger than 20 MB.`
+            });
+
+        }
+
+      }
+
+
+      const uploadedDocuments =
+        await Promise.all(
+
+          files.map(
+            async file => {
+
+              const mimeType =
+                String(
+                  file.mimetype ||
+                  ""
+                )
+                  .trim()
+                  .toLowerCase();
+
+
+              const resourceType =
+                getCloudinaryResourceType(
+                  mimeType
+                );
+
+
+              const result =
+                await uploadBufferToCloudinary(
+                  file.buffer,
+                  {
+                    folder:
+                      [
+                        "aift",
+                        "ventures",
+                        userId,
+                        "documents"
+                      ].join("/"),
+
+                    resourceType,
+
+                    transformation:
+                      resourceType ===
+                        "image"
+                        ? [
+                            {
+                              width:2400,
+                              height:2400,
+                              crop:"limit",
+                              quality:"auto",
+                              fetch_format:"auto"
+                            }
+                          ]
+                        : []
+                  }
+                );
+
+
+              return {
+
+                url:
+                  result.secure_url,
+
+                secureUrl:
+                  result.secure_url,
+
+                publicId:
+                  result.public_id,
+
+                resourceType:
+                  result.resource_type ||
+                  resourceType,
+
+                originalName:
+                  sanitizeUploadedFileName(
+                    file.originalname
+                  ),
+
+                mimeType,
+
+                size:
+                  Number(
+                    result.bytes ||
+                    file.size ||
+                    0
+                  ),
+
+                format:
+                  result.format ||
+                  null,
+
+                width:
+                  result.width ||
+                  null,
+
+                height:
+                  result.height ||
+                  null,
+
+                uploadedBy:
+                  userId,
+
+                uploadedAt:
+                  new Date()
+                    .toISOString()
+              };
+
+            }
+          )
+
+        );
+
+
+      return res
+        .status(201)
+        .json({
+          success:true,
+
+          count:
+            uploadedDocuments.length,
+
+          documents:
+            uploadedDocuments
+        });
+
+
+    } catch (error) {
+
+      console.error(
+        "Venture documents upload error:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          success:false,
+          message:
+            error?.message ||
+            "Failed to upload Venture documents."
+        });
+
+    }
+
+  }
+);
+
+
 module.exports = router;
