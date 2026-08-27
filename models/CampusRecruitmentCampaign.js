@@ -125,6 +125,30 @@ const campaignMetricsSchema =
         default: 0
       },
 
+      offers: {
+        type: Number,
+        min: 0,
+        default: 0
+      },
+
+      approvedPlacements: {
+        type: Number,
+        min: 0,
+        default: 0
+      },
+
+      activePlacements: {
+        type: Number,
+        min: 0,
+        default: 0
+      },
+
+      completedPlacements: {
+        type: Number,
+        min: 0,
+        default: 0
+      },
+
       hires: {
         type: Number,
         min: 0,
