@@ -38,6 +38,9 @@ const schoolCompanyPartnershipRoutes =
 const internshipApplicationRoutes =
   require("./routes/internshipApplications");
 
+const campusRecruitmentCampaignRoutes =
+  require("./routes/campusRecruitmentCampaigns");
+
 const scholarshipRoutes =
   require("./routes/scholarships");
 
@@ -429,8 +432,13 @@ app.use(
 
 
 /* ============================================
-   SCHOLARSHIPS
+   CAMPUS RECRUITMENT CAMPAIGNS
 ============================================ */
+
+app.use(
+  "/api/campus-recruitment-campaigns",
+  campusRecruitmentCampaignRoutes
+);
 
 /* ============================================
    SCHOLARSHIPS
