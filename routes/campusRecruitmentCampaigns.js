@@ -12,6 +12,8 @@ const SchoolCompanyPartnership =
 
 const User =
   require("../models/User");
+const InternshipApplication =
+  require("../models/InternshipApplication");
 
 
 const router =
@@ -994,6 +996,538 @@ router.get(
   }
 );
 
+/* =========================================================
+   GET /api/campus-recruitment-campaigns/:id/metrics
+
+   REAL CAMPUS RECRUITMENT PIPELINE ANALYTICS
+
+   Campaign metrics are derived from InternshipApplication
+   records attached to this campaign's opportunityIds.
+
+   The browser is never trusted as the source of truth for
+   application pipeline totals.
+========================================================= */
+
+router.get(
+  "/:id/metrics",
+  async (
+    req,
+    res
+  ) => {
+
+    try {
+
+      /* =====================================================
+         VALIDATE CAMPAIGN ID
+      ===================================================== */
+
+      if (
+        !validObjectId(
+          req.params.id
+        )
+      ) {
+
+        return res
+          .status(400)
+          .json({
+            success:false,
+            message:
+              "Invalid campaign id."
+          });
+
+      }
+
+
+      /* =====================================================
+         LOAD CAMPAIGN
+
+         Do not populate here.
+
+         We only need the relationship IDs and stored
+         campaign targeting / invitation metrics.
+      ===================================================== */
+
+      const campaign =
+        await CampusRecruitmentCampaign
+          .findById(
+            req.params.id
+          )
+          .lean();
+
+
+      if (!campaign) {
+
+        return res
+          .status(404)
+          .json({
+            success:false,
+            message:
+              "Campus recruitment campaign not found."
+          });
+
+      }
+
+
+      /* =====================================================
+         ACCESS CONTROL
+
+         School:
+           may view campaigns addressed to it.
+
+         Company:
+           may view its own campaigns.
+
+         Admin:
+           may view all campaigns.
+      ===================================================== */
+
+      if (
+        !canAccessCampaign(
+          req,
+          campaign
+        )
+      ) {
+
+        return res
+          .status(403)
+          .json({
+            success:false,
+            message:
+              "You are not allowed to view this campaign's metrics."
+          });
+
+      }
+
+
+      /* =====================================================
+         OPPORTUNITIES ATTACHED TO CAMPAIGN
+      ===================================================== */
+
+      const opportunityIds =
+        objectIdArray(
+          campaign.opportunityIds
+        );
+
+
+      /* =====================================================
+         EMPTY CAMPAIGN
+
+         A newly-created campaign may legitimately have no
+         opportunity attached yet.
+      ===================================================== */
+
+      if (
+        opportunityIds.length === 0
+      ) {
+
+        const metrics = {
+
+          eligibleStudents:
+            Number(
+              campaign.metrics?.eligibleStudents ||
+              0
+            ),
+
+          studentsInvited:
+            Number(
+              campaign.metrics?.studentsInvited ||
+              0
+            ),
+
+          invitationsAccepted:
+            Number(
+              campaign.metrics?.invitationsAccepted ||
+              0
+            ),
+
+          applications:0,
+
+          pending:0,
+
+          review:0,
+
+          shortlisted:0,
+
+          interviews:0,
+
+          approvedPlacements:0,
+
+          activePlacements:0,
+
+          completedPlacements:0,
+
+          rejected:0,
+
+          withdrawn:0,
+
+          offers:0,
+
+          hires:0
+        };
+
+
+        return res.json({
+          success:true,
+
+          campaignId:
+            campaign._id,
+
+          opportunityCount:0,
+
+          metrics,
+
+          conversion:{
+            applicationToShortlistRate:0,
+            shortlistToInterviewRate:0,
+            interviewToApprovalRate:0,
+            applicationToHireRate:0,
+            targetHireProgress:0
+          }
+        });
+
+      }
+
+
+      /* =====================================================
+         APPLICATION FILTER
+
+         SECURITY:
+
+         opportunityId alone is not enough.
+
+         We additionally bind applications to this campaign's
+         company and school so malformed or historical records
+         belonging to another relationship cannot leak into
+         these analytics.
+      ===================================================== */
+
+      const applicationFilter = {
+
+        opportunityId:{
+          $in:
+            opportunityIds
+        },
+
+        companyId:
+          campaign.companyId,
+
+        schoolId:
+          campaign.schoolId
+      };
+
+
+      /* =====================================================
+         AGGREGATE REAL APPLICATION PIPELINE
+
+         One database aggregation calculates all status totals.
+      ===================================================== */
+
+      const statusRows =
+        await InternshipApplication
+          .aggregate([
+            {
+              $match:
+                applicationFilter
+            },
+
+            {
+              $group:{
+                _id:"$status",
+                count:{
+                  $sum:1
+                }
+              }
+            }
+          ]);
+
+
+      /* =====================================================
+         NORMALIZE STATUS COUNTS
+      ===================================================== */
+
+      const statusCounts = {
+
+        pending:0,
+        review:0,
+        shortlisted:0,
+        interview:0,
+        approved:0,
+        active:0,
+        completed:0,
+        rejected:0,
+        withdrawn:0
+      };
+
+
+      let applications = 0;
+
+
+      statusRows.forEach(
+        row => {
+
+          const status =
+            safeString(
+              row?._id,
+              100
+            ).toLowerCase();
+
+
+          const count =
+            Math.max(
+              0,
+              Number(
+                row?.count ||
+                0
+              )
+            );
+
+
+          applications +=
+            count;
+
+
+          if (
+            Object.prototype.hasOwnProperty.call(
+              statusCounts,
+              status
+            )
+          ) {
+
+            statusCounts[status] =
+              count;
+
+          }
+
+        }
+      );
+
+
+      /* =====================================================
+         PIPELINE METRICS
+
+         "offers"
+
+         The existing InternshipApplication lifecycle does not
+         currently have a dedicated "offer" status.
+
+         Therefore approved is used as the closest authoritative
+         offer/approval milestone until AIFT introduces a
+         dedicated offer lifecycle.
+
+         "hires"
+
+         Completed placements are treated as confirmed hires for
+         this campaign analytics layer.
+
+         This avoids allowing the frontend to manufacture either
+         number.
+      ===================================================== */
+
+      const offers =
+        statusCounts.approved;
+
+
+      const hires =
+        statusCounts.completed;
+
+
+      const metrics = {
+
+        /* -----------------------------------------------
+           Invitation / targeting metrics are not part of
+           InternshipApplication, so preserve their campaign
+           snapshot values for now.
+        ----------------------------------------------- */
+
+        eligibleStudents:
+          Number(
+            campaign.metrics?.eligibleStudents ||
+            0
+          ),
+
+        studentsInvited:
+          Number(
+            campaign.metrics?.studentsInvited ||
+            0
+          ),
+
+        invitationsAccepted:
+          Number(
+            campaign.metrics?.invitationsAccepted ||
+            0
+          ),
+
+
+        /* -----------------------------------------------
+           Real application pipeline
+        ----------------------------------------------- */
+
+        applications,
+
+        pending:
+          statusCounts.pending,
+
+        review:
+          statusCounts.review,
+
+        shortlisted:
+          statusCounts.shortlisted,
+
+        interviews:
+          statusCounts.interview,
+
+        approvedPlacements:
+          statusCounts.approved,
+
+        activePlacements:
+          statusCounts.active,
+
+        completedPlacements:
+          statusCounts.completed,
+
+        rejected:
+          statusCounts.rejected,
+
+        withdrawn:
+          statusCounts.withdrawn,
+
+        offers,
+
+        hires
+      };
+
+
+      /* =====================================================
+         SAFE PERCENTAGE HELPER
+      ===================================================== */
+
+      function percentage(
+        numerator,
+        denominator
+      ) {
+
+        if (
+          !denominator ||
+          denominator <= 0
+        ) {
+          return 0;
+        }
+
+
+        return Number(
+          (
+            (
+              numerator /
+              denominator
+            ) *
+            100
+          ).toFixed(2)
+        );
+
+      }
+
+
+      /* =====================================================
+         CONVERSION ANALYTICS
+      ===================================================== */
+
+      const targetHires =
+        Math.max(
+          0,
+          Number(
+            campaign.targetHires ||
+            0
+          )
+        );
+
+
+      const conversion = {
+
+        applicationToShortlistRate:
+          percentage(
+            metrics.shortlisted,
+            metrics.applications
+          ),
+
+        shortlistToInterviewRate:
+          percentage(
+            metrics.interviews,
+            metrics.shortlisted
+          ),
+
+        interviewToApprovalRate:
+          percentage(
+            metrics.approvedPlacements,
+            metrics.interviews
+          ),
+
+        applicationToHireRate:
+          percentage(
+            metrics.hires,
+            metrics.applications
+          ),
+
+        targetHireProgress:
+          percentage(
+            metrics.hires,
+            targetHires
+          )
+      };
+
+
+      /* =====================================================
+         RESPONSE
+      ===================================================== */
+
+      return res.json({
+        success:true,
+
+        campaignId:
+          campaign._id,
+
+        companyId:
+          campaign.companyId,
+
+        schoolId:
+          campaign.schoolId,
+
+        partnershipId:
+          campaign.partnershipId,
+
+        opportunityCount:
+          opportunityIds.length,
+
+        targetHires,
+
+        metrics,
+
+        conversion,
+
+        generatedAt:
+          new Date()
+      });
+
+
+    } catch (error) {
+
+      console.error(
+        "GET CAMPUS RECRUITMENT CAMPAIGN METRICS ERROR:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          success:false,
+          message:
+            "Unable to load campus recruitment campaign metrics."
+        });
+
+    }
+
+  }
+);
 
 /* =========================================================
    GET /api/campus-recruitment-campaigns/:id
