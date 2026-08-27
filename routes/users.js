@@ -3523,8 +3523,19 @@ cloudinary.uploader.upload_stream(
   }
 );
 
+
+
 /* ============================================
    FOLLOW / UNFOLLOW
+   Production social relationship controller
+
+   PATCH /api/users/:id/follow
+
+   IMPORTANT:
+   - Core follow relationship must succeed independently.
+   - Notifications are secondary.
+   - Analytics are secondary.
+   - Repeated requests remain safe.
 ============================================ */
 
 router.patch(
@@ -3532,82 +3543,156 @@ router.patch(
   auth,
   analyticsContext,
   async (req, res) => {
-    let mongoSession = null;
 
     try {
+
+      /* ========================================
+         CURRENT USER
+      ======================================== */
+
       const currentUserId =
-        req.user._id ||
-        req.user.id;
+        req.user?._id ||
+        req.user?.id;
+
 
       const targetUserId =
         req.params.id;
 
+
+      /* ========================================
+         VALIDATE IDS
+      ======================================== */
+
       if (
-        !validObjectId(targetUserId)
+        !currentUserId ||
+        !validObjectId(
+          currentUserId
+        )
       ) {
-        return res.status(400).json({
-          message:
-            "Invalid user ID."
-        });
+
+        return res
+          .status(401)
+          .json({
+            message:
+              "Current user is invalid."
+          });
+
       }
+
+
+      if (
+        !targetUserId ||
+        !validObjectId(
+          targetUserId
+        )
+      ) {
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "Invalid user ID."
+          });
+
+      }
+
 
       if (
         String(currentUserId) ===
         String(targetUserId)
       ) {
-        return res.status(400).json({
-          message:
-            "You cannot follow yourself."
-        });
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "You cannot follow yourself."
+          });
+
       }
 
-      mongoSession =
-        await mongoose.startSession();
 
-      mongoSession.startTransaction();
+      /* ========================================
+         LOAD BOTH ACCOUNTS
+
+         No Mongo transaction is required for this
+         social toggle.
+
+         Atomic $addToSet / $pull operations below
+         make each relationship update idempotent.
+      ======================================== */
 
       const [
         currentUser,
         targetUser
-      ] = await Promise.all([
-        User.findById(currentUserId)
-          .session(mongoSession),
+      ] =
+        await Promise.all([
 
-        User.findById(targetUserId)
-          .session(mongoSession)
-      ]);
+          User.findById(
+            currentUserId
+          )
+            .select(
+              "_id name role following status"
+            )
+            .lean(),
+
+          User.findById(
+            targetUserId
+          )
+            .select(
+              "_id name role followers status"
+            )
+            .lean()
+
+        ]);
+
 
       if (!currentUser) {
-        await mongoSession
-          .abortTransaction();
 
-        return res.status(401).json({
-          message:
-            "Current user was not found."
-        });
+        return res
+          .status(401)
+          .json({
+            message:
+              "Current user was not found."
+          });
+
       }
+
 
       if (!targetUser) {
-        await mongoSession
-          .abortTransaction();
 
-        return res.status(404).json({
-          message:
-            "User not found."
-        });
+        return res
+          .status(404)
+          .json({
+            message:
+              "User not found."
+          });
+
       }
+
 
       if (
-        targetUser.status === "suspended"
+        targetUser.status ===
+        "suspended"
       ) {
-        await mongoSession
-          .abortTransaction();
 
-        return res.status(403).json({
-          message:
-            "This account is unavailable."
-        });
+        return res
+          .status(403)
+          .json({
+            message:
+              "This account is unavailable."
+          });
+
       }
+
+
+      /* ========================================
+         CURRENT RELATIONSHIP
+
+         following can contain ObjectIds.
+
+         Normalize every value before comparison.
+      ======================================== */
 
       const alreadyFollowing =
         Array.isArray(
@@ -3615,168 +3700,339 @@ router.patch(
         ) &&
         currentUser.following.some(
           id =>
-            String(id) ===
-            String(targetUser._id)
+            String(
+              id?._id ||
+              id
+            ) ===
+            String(
+              targetUserId
+            )
         );
 
-      let following;
+
+      let following =
+        false;
+
+
+      /* ========================================
+         UNFOLLOW
+      ======================================== */
 
       if (alreadyFollowing) {
-        currentUser.following.pull(
-          targetUser._id
-        );
 
-        targetUser.followers.pull(
-          currentUser._id
-        );
+        await Promise.all([
 
-        following = false;
-      } else {
-        currentUser.following.addToSet(
-          targetUser._id
-        );
+          User.updateOne(
+            {
+              _id:
+                currentUserId
+            },
+            {
+              $pull: {
+                following:
+                  targetUserId
+              }
+            }
+          ),
 
-        targetUser.followers.addToSet(
-          currentUser._id
-        );
+          User.updateOne(
+            {
+              _id:
+                targetUserId
+            },
+            {
+              $pull: {
+                followers:
+                  currentUserId
+              }
+            }
+          )
 
-        following = true;
+        ]);
+
+
+        following =
+          false;
+
       }
 
-      await currentUser.save({
-        session: mongoSession,
-        validateModifiedOnly: true
-      });
 
-      await targetUser.save({
-        session: mongoSession,
-        validateModifiedOnly: true
-      });
+      /* ========================================
+         FOLLOW
+      ======================================== */
+
+      else {
+
+        await Promise.all([
+
+          User.updateOne(
+            {
+              _id:
+                currentUserId
+            },
+            {
+              $addToSet: {
+                following:
+                  targetUserId
+              }
+            }
+          ),
+
+          User.updateOne(
+            {
+              _id:
+                targetUserId
+            },
+            {
+              $addToSet: {
+                followers:
+                  currentUserId
+              }
+            }
+          )
+
+        ]);
+
+
+        following =
+          true;
+
+      }
+
+
+      /* ========================================
+         RELOAD TARGET FOLLOWER COUNT
+
+         Do not calculate this from the stale targetUser
+         document loaded before the update.
+      ======================================== */
+
+      const updatedTarget =
+        await User.findById(
+          targetUserId
+        )
+          .select(
+            "_id followers"
+          )
+          .lean();
+
+
+      const followersCount =
+        Array.isArray(
+          updatedTarget?.followers
+        )
+          ? updatedTarget
+              .followers
+              .length
+          : 0;
+
+
+      /* ========================================
+         NOTIFICATION
+
+         Secondary operation.
+
+         A notification failure must NEVER undo or
+         reject a successful follow relationship.
+      ======================================== */
 
       if (following) {
-        await Notification.create(
-          [
-            {
-              user:
-                targetUser._id,
 
-              type:
-                "follow",
+        try {
 
-              sender:
-                currentUser._id,
+          await Notification.create({
+            user:
+              targetUserId,
 
-              text:
-                `${currentUser.name || "Someone"} started following you`,
+            type:
+              "follow",
 
-              link:
-                `/public-profile.html?id=${currentUser._id}`
-            }
-          ],
-          {
-            session:
-              mongoSession
-          }
-        );
+            sender:
+              currentUserId,
+
+            text:
+              `${
+                currentUser.name ||
+                "Someone"
+              } started following you`,
+
+            link:
+              `/public-profile.html?id=${currentUserId}`
+          });
+
+        } catch (
+          notificationError
+        ) {
+
+          console.warn(
+            "FOLLOW NOTIFICATION ERROR:",
+            notificationError?.message ||
+            notificationError
+          );
+
+        }
+
       }
 
-      /*
-        School follower analytics belongs only to target
-        accounts whose role is school.
 
-        Other user roles continue to follow normally, but they
-        do not create school analytics records.
-      */
+      /* ========================================
+         SCHOOL FOLLOW ANALYTICS
+
+         Secondary operation.
+
+         Analytics must NEVER make the actual social
+         relationship fail.
+      ======================================== */
+
       if (
-        targetUser.role === "school"
+        targetUser.role ===
+        "school"
       ) {
-        await recordSchoolAnalyticsEvent({
-          req,
 
-          schoolId:
-            targetUser._id,
+        try {
 
-          eventType:
-            following
-              ? "follow"
-              : "unfollow",
+          await recordSchoolAnalyticsEvent({
+            req,
 
-          entityType:
-            "school",
+            schoolId:
+              targetUserId,
 
-          entityId:
-            targetUser._id,
+            eventType:
+              following
+                ? "follow"
+                : "unfollow",
 
-          metadata: {
-            followerRole:
-              currentUser.role ||
-              "unknown"
-          },
+            entityType:
+              "school",
 
-          mongoSession
-        });
+            entityId:
+              targetUserId,
+
+            metadata: {
+              followerRole:
+                currentUser.role ||
+                "unknown"
+            }
+          });
+
+        } catch (
+          analyticsError
+        ) {
+
+          console.warn(
+            "FOLLOW ANALYTICS ERROR:",
+            analyticsError?.message ||
+            analyticsError
+          );
+
+        }
+
       }
 
-      await mongoSession
-        .commitTransaction();
 
-      const io =
-        req.app.get("io");
+      /* ========================================
+         REALTIME EVENT
 
-      if (io) {
-        io.to(
-          String(targetUser._id)
-        ).emit(
-          "user_follow_updated",
-          {
-            followerId:
-              currentUser._id,
+         Secondary operation.
+      ======================================== */
 
-            targetId:
-              targetUser._id,
+      try {
 
-            following,
+        const io =
+          req.app.get(
+            "io"
+          );
 
-            followers:
-              targetUser.followers.length
-          }
+
+        if (io) {
+
+          io.to(
+            String(
+              targetUserId
+            )
+          ).emit(
+            "user_follow_updated",
+            {
+              followerId:
+                currentUserId,
+
+              targetId:
+                targetUserId,
+
+              following,
+
+              followers:
+                followersCount
+            }
+          );
+
+        }
+
+      } catch (
+        socketError
+      ) {
+
+        console.warn(
+          "FOLLOW SOCKET ERROR:",
+          socketError?.message ||
+          socketError
         );
+
       }
+
+
+      /* ========================================
+         AUTHORITATIVE RESPONSE
+      ======================================== */
 
       return res.json({
+
+        success:
+          true,
+
         following,
 
         targetId:
-          targetUser._id,
+          targetUserId,
 
         followers:
-          targetUser.followers.length
+          followersCount
+
       });
-    } catch (error) {
-      if (
-        mongoSession?.inTransaction()
-      ) {
-        await mongoSession
-          .abortTransaction()
-          .catch(() => {});
-      }
+
+
+    } catch (
+      error
+    ) {
 
       console.error(
         "FOLLOW ERROR:",
         error
       );
 
-      return res.status(500).json({
-        message:
-          "Follow operation failed."
-      });
-    } finally {
-      if (mongoSession) {
-        await mongoSession
-          .endSession()
-          .catch(() => {});
-      }
+
+      return res
+        .status(500)
+        .json({
+
+          message:
+            "Follow operation failed.",
+
+          /*
+            Development/debug value.
+
+            This is useful in Render logs and browser
+            debugging without exposing a stack trace.
+          */
+
+          code:
+            error?.code ||
+            null
+
+        });
+
     }
+
   }
 );
 
