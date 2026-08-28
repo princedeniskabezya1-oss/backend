@@ -3884,23 +3884,101 @@ if (logoFile) {
    user.schoolLogo = result.secure_url;
       }
 
-     const bannerFile =
+/* ============================================
+   PROFILE BANNER
+============================================ */
+
+const bannerFile =
   req.files?.bannerImage?.[0] ||
   req.files?.banner?.[0] ||
   req.files?.coverImage?.[0];
 
+
+/*
+  Remove the existing banner.
+
+  This must clear both fields because the platform
+  currently keeps the generic banner in bannerImage
+  while School profiles may also use schoolBanner.
+
+  A newly uploaded banner below takes precedence if
+  the same request contains both removeBanner=true
+  and a new banner file.
+*/
+
+const shouldRemoveBanner =
+  req.body.removeBanner === "true" ||
+  req.body.removeBanner === true ||
+  req.body.removeBannerImage === "true" ||
+  req.body.removeBannerImage === true ||
+  req.body.removeCoverImage === "true" ||
+  req.body.removeCoverImage === true;
+
+
+if (shouldRemoveBanner) {
+  user.bannerImage = "";
+  user.schoolBanner = "";
+}
+
+
+/*
+  Upload / replace banner.
+
+  Support all banner field names currently accepted
+  by this route so existing profile editors continue
+  working without breaking.
+*/
+
 if (bannerFile) {
-        const result = await new Promise((resolve, reject) => {
-          cloudinary.uploader.upload_stream(
-            { folder: "aift_banners", resource_type: "auto" },
-            (error, output) => error ? reject(error) : resolve(output)
-          ).end(bannerFile.buffer);
-        });
-        user.bannerImage = result.secure_url;
-   user.schoolBanner = result.secure_url;
+
+  const result =
+    await new Promise(
+      (resolve, reject) => {
+
+        cloudinary.uploader.upload_stream(
+          {
+            folder: "aift_banners",
+            resource_type: "auto"
+          },
+
+          (error, output) => {
+
+            if (error) {
+              reject(error);
+              return;
+            }
+
+            resolve(output);
+
+          }
+
+        ).end(
+          bannerFile.buffer
+        );
+
       }
-       if (req.body.removeCV === "true") {
+    );
+
+
+  user.bannerImage =
+    result.secure_url;
+
+  user.schoolBanner =
+    result.secure_url;
+}
+
+
+/* ============================================
+   CV REMOVAL
+============================================ */
+
+if (
+  req.body.removeCV === "true" ||
+  req.body.removeCV === true
+) {
+
   user.cvUrl = "";
+
 }
 
       if (req.files?.cv?.[0]) {
