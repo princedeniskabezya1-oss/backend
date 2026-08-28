@@ -4530,81 +4530,584 @@ router.get("/jobseekers/discover", auth, async (req, res) => {
 /* ============================================
    EMPLOYER PUBLIC PROFILE
    GET /api/users/employer/:id/public
+
+   Production privacy-enforced public response.
 ============================================ */
-router.get("/employer/:id/public", async (req, res) => {
-  try {
-    const employer = await User.findById(req.params.id)
-      .select(
-        "_id name email role companyName headline bio location website profileImage bannerImage contactEmail contactPhone industry companyTags followers following aiftVerified aiftCertified createdAt"
-      )
-      .populate("followers", "_id name profileImage headline role")
-      .populate("following", "_id name profileImage headline role");
 
-    if (!employer) {
-      return res.status(404).json({ message: "Employer not found" });
-    }
+router.get(
+  "/employer/:id/public",
+  async (req, res) => {
 
-    if (!["employer", "school"].includes(employer.role)) {
-      return res.status(400).json({ message: "This profile is not an employer profile" });
-    }
-
-    const jobs = await Job.find({
-      employerId: employer._id,
-      status: "active"
-    })
-      .select("_id title location type salary description status createdAt viewsCount applicationsCount")
-      .sort({ createdAt: -1 })
-      .limit(20);
-
-    const applicationsCount = await Application.countDocuments({
-      employerId: employer._id
-    });
-
-    const team = await User.find({
-      companyId: employer._id,
-      isBlockedByEmployer: { $ne: true }
-    })
-      .select("_id name profileImage headline teamRole department profession location skills languages aiftVerified aiftCertified")
-      .sort({ createdAt: -1 })
-      .limit(60);
-
-    let posts = [];
     try {
-      const Post = require("../models/Post");
 
-      posts = await Post.find({
-        author: employer._id,
-        isHiddenByAdmin: { $ne: true }
-      })
-        .sort({ createdAt: -1 })
-        .limit(20)
-        .populate("author", "name companyName profileImage headline role aiftVerified aiftCertified followers")
-        .populate("comments.user", "name profileImage headline role")
-        .populate("comments.replies.user", "name profileImage headline role");
-    } catch (postErr) {
-      console.warn("PUBLIC EMPLOYER POSTS SKIPPED:", postErr.message);
-      posts = [];
+      /* ========================================
+         LOAD EMPLOYER + PRIVACY SETTINGS
+      ======================================== */
+
+      const employer =
+        await User.findById(
+          req.params.id
+        )
+          .select(
+            [
+              "_id",
+              "name",
+              "role",
+              "companyName",
+              "headline",
+              "bio",
+              "location",
+              "website",
+              "profileImage",
+              "bannerImage",
+              "contactEmail",
+              "contactPhone",
+              "industry",
+              "companyTags",
+              "followers",
+              "following",
+              "aiftVerified",
+              "aiftCertified",
+              "createdAt",
+
+              /*
+                Platform public-profile controls
+              */
+
+              "isPublic",
+              "allowProfileIndexing",
+
+              /*
+                Employer-specific privacy settings
+              */
+
+              "employerPrivacySettings"
+
+            ].join(" ")
+          )
+          .populate(
+            "followers",
+            "_id name profileImage headline role"
+          )
+          .populate(
+            "following",
+            "_id name profileImage headline role"
+          );
+
+
+      if (!employer) {
+
+        return res
+          .status(404)
+          .json({
+            message:
+              "Employer not found"
+          });
+
+      }
+
+
+      /* ========================================
+         VALID EMPLOYER PROFILE TYPE
+      ======================================== */
+
+      if (
+        ![
+          "employer",
+          "school"
+        ].includes(
+          employer.role
+        )
+      ) {
+
+        return res
+          .status(400)
+          .json({
+            message:
+              "This profile is not an employer profile"
+          });
+
+      }
+
+
+      /* ========================================
+         PRIVATE PROFILE
+      ======================================== */
+
+      if (
+        employer.isPublic ===
+        false
+      ) {
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "This employer profile is private."
+          });
+
+      }
+
+
+      /* ========================================
+         NORMALIZE PRIVACY
+
+         Reuse the helper created earlier when
+         possible.
+      ======================================== */
+
+      const privacy =
+        typeof buildEmployerPrivacySettings ===
+        "function"
+          ? buildEmployerPrivacySettings(
+              employer
+            )
+          : {
+
+              isPublic:
+                employer.isPublic !==
+                false,
+
+              allowProfileIndexing:
+                employer.allowProfileIndexing !==
+                false,
+
+              showLocationPublicly:
+                employer
+                  .employerPrivacySettings
+                  ?.showLocationPublicly !==
+                false,
+
+              showWebsitePublicly:
+                employer
+                  .employerPrivacySettings
+                  ?.showWebsitePublicly !==
+                false,
+
+              showCompanyStatistics:
+                employer
+                  .employerPrivacySettings
+                  ?.showCompanyStatistics ===
+                true,
+
+              showActiveJobs:
+                employer
+                  .employerPrivacySettings
+                  ?.showActiveJobs !==
+                false,
+
+              candidateAnalyticsVisibility:
+                employer
+                  .employerPrivacySettings
+                  ?.candidateAnalyticsVisibility !==
+                false,
+
+              teamActivityVisibility:
+                employer
+                  .employerPrivacySettings
+                  ?.teamActivityVisibility !==
+                false
+
+            };
+
+
+      /* ========================================
+         ACTIVE JOBS
+
+         Do not even query them when hidden.
+      ======================================== */
+
+      let jobs = [];
+
+
+      if (
+        privacy.showActiveJobs
+      ) {
+
+        jobs =
+          await Job.find({
+
+            employerId:
+              employer._id,
+
+            status:
+              "active"
+
+          })
+            .select(
+              [
+                "_id",
+                "title",
+                "location",
+                "type",
+                "salary",
+                "description",
+                "status",
+                "createdAt",
+                "viewsCount",
+                "applicationsCount"
+              ].join(" ")
+            )
+            .sort({
+              createdAt:
+                -1
+            })
+            .limit(20);
+
+      }
+
+
+      /* ========================================
+         STATISTICS
+
+         Do not calculate application statistics
+         when public statistics are disabled.
+      ======================================== */
+
+      let applicationsCount =
+        0;
+
+
+      if (
+        privacy.showCompanyStatistics
+      ) {
+
+        applicationsCount =
+          await Application
+            .countDocuments({
+
+              employerId:
+                employer._id
+
+            });
+
+      }
+
+
+      /* ========================================
+         PUBLIC TEAM
+
+         Team roster remains part of the public
+         company profile.
+
+         Important:
+         We do NOT expose internal team activity.
+      ======================================== */
+
+      const team =
+        await User.find({
+
+          companyId:
+            employer._id,
+
+          isBlockedByEmployer: {
+            $ne:true
+          },
+
+          status: {
+            $ne:"suspended"
+          }
+
+        })
+          .select(
+            [
+              "_id",
+              "name",
+              "profileImage",
+              "headline",
+              "teamRole",
+              "department",
+              "profession",
+              "location",
+              "skills",
+              "languages",
+              "aiftVerified",
+              "aiftCertified"
+            ].join(" ")
+          )
+          .sort({
+            createdAt:
+              -1
+          })
+          .limit(60);
+
+
+      /* ========================================
+         PUBLIC POSTS
+      ======================================== */
+
+      let posts =
+        [];
+
+
+      try {
+
+        const Post =
+          require(
+            "../models/Post"
+          );
+
+
+        posts =
+          await Post.find({
+
+            author:
+              employer._id,
+
+            isHiddenByAdmin: {
+              $ne:true
+            }
+
+          })
+            .sort({
+              createdAt:
+                -1
+            })
+            .limit(20)
+            .populate(
+              "author",
+              "name companyName profileImage headline role aiftVerified aiftCertified followers"
+            )
+            .populate(
+              "comments.user",
+              "name profileImage headline role"
+            )
+            .populate(
+              "comments.replies.user",
+              "name profileImage headline role"
+            );
+
+      } catch (
+        postError
+      ) {
+
+        console.warn(
+          "PUBLIC EMPLOYER POSTS SKIPPED:",
+          postError?.message ||
+          postError
+        );
+
+
+        posts =
+          [];
+
+      }
+
+
+      /* ========================================
+         SAFE PUBLIC EMPLOYER OBJECT
+      ======================================== */
+
+      const safeEmployer = {
+
+        _id:
+          employer._id,
+
+        name:
+          employer.name,
+
+        role:
+          employer.role,
+
+        companyName:
+          employer.companyName,
+
+        headline:
+          employer.headline,
+
+        bio:
+          employer.bio,
+
+        profileImage:
+          employer.profileImage,
+
+        bannerImage:
+          employer.bannerImage,
+
+        industry:
+          employer.industry,
+
+        companyTags:
+          Array.isArray(
+            employer.companyTags
+          )
+            ? employer.companyTags
+            : [],
+
+        aiftVerified:
+          Boolean(
+            employer.aiftVerified
+          ),
+
+        aiftCertified:
+          Boolean(
+            employer.aiftCertified
+          ),
+
+        createdAt:
+          employer.createdAt,
+
+        followers:
+          employer.followers ||
+          [],
+
+        following:
+          employer.following ||
+          [],
+
+        /*
+          Public discovery metadata.
+          This can be useful to the frontend for
+          noindex behavior later.
+        */
+
+        allowProfileIndexing:
+          Boolean(
+            privacy.allowProfileIndexing
+          )
+
+      };
+
+
+      /* ========================================
+         CONDITIONAL LOCATION
+      ======================================== */
+
+      if (
+        privacy.showLocationPublicly
+      ) {
+
+        safeEmployer.location =
+          employer.location ||
+          null;
+
+      }
+
+
+      /* ========================================
+         CONDITIONAL WEBSITE
+      ======================================== */
+
+      if (
+        privacy.showWebsitePublicly
+      ) {
+
+        safeEmployer.website =
+          employer.website ||
+          null;
+
+      }
+
+
+      /*
+        Do not expose contactEmail or contactPhone
+        from this public Employer endpoint unless
+        you later create separate explicit privacy
+        switches for them.
+      */
+
+
+      /* ========================================
+         PUBLIC STATISTICS
+      ======================================== */
+
+      const stats =
+        privacy.showCompanyStatistics
+          ? {
+
+              activeJobs:
+                privacy.showActiveJobs
+                  ? jobs.length
+                  : 0,
+
+              totalApplications:
+                applicationsCount,
+
+              teamMembers:
+                team.length,
+
+              followers:
+                employer.followers
+                  ?.length ||
+                0,
+
+              following:
+                employer.following
+                  ?.length ||
+                0,
+
+              posts:
+                posts.length
+
+            }
+          : null;
+
+
+      /* ========================================
+         RESPONSE
+      ======================================== */
+
+      return res.json({
+
+        employer:
+          safeEmployer,
+
+        jobs:
+          privacy.showActiveJobs
+            ? jobs
+            : [],
+
+        team,
+
+        posts,
+
+        stats,
+
+        privacy: {
+
+          showLocationPublicly:
+            privacy.showLocationPublicly,
+
+          showWebsitePublicly:
+            privacy.showWebsitePublicly,
+
+          showCompanyStatistics:
+            privacy.showCompanyStatistics,
+
+          showActiveJobs:
+            privacy.showActiveJobs,
+
+          allowProfileIndexing:
+            privacy.allowProfileIndexing
+
+        }
+
+      });
+
+
+    } catch (
+      error
+    ) {
+
+      console.error(
+        "EMPLOYER PUBLIC PROFILE ERROR:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          message:
+            "Failed to load employer public profile"
+        });
+
     }
 
-    res.json({
-      employer,
-      jobs,
-      team,
-      posts,
-      stats: {
-        activeJobs: jobs.length,
-        totalApplications: applicationsCount,
-        teamMembers: team.length,
-        followers: employer.followers?.length || 0,
-        following: employer.following?.length || 0,
-        posts: posts.length
-      }
-    });
-  } catch (err) {
-    console.error("EMPLOYER PUBLIC PROFILE ERROR:", err);
-    res.status(500).json({ message: "Failed to load employer public profile" });
   }
-});
+);
+
+
 /* ============================================
    PUBLIC PROFILE
 ============================================ */
