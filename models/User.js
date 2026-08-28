@@ -459,6 +459,53 @@ experience: [
 },
 
 /* ============================================
+   EMPLOYER PRIVACY SETTINGS
+============================================ */
+
+employerPrivacySettings: {
+
+  /* --------------------------------------------
+     PUBLIC PROFILE VISIBILITY
+  -------------------------------------------- */
+
+  showLocationPublicly: {
+    type: Boolean,
+    default: true
+  },
+
+  showWebsitePublicly: {
+    type: Boolean,
+    default: true
+  },
+
+  showCompanyStatistics: {
+    type: Boolean,
+    default: false
+  },
+
+  showActiveJobs: {
+    type: Boolean,
+    default: true
+  },
+
+
+  /* --------------------------------------------
+     INTERNAL EMPLOYER VISIBILITY
+  -------------------------------------------- */
+
+  candidateAnalyticsVisibility: {
+    type: Boolean,
+    default: true
+  },
+
+  teamActivityVisibility: {
+    type: Boolean,
+    default: true
+  }
+
+},
+
+/* ============================================
    PUBLIC PROFILE SETTINGS
 ============================================ */
 isPublic: {
