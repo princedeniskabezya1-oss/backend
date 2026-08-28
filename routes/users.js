@@ -4448,14 +4448,56 @@ router.patch(
 ============================================ */
 router.get("/network/public", async (req, res) => {
   try {
-    const limit = Math.min(Number(req.query.limit) || 60, 100);
 
-    const users = await User.find({
-      role: { $in: ["talent", "agent", "employer", "school"] },
-      isBlockedByEmployer: { $ne: true },
-      status: { $ne: "suspended" },
-      isPublic: { $ne: false }
-    })
+    const limit =
+      Math.min(
+        Number(req.query.limit) || 60,
+        100
+      );
+
+
+    const users =
+      await User.find({
+
+        role: {
+          $in: [
+            "talent",
+            "agent",
+            "employer",
+            "school"
+          ]
+        },
+
+        isBlockedByEmployer: {
+          $ne: true
+        },
+
+        status: {
+          $ne: "suspended"
+        },
+
+        /*
+          Public profile must be enabled.
+        */
+
+        isPublic: {
+          $ne: false
+        },
+
+        /*
+          User must allow their profile to appear
+          in public search and discovery.
+
+          Existing accounts without this field
+          remain discoverable because the schema
+          default is true.
+        */
+
+        allowProfileIndexing: {
+          $ne: false
+        }
+
+      })
       .select(
         "_id name headline bio role profileImage bannerImage followers skills languages certifications profession availability workPreference yearsOfExperience aiftVerified aiftCertified department course companyId teamRole education experience expectedSalary companyName industry schoolName programs location"
       )
@@ -4466,7 +4508,58 @@ router.get("/network/public", async (req, res) => {
       })
       .limit(limit);
 
-    res.json(users);
+    const safeUsers =
+  users.map(user => {
+
+    const data =
+      user.toObject
+        ? user.toObject()
+        : { ...user };
+
+
+    /*
+      Employer-specific public privacy enforcement.
+    */
+
+    if(
+      String(data.role || "")
+        .toLowerCase() ===
+      "employer"
+    ){
+
+      const privacy =
+        data.employerPrivacySettings ||
+        {};
+
+
+      if(
+        privacy.showLocationPublicly ===
+        false
+      ){
+
+        delete data.location;
+
+      }
+
+    }
+
+
+    /*
+      Never expose internal employer privacy
+      configuration through Network results.
+    */
+
+    delete data.employerPrivacySettings;
+
+
+    return data;
+
+  });
+
+
+res.json(
+  safeUsers
+);
   } catch (err) {
     console.error("PUBLIC NETWORK USERS ERROR:", err);
     res.status(500).json({ message: "Failed to load public network" });
