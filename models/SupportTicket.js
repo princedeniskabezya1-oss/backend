@@ -38,6 +38,12 @@ const SupportConversationMessageSchema =
 
 /* =========================================================
    HUMAN SUPPORT REPLY
+
+   senderType keeps the existing "student" value for
+   backwards compatibility with tickets already stored
+   in MongoDB.
+
+   New non-admin replies use "user".
 ========================================================= */
 
 const SupportReplySchema =
@@ -53,9 +59,24 @@ const SupportReplySchema =
         type: String,
         enum: [
           "student",
+          "user",
           "support"
         ],
         required: true
+      },
+
+      senderRole: {
+        type: String,
+        enum: [
+          "student",
+          "employer",
+          "school",
+          "teacher",
+          "agent",
+          "admin",
+          "other"
+        ],
+        default: "other"
       },
 
       message: {
@@ -64,6 +85,11 @@ const SupportReplySchema =
         trim: true,
         maxlength: 10000
       },
+
+      /*
+        These two legacy fields are intentionally preserved
+        so existing Student Help Center tickets remain valid.
+      */
 
       readByStudent: {
         type: Boolean,
@@ -102,10 +128,30 @@ const SupportTicketSchema =
         uppercase: true
       },
 
+
+      /* =====================================================
+         OWNER
+      ===================================================== */
+
       userId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "User",
         required: true,
+        index: true
+      },
+
+      accountRole: {
+        type: String,
+        enum: [
+          "student",
+          "employer",
+          "school",
+          "teacher",
+          "agent",
+          "admin",
+          "other"
+        ],
+        default: "other",
         index: true
       },
 
@@ -115,6 +161,7 @@ const SupportTicketSchema =
         default: null,
         index: true
       },
+
 
       /* =====================================================
          CONTACT INFORMATION
@@ -142,24 +189,49 @@ const SupportTicketSchema =
         default: ""
       },
 
+
       /* =====================================================
-         ISSUE
+         ISSUE CATEGORY
+
+         Shared by Student, Employer, School, Teacher,
+         Agent and future AIFT workspaces.
       ===================================================== */
 
       category: {
         type: String,
+
         enum: [
+          /* Student / learning */
           "student-studio",
           "classes",
           "assignments",
           "portfolio",
-          "career",
           "ai",
+
+          /* Employer / hiring */
+          "employer-studio",
+          "jobs",
+          "candidates",
+          "pipeline",
+          "messages",
+
+          /* School */
+          "school-studio",
+          "students",
+          "teachers",
+          "career-hub",
+
+          /* Shared */
+          "career",
           "account",
+          "security",
           "technical",
+          "billing",
           "other"
         ],
-        default: "student-studio",
+
+        default: "other",
+
         index: true
       },
 
@@ -184,8 +256,9 @@ const SupportTicketSchema =
         default: ""
       },
 
+
       /* =====================================================
-         KABEZYA SUPPORT CONTEXT
+         KABEZYA / AI SUPPORT CONTEXT
       ===================================================== */
 
       aiConversationId: {
@@ -204,12 +277,6 @@ const SupportTicketSchema =
 
       /* =====================================================
          HUMAN SUPPORT CONVERSATION
-
-         This is intentionally separate from the Kabezya
-         conversation above.
-
-         conversation = AI context before escalation
-         replies      = human support conversation
       ===================================================== */
 
       replies: {
@@ -226,26 +293,33 @@ const SupportTicketSchema =
 
       status: {
         type: String,
+
         enum: [
           "open",
           "in_progress",
           "waiting_for_student",
+          "waiting_for_user",
           "resolved",
           "closed"
         ],
+
         default: "open",
+
         index: true
       },
 
       priority: {
         type: String,
+
         enum: [
           "low",
           "normal",
           "high",
           "urgent"
         ],
+
         default: "normal",
+
         index: true
       },
 
@@ -272,6 +346,11 @@ const SupportTicketSchema =
         default: null
       },
 
+
+      /* =====================================================
+         SAFE CLIENT / WORKSPACE METADATA
+      ===================================================== */
+
       metadata: {
         type: mongoose.Schema.Types.Mixed,
         default: {}
@@ -292,10 +371,32 @@ SupportTicketSchema.index({
   createdAt: -1
 });
 
+
+SupportTicketSchema.index({
+  userId: 1,
+  status: 1,
+  lastActivityAt: -1
+});
+
+
+SupportTicketSchema.index({
+  accountRole: 1,
+  createdAt: -1
+});
+
+
+SupportTicketSchema.index({
+  accountRole: 1,
+  status: 1,
+  lastActivityAt: -1
+});
+
+
 SupportTicketSchema.index({
   schoolId: 1,
   createdAt: -1
 });
+
 
 SupportTicketSchema.index({
   status: 1,
@@ -303,12 +404,17 @@ SupportTicketSchema.index({
   createdAt: -1
 });
 
+
 SupportTicketSchema.index({
   assignedTo: 1,
   status: 1,
   lastActivityAt: -1
 });
 
+
+/* =========================================================
+   EXPORT
+========================================================= */
 
 module.exports =
   mongoose.model(
