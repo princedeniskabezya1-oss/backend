@@ -561,6 +561,412 @@ router.get("/me", auth, async (req, res) => {
 
 
 /* ============================================
+   EMPLOYER PRIVACY SETTINGS
+============================================ */
+
+
+/* ============================================
+   EMPLOYER PRIVACY DEFAULTS
+============================================ */
+
+const EMPLOYER_PRIVACY_DEFAULTS =
+  Object.freeze({
+
+    isPublic:
+      true,
+
+    allowProfileIndexing:
+      true,
+
+    showLocationPublicly:
+      true,
+
+    showWebsitePublicly:
+      true,
+
+    showCompanyStatistics:
+      false,
+
+    showActiveJobs:
+      true,
+
+    candidateAnalyticsVisibility:
+      true,
+
+    teamActivityVisibility:
+      true
+
+  });
+
+
+/* ============================================
+   BUILD EMPLOYER PRIVACY SETTINGS
+============================================ */
+
+function buildEmployerPrivacySettings(
+  user
+){
+
+  const employerSettings =
+    user?.employerPrivacySettings ||
+    {};
+
+
+  return {
+
+    isPublic:
+      typeof user?.isPublic ===
+      "boolean"
+        ? user.isPublic
+        : EMPLOYER_PRIVACY_DEFAULTS
+            .isPublic,
+
+    allowProfileIndexing:
+      typeof user?.allowProfileIndexing ===
+      "boolean"
+        ? user.allowProfileIndexing
+        : EMPLOYER_PRIVACY_DEFAULTS
+            .allowProfileIndexing,
+
+    showLocationPublicly:
+      typeof employerSettings
+        .showLocationPublicly ===
+      "boolean"
+        ? employerSettings
+            .showLocationPublicly
+        : EMPLOYER_PRIVACY_DEFAULTS
+            .showLocationPublicly,
+
+    showWebsitePublicly:
+      typeof employerSettings
+        .showWebsitePublicly ===
+      "boolean"
+        ? employerSettings
+            .showWebsitePublicly
+        : EMPLOYER_PRIVACY_DEFAULTS
+            .showWebsitePublicly,
+
+    showCompanyStatistics:
+      typeof employerSettings
+        .showCompanyStatistics ===
+      "boolean"
+        ? employerSettings
+            .showCompanyStatistics
+        : EMPLOYER_PRIVACY_DEFAULTS
+            .showCompanyStatistics,
+
+    showActiveJobs:
+      typeof employerSettings
+        .showActiveJobs ===
+      "boolean"
+        ? employerSettings
+            .showActiveJobs
+        : EMPLOYER_PRIVACY_DEFAULTS
+            .showActiveJobs,
+
+    candidateAnalyticsVisibility:
+      typeof employerSettings
+        .candidateAnalyticsVisibility ===
+      "boolean"
+        ? employerSettings
+            .candidateAnalyticsVisibility
+        : EMPLOYER_PRIVACY_DEFAULTS
+            .candidateAnalyticsVisibility,
+
+    teamActivityVisibility:
+      typeof employerSettings
+        .teamActivityVisibility ===
+      "boolean"
+        ? employerSettings
+            .teamActivityVisibility
+        : EMPLOYER_PRIVACY_DEFAULTS
+            .teamActivityVisibility
+
+  };
+
+}
+
+
+/* ============================================
+   GET EMPLOYER PRIVACY SETTINGS
+
+   GET /api/users/employer/settings/privacy
+============================================ */
+
+router.get(
+  "/employer/settings/privacy",
+  auth,
+  async (req, res) => {
+
+    try {
+
+      const role =
+        String(
+          req.user?.role ||
+          ""
+        )
+          .trim()
+          .toLowerCase();
+
+
+      if (
+        role !== "employer" &&
+        role !== "admin"
+      ) {
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Employer access required."
+          });
+
+      }
+
+
+      const user =
+        await User.findById(
+          req.user._id ||
+          req.user.id
+        )
+          .select(
+            [
+              "role",
+              "isPublic",
+              "allowProfileIndexing",
+              "employerPrivacySettings"
+            ].join(" ")
+          );
+
+
+      if (!user) {
+
+        return res
+          .status(404)
+          .json({
+            message:
+              "Employer account not found."
+          });
+
+      }
+
+
+      return res.json({
+
+        privacy:
+          buildEmployerPrivacySettings(
+            user
+          )
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        "GET EMPLOYER PRIVACY SETTINGS ERROR:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          message:
+            "Failed to load employer privacy settings."
+        });
+
+    }
+
+  }
+);
+
+
+/* ============================================
+   UPDATE EMPLOYER PRIVACY SETTINGS
+
+   PATCH /api/users/employer/settings/privacy
+============================================ */
+
+router.patch(
+  "/employer/settings/privacy",
+  auth,
+  async (req, res) => {
+
+    try {
+
+      const role =
+        String(
+          req.user?.role ||
+          ""
+        )
+          .trim()
+          .toLowerCase();
+
+
+      if (
+        role !== "employer" &&
+        role !== "admin"
+      ) {
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Employer access required."
+          });
+
+      }
+
+
+      const currentUser =
+        await User.findById(
+          req.user._id ||
+          req.user.id
+        );
+
+
+      if (!currentUser) {
+
+        return res
+          .status(404)
+          .json({
+            message:
+              "Employer account not found."
+          });
+
+      }
+
+
+      const body =
+        req.body &&
+        typeof req.body ===
+          "object" &&
+        !Array.isArray(
+          req.body
+        )
+          ? req.body
+          : {};
+
+
+      /* ========================================
+         PLATFORM PUBLIC PROFILE SETTINGS
+      ======================================== */
+
+      if (
+        typeof body.isPublic ===
+        "boolean"
+      ) {
+
+        currentUser.isPublic =
+          body.isPublic;
+
+      }
+
+
+      if (
+        typeof body.allowProfileIndexing ===
+        "boolean"
+      ) {
+
+        currentUser.allowProfileIndexing =
+          body.allowProfileIndexing;
+
+      }
+
+
+      /* ========================================
+         EMPLOYER PRIVACY SETTINGS
+      ======================================== */
+
+      const allowedNestedFields = [
+
+        "showLocationPublicly",
+
+        "showWebsitePublicly",
+
+        "showCompanyStatistics",
+
+        "showActiveJobs",
+
+        "candidateAnalyticsVisibility",
+
+        "teamActivityVisibility"
+
+      ];
+
+
+      if (
+        !currentUser
+          .employerPrivacySettings
+      ) {
+
+        currentUser
+          .employerPrivacySettings =
+            {};
+
+      }
+
+
+      allowedNestedFields
+        .forEach(field => {
+
+          if (
+            typeof body[field] ===
+            "boolean"
+          ) {
+
+            currentUser
+              .employerPrivacySettings[
+                field
+              ] =
+                body[field];
+
+          }
+
+        });
+
+
+      currentUser.markModified(
+        "employerPrivacySettings"
+      );
+
+
+      await currentUser.save();
+
+
+      return res.json({
+
+        message:
+          "Employer privacy settings updated successfully.",
+
+        privacy:
+          buildEmployerPrivacySettings(
+            currentUser
+          )
+
+      });
+
+    } catch (error) {
+
+      console.error(
+        "UPDATE EMPLOYER PRIVACY SETTINGS ERROR:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          message:
+            "Failed to update employer privacy settings."
+        });
+
+    }
+
+  }
+);
+
+/* ============================================
    TEACHER STUDIO SETTINGS
 ============================================ */
 
