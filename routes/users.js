@@ -5703,7 +5703,7 @@ router.get("/suggestions", auth, async (req, res) => {
 
 /* ============================================
    ACCOUNT SELF-SERVICE
-   SCHOOL / TEACHER / STUDENT
+   SCHOOL / EMPLOYER / TEACHER / STUDENT
 
    Protected authenticated account lifecycle:
    - data export
@@ -5714,7 +5714,6 @@ router.get("/suggestions", auth, async (req, res) => {
    These routes operate only on the authenticated
    user's own account.
 ============================================ */
-
 
 /* ============================================
    SUPPORTED SELF-SERVICE ACCOUNT TYPE
@@ -5733,8 +5732,13 @@ function getSelfServiceAccountType(
       .toLowerCase();
 
 
+  /* ========================================
+     SCHOOL
+  ======================================== */
+
   if (
-    role === "school"
+    role ===
+    "school"
   ) {
 
     return "school";
@@ -5742,14 +5746,37 @@ function getSelfServiceAccountType(
   }
 
 
+  /* ========================================
+     EMPLOYER
+  ======================================== */
+
   if (
-    role === "teacher"
+    role ===
+    "employer"
+  ) {
+
+    return "employer";
+
+  }
+
+
+  /* ========================================
+     TEACHER
+  ======================================== */
+
+  if (
+    role ===
+    "teacher"
   ) {
 
     return "teacher";
 
   }
 
+
+  /* ========================================
+     STUDENT / LEGACY TALENT
+  ======================================== */
 
   if (
     role === "student" ||
@@ -5785,18 +5812,27 @@ function getSelfServiceAccountLabel(
   ) {
 
     case "school":
+
       return "School";
 
 
+    case "employer":
+
+      return "Employer";
+
+
     case "teacher":
+
       return "Teacher";
 
 
     case "student":
+
       return "Student";
 
 
     default:
+
       return "Account";
 
   }
@@ -5835,14 +5871,19 @@ function getSelfServiceConfirmationName(
     );
 
 
+  /* ========================================
+     SCHOOL
+  ======================================== */
+
   if (
-    accountType === "school"
+    accountType ===
+    "school"
   ) {
 
     return String(
 
-      user?.name ||
       user?.schoolName ||
+      user?.name ||
       user?.companyName ||
       ""
 
@@ -5851,6 +5892,31 @@ function getSelfServiceConfirmationName(
 
   }
 
+
+  /* ========================================
+     EMPLOYER
+  ======================================== */
+
+  if (
+    accountType ===
+    "employer"
+  ) {
+
+    return String(
+
+      user?.companyName ||
+      user?.name ||
+      ""
+
+    )
+      .trim();
+
+  }
+
+
+  /* ========================================
+     TEACHER / STUDENT
+  ======================================== */
 
   return String(
     user?.name ||
