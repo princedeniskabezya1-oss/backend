@@ -67,7 +67,18 @@ const savedRoutes =
 
 const ventureRoutes =
   require("./routes/ventures");
-const groupRoutes = require("./routes/groups");
+
+
+/* ============================================
+   FAMILY & INVESTOR
+============================================ */
+
+const familyChildrenRoutes =
+  require("./routes/familyChildren");
+
+
+const groupRoutes =
+  require("./routes/groups");
 const conversationRoutes = require("./routes/conversations");
 const meetingRoutes = require("./routes/meetings");
 const callLogRoutes = require("./routes/callLogs");
@@ -514,13 +525,55 @@ app.use(
 
 
 /* ============================================
-   STUDENT VENTURES
+   SHARED AIFT VENTURES
 ============================================ */
 
 app.use(
   "/api/ventures",
   ventureRoutes
 );
+
+
+/* ============================================
+   FAMILY & INVESTOR
+============================================ */
+
+/*
+  Family child profiles.
+
+  Final endpoints include:
+
+  GET
+  /api/family/children
+
+  GET
+  /api/family/children/:id
+
+  POST
+  /api/family/children
+
+  PATCH
+  /api/family/children/:id
+
+  PATCH
+  /api/family/children/:id/link-student
+
+  PATCH
+  /api/family/children/:id/unlink-student
+
+  DELETE
+  /api/family/children/:id
+*/
+
+app.use(
+  "/api/family/children",
+  familyChildrenRoutes
+);
+
+
+/* ============================================
+   SCHOOL UPDATES
+============================================ */
 
 app.use(
   "/api/school-updates",
