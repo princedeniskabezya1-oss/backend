@@ -724,6 +724,748 @@ router.get(
   }
 );
 
+/* =========================================================
+   INVESTOR DISCOVERY
+   GET /api/ventures/investor/discover
+
+   Family Investor Mode only.
+
+   Reads from the SAME shared Venture collection.
+   Does not create a separate Investor venture database.
+
+   Eligible:
+   - active ventures
+   - public ventures
+   - aift-only ventures
+   - ventures seeking investment
+
+   Also returns the current investor's:
+   - saved state
+   - investment-interest state
+========================================================= */
+
+router.get(
+  "/investor/discover",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try{
+
+      /* ===============================================
+         LOAD INVESTOR ACCOUNT
+      =============================================== */
+
+      const investor =
+        await User
+          .findById(
+            req.user._id ||
+            req.user.id
+          )
+          .select(
+            "role familyProfile"
+          );
+
+
+      if(!investor){
+
+        return res
+          .status(401)
+          .json({
+            message:
+              "User account not found"
+          });
+
+      }
+
+
+      const role =
+        normalizeRole(
+          investor
+        );
+
+
+      const investorAllowed =
+        (
+          role ===
+            "admin" ||
+          (
+            role ===
+              "family" &&
+            investor
+              .familyProfile
+              ?.investorEnabled ===
+              true
+          )
+        );
+
+
+      if(!investorAllowed){
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Enable Investor Mode to discover investment opportunities"
+          });
+
+      }
+
+
+      /* ===============================================
+         QUERY PARAMETERS
+      =============================================== */
+
+      const {
+        type,
+        stage,
+        industry,
+        q,
+        verified,
+        fundingStage,
+        minAmount,
+        maxAmount,
+        sort = "newest",
+        page = 1,
+        limit = 24
+      } =
+        req.query;
+
+
+      /* ===============================================
+         BASE INVESTOR QUERY
+      =============================================== */
+
+      const query = {
+
+        status:
+          "active",
+
+        visibility:{
+          $in:[
+            "public",
+            "aift-only"
+          ]
+        },
+
+        seekingInvestment:
+          true
+
+      };
+
+
+      /* ===============================================
+         VENTURE TYPE
+      =============================================== */
+
+      if(
+        type &&
+        VENTURE_TYPES.has(
+          String(type)
+        )
+      ){
+
+        query.ventureType =
+          String(type);
+
+      }
+
+
+      /* ===============================================
+         STAGE
+      =============================================== */
+
+      if(
+        stage &&
+        VENTURE_STAGES.has(
+          String(stage)
+        )
+      ){
+
+        query.stage =
+          String(stage);
+
+      }
+
+
+      /* ===============================================
+         INDUSTRY
+      =============================================== */
+
+      if(
+        safeString(
+          industry,
+          100
+        )
+      ){
+
+        query.industry = {
+          $regex:
+            safeString(
+              industry,
+              100
+            ),
+          $options:
+            "i"
+        };
+
+      }
+
+
+      /* ===============================================
+         FUNDING STAGE
+      =============================================== */
+
+      const allowedFundingStages =
+        new Set([
+          "pre_seed",
+          "seed",
+          "growth",
+          "project_funding",
+          "grant",
+          "not_applicable"
+        ]);
+
+
+      if(
+        fundingStage &&
+        allowedFundingStages.has(
+          String(
+            fundingStage
+          )
+        )
+      ){
+
+        query.fundingStage =
+          String(
+            fundingStage
+          );
+
+      }
+
+
+      /* ===============================================
+         VERIFIED ONLY
+      =============================================== */
+
+      if(
+        String(
+          verified
+        ) ===
+        "true"
+      ){
+
+        query.$or = [
+          {
+            aiftVerified:
+              true
+          },
+          {
+            schoolVerified:
+              true
+          }
+        ];
+
+      }
+
+
+      /* ===============================================
+         SEARCH
+      =============================================== */
+
+      if(
+        safeString(
+          q,
+          120
+        )
+      ){
+
+        query.$text = {
+          $search:
+            safeString(
+              q,
+              120
+            )
+        };
+
+      }
+
+
+      /* ===============================================
+         INVESTMENT RANGE
+
+         minAmount:
+         Investor wants opportunities whose maximum
+         investment range can reach this amount.
+
+         maxAmount:
+         Investor does not want opportunities whose
+         minimum investment requirement exceeds this.
+      =============================================== */
+
+      const safeMinAmount =
+        Math.max(
+          0,
+          Number(
+            minAmount
+          ) ||
+          0
+        );
+
+
+      const safeMaxAmount =
+        Math.max(
+          0,
+          Number(
+            maxAmount
+          ) ||
+          0
+        );
+
+
+      if(
+        safeMinAmount >
+        0
+      ){
+
+        query.investmentRangeMax = {
+          $gte:
+            safeMinAmount
+        };
+
+      }
+
+
+      if(
+        safeMaxAmount >
+        0
+      ){
+
+        query.investmentRangeMin = {
+          $lte:
+            safeMaxAmount
+        };
+
+      }
+
+
+      /* ===============================================
+         PAGINATION
+      =============================================== */
+
+      const safePage =
+        Math.max(
+          1,
+          Number(page) ||
+          1
+        );
+
+
+      const safeLimit =
+        Math.min(
+          50,
+          Math.max(
+            1,
+            Number(limit) ||
+            24
+          )
+        );
+
+
+      const skip =
+        (
+          safePage -
+          1
+        ) *
+        safeLimit;
+
+
+      /* ===============================================
+         SORT
+      =============================================== */
+
+      let sortQuery;
+
+
+      switch(
+        String(sort)
+      ){
+
+        case "funding-high":
+
+          sortQuery = {
+            fundingGoal:-1,
+            createdAt:-1
+          };
+
+          break;
+
+
+        case "funding-low":
+
+          sortQuery = {
+            fundingGoal:1,
+            createdAt:-1
+          };
+
+          break;
+
+
+        case "interest":
+
+          sortQuery = {
+            interestCount:-1,
+            createdAt:-1
+          };
+
+          break;
+
+
+        case "featured":
+
+          sortQuery = {
+            featured:-1,
+            createdAt:-1
+          };
+
+          break;
+
+
+        case "newest":
+        default:
+
+          sortQuery = {
+            createdAt:-1
+          };
+
+          break;
+
+      }
+
+
+      /* ===============================================
+         LOAD VENTURES
+      =============================================== */
+
+      const [
+        ventures,
+        total
+      ] =
+        await Promise.all([
+
+          populateVenture(
+            Venture.find(
+              query
+            )
+          )
+            .sort(
+              sortQuery
+            )
+            .skip(
+              skip
+            )
+            .limit(
+              safeLimit
+            ),
+
+          Venture.countDocuments(
+            query
+          )
+
+        ]);
+
+
+      /* ===============================================
+         LOAD CURRENT USER STATES
+
+         One query gets:
+         - saved ventures
+         - investment interests
+      =============================================== */
+
+      const ventureIds =
+        ventures.map(
+          venture =>
+            venture._id
+        );
+
+
+      let userInterests =
+        [];
+
+
+      if(
+        ventureIds.length >
+        0
+      ){
+
+        userInterests =
+          await VentureInterest
+            .find({
+
+              userId:
+                investor._id,
+
+              ventureId:{
+                $in:
+                  ventureIds
+              },
+
+              type:{
+                $in:[
+                  "save",
+                  "investment"
+                ]
+              }
+
+            })
+            .select(
+              [
+                "ventureId",
+                "type",
+                "status",
+                "amountMin",
+                "amountMax",
+                "currency",
+                "createdAt",
+                "updatedAt"
+              ].join(" ")
+            )
+            .lean();
+
+      }
+
+
+      /* ===============================================
+         BUILD STATE MAP
+      =============================================== */
+
+      const stateMap =
+        new Map();
+
+
+      userInterests.forEach(
+        interest => {
+
+          const ventureId =
+            String(
+              interest
+                .ventureId
+            );
+
+
+          if(
+            !stateMap.has(
+              ventureId
+            )
+          ){
+
+            stateMap.set(
+              ventureId,
+              {
+                saved:false,
+                interested:false,
+                interestStatus:null,
+                investmentInterest:null
+              }
+            );
+
+          }
+
+
+          const state =
+            stateMap.get(
+              ventureId
+            );
+
+
+          if(
+            interest.type ===
+              "save"
+          ){
+
+            state.saved =
+              interest.status ===
+                "active";
+
+          }
+
+
+          if(
+            interest.type ===
+              "investment"
+          ){
+
+            state.interested =
+              [
+                "pending",
+                "accepted",
+                "active"
+              ].includes(
+                interest.status
+              );
+
+
+            state.interestStatus =
+              interest.status;
+
+
+            state.investmentInterest = {
+
+              id:
+                interest._id,
+
+              status:
+                interest.status,
+
+              amountMin:
+                interest.amountMin ||
+                0,
+
+              amountMax:
+                interest.amountMax ||
+                0,
+
+              currency:
+                interest.currency ||
+                "PHP",
+
+              createdAt:
+                interest.createdAt,
+
+              updatedAt:
+                interest.updatedAt
+
+            };
+
+          }
+
+        }
+      );
+
+
+      /* ===============================================
+         RESPONSE
+      =============================================== */
+
+      const results =
+        ventures.map(
+          venture => {
+
+            const ventureObject =
+              venture.toObject
+                ? venture.toObject()
+                : venture;
+
+
+            const state =
+              stateMap.get(
+                String(
+                  venture._id
+                )
+              ) || {
+                saved:false,
+                interested:false,
+                interestStatus:null,
+                investmentInterest:null
+              };
+
+
+            return {
+
+              ...ventureObject,
+
+              investorState:
+                state
+
+            };
+
+          }
+        );
+
+
+      return res.json({
+
+        ventures:
+          results,
+
+        pagination:{
+
+          page:
+            safePage,
+
+          limit:
+            safeLimit,
+
+          total,
+
+          pages:
+            Math.max(
+              1,
+              Math.ceil(
+                total /
+                safeLimit
+              )
+            )
+
+        },
+
+        filters:{
+
+          type:
+            type || "",
+
+          stage:
+            stage || "",
+
+          industry:
+            industry || "",
+
+          fundingStage:
+            fundingStage || "",
+
+          verified:
+            String(
+              verified
+            ) ===
+            "true",
+
+          minAmount:
+            safeMinAmount,
+
+          maxAmount:
+            safeMaxAmount,
+
+          sort:
+            String(sort)
+
+        }
+
+      });
+
+
+    }catch(error){
+
+      console.error(
+        "GET /api/ventures/investor/discover error:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          message:
+            "Failed to load Investor opportunities"
+        });
+
+    }
+
+  }
+);
+
 
 /* =========================================================
    CURRENT USER'S VENTURES
