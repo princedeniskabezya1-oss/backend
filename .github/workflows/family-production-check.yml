@@ -1,0 +1,25 @@
+name: Family Backend Production Validation
+
+on:
+  push:
+    branches:
+      - family-production-data
+
+permissions:
+  contents: read
+
+jobs:
+  validate-family-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check modified backend JavaScript syntax
+        run: |
+          node --check models/FamilySavedDiscovery.js
+          node --check models/ScholarshipApplication.js
+          node --check routes/family.js
+          node --check routes/scholarshipApplications.js
+          node --check routes/notifications.js
