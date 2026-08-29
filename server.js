@@ -73,6 +73,9 @@ const ventureRoutes =
    FAMILY & INVESTOR
 ============================================ */
 
+const familyRoutes =
+  require("./routes/family");
+
 const familyChildrenRoutes =
   require("./routes/familyChildren");
 
@@ -537,6 +540,27 @@ app.use(
 /* ============================================
    FAMILY & INVESTOR
 ============================================ */
+
+/*
+  Main Family account API.
+
+  Final endpoints include:
+
+  GET
+  /api/family/profile
+
+  PATCH
+  /api/family/profile
+
+  PATCH
+  /api/family/investor
+*/
+
+app.use(
+  "/api/family",
+  familyRoutes
+);
+
 
 /*
   Family child profiles.
