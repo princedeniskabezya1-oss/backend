@@ -16,6 +16,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
       - name: Check modified backend JavaScript syntax
         run: |
           node --check models/FamilySavedDiscovery.js
@@ -23,3 +24,8 @@ jobs:
           node --check routes/family.js
           node --check routes/scholarshipApplications.js
           node --check routes/notifications.js
+      - name: Install backend dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Load Family production modules
+        run: |
+          node -e "require('./models/FamilySavedDiscovery'); require('./models/ScholarshipApplication'); require('./routes/family'); require('./routes/scholarshipApplications'); require('./routes/notifications'); console.log('Family production modules loaded')"
