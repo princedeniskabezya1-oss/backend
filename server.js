@@ -92,18 +92,51 @@ const studentPortfolioRoutes = require("./routes/studentPortfolio");
    KABEZYA AI
 ============================================ */
 
+/*
+  Student Kabezya
+
+  Existing Student AI system.
+*/
 const studentAIRoutes =
   require(
     "./routes/studentAI"
   );
 
+
+/*
+  Teacher Kabezya
+
+  Existing Teacher Studio AI system.
+*/
 const teacherKabezyaRoutes =
   require(
     "./routes/teacherKabezya"
   );
 
-const supportRoutes = require("./routes/support");
-const mediaRoutes = require("./routes/media");
+
+/*
+  Employer Kabezya
+
+  Employer-specific AI assistant with isolated
+  conversations, hiring context and Employer
+  authorization.
+*/
+const employerKabezyaRoutes =
+  require(
+    "./routes/employerKabezya"
+  );
+
+
+const supportRoutes =
+  require(
+    "./routes/support"
+  );
+
+
+const mediaRoutes =
+  require(
+    "./routes/media"
+  );
 
 const app = express();
 
@@ -560,11 +593,14 @@ app.use(
    KABEZYA AI
 ============================================ */
 
-/*
-  Student Kabezya
 
-  Existing student AI system.
-*/
+/* ============================================
+   STUDENT KABEZYA
+
+   Existing Student AI system.
+
+   This remains unchanged.
+============================================ */
 
 app.use(
   "/api/student-ai",
@@ -572,38 +608,47 @@ app.use(
 );
 
 
-/*
-  Teacher Kabezya
+/* ============================================
+   TEACHER KABEZYA
 
-  Teacher Studio endpoints become:
+   Existing Teacher Studio AI system.
 
-  POST
-  /api/kabezya/teacher/assistant
+   IMPORTANT:
+   Keep the existing /api/kabezya mount because
+   teacherKabezya.js owns its /teacher routes.
 
-  POST
-  /api/kabezya/teacher/analyze-class
+   Existing endpoints include:
 
-  POST
-  /api/kabezya/teacher/analyze-student
+   POST
+   /api/kabezya/teacher/assistant
 
-  POST
-  /api/kabezya/teacher/inspect-submission
+   POST
+   /api/kabezya/teacher/analyze-class
 
-  POST
-  /api/kabezya/teacher/generate-quiz
+   POST
+   /api/kabezya/teacher/analyze-student
 
-  POST
-  /api/kabezya/teacher/generate-assignment
+   POST
+   /api/kabezya/teacher/inspect-submission
 
-  POST
-  /api/kabezya/teacher/lesson-plan
+   POST
+   /api/kabezya/teacher/generate-quiz
 
-  GET
-  /api/kabezya/teacher/inspections/:submissionId
+   POST
+   /api/kabezya/teacher/generate-assignment
 
-  PATCH
-  /api/kabezya/teacher/inspections/:inspectionId/review
-*/
+   POST
+   /api/kabezya/teacher/lesson-plan
+
+   GET
+   /api/kabezya/teacher/conversations
+
+   POST
+   /api/kabezya/teacher/conversations
+
+   GET
+   /api/kabezya/teacher/conversations/:conversationId
+============================================ */
 
 app.use(
   "/api/kabezya",
@@ -611,15 +656,66 @@ app.use(
 );
 
 
+/* ============================================
+   EMPLOYER KABEZYA
+
+   Employer Kabezya is intentionally mounted
+   separately because employerKabezya.js defines
+   its routes from / directly.
+
+   Final API paths:
+
+   GET
+   /api/kabezya/employer
+
+   POST
+   /api/kabezya/employer/assistant
+
+   GET
+   /api/kabezya/employer/conversations
+
+   POST
+   /api/kabezya/employer/conversations
+
+   GET
+   /api/kabezya/employer/conversations/:conversationId
+
+   POST
+   /api/kabezya/employer/conversations/:conversationId/messages
+
+   PATCH
+   /api/kabezya/employer/conversations/:conversationId/messages/:messageId
+
+   DELETE
+   /api/kabezya/employer/conversations/:conversationId
+============================================ */
+
+app.use(
+  "/api/kabezya/employer",
+  employerKabezyaRoutes
+);
+
+
+/* ============================================
+   SUPPORT
+============================================ */
+
 app.use(
   "/api/support",
   supportRoutes
 );
 
+
+/* ============================================
+   MEDIA
+============================================ */
+
 app.use(
   "/api/media",
   mediaRoutes
 );
+
+
 /* ============================================
    SOCKET.IO
 ============================================ */
