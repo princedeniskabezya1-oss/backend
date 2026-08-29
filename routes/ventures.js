@@ -143,6 +143,46 @@ function isAdmin(
 }
 
 
+/* =========================================================
+   FAMILY INVESTOR ACCESS
+========================================================= */
+
+function hasInvestorAccess(
+  user
+){
+
+  if(!user){
+
+    return false;
+
+  }
+
+
+  if(
+    isAdmin(
+      user
+    )
+  ){
+
+    return true;
+
+  }
+
+
+  return (
+    normalizeRole(
+      user
+    ) ===
+      "family" &&
+    user
+      .familyProfile
+      ?.investorEnabled ===
+      true
+  );
+
+}
+
+
 function isValidId(
   value
 ){
@@ -1466,6 +1506,633 @@ router.get(
   }
 );
 
+
+/* =========================================================
+   INVESTOR SAVED VENTURES
+   GET /api/ventures/investor/saved
+========================================================= */
+
+router.get(
+  "/investor/saved",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try{
+
+      const investor =
+        await User
+          .findById(
+            req.user._id ||
+            req.user.id
+          )
+          .select(
+            "role familyProfile"
+          );
+
+
+      if(!investor){
+
+        return res
+          .status(401)
+          .json({
+            message:
+              "User account not found"
+          });
+
+      }
+
+
+      if(
+        !hasInvestorAccess(
+          investor
+        )
+      ){
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Enable Investor Mode to view saved investment opportunities"
+          });
+
+      }
+
+
+      const interests =
+        await VentureInterest
+          .find({
+
+            userId:
+              investor._id,
+
+            type:
+              "save",
+
+            status:
+              "active"
+
+          })
+          .sort({
+            updatedAt:-1,
+            createdAt:-1
+          })
+          .populate({
+
+            path:
+              "ventureId",
+
+            match:{
+
+              status:
+                "active",
+
+              visibility:{
+                $in:[
+                  "public",
+                  "aift-only"
+                ]
+              },
+
+              seekingInvestment:
+                true
+
+            },
+
+            populate:[
+              {
+
+                path:
+                  "ownerId",
+
+                select:
+                  [
+                    "name",
+                    "role",
+                    "profileImage",
+                    "headline",
+                    "companyName",
+                    "aiftVerified"
+                  ].join(" ")
+
+              },
+              {
+
+                path:
+                  "schoolId",
+
+                select:
+                  [
+                    "name",
+                    "schoolName",
+                    "profileImage",
+                    "aiftVerified"
+                  ].join(" ")
+
+              }
+            ]
+
+          });
+
+
+      const ventures =
+        interests
+          .filter(
+            item =>
+              item.ventureId
+          )
+          .map(
+            item => {
+
+              const venture =
+                item.ventureId
+                  .toObject
+                    ? item.ventureId
+                        .toObject()
+                    : item.ventureId;
+
+
+              return {
+
+                ...venture,
+
+                investorState:{
+
+                  saved:
+                    true,
+
+                  interested:
+                    false,
+
+                  interestStatus:
+                    null,
+
+                  savedAt:
+                    item.createdAt
+
+                }
+
+              };
+
+            }
+          );
+
+
+      const ventureIds =
+        ventures.map(
+          item =>
+            item._id
+        );
+
+
+      if(
+        ventureIds.length >
+        0
+      ){
+
+        const investmentInterests =
+          await VentureInterest
+            .find({
+
+              userId:
+                investor._id,
+
+              ventureId:{
+                $in:
+                  ventureIds
+              },
+
+              type:
+                "investment"
+
+            })
+            .select(
+              [
+                "ventureId",
+                "status",
+                "amountMin",
+                "amountMax",
+                "currency",
+                "createdAt",
+                "updatedAt"
+              ].join(" ")
+            )
+            .lean();
+
+
+        const investmentMap =
+          new Map(
+            investmentInterests
+              .map(
+                item => [
+                  String(
+                    item.ventureId
+                  ),
+                  item
+                ]
+              )
+          );
+
+
+        ventures.forEach(
+          venture => {
+
+            const interest =
+              investmentMap.get(
+                String(
+                  venture._id
+                )
+              );
+
+
+            if(!interest){
+
+              return;
+
+            }
+
+
+            venture
+              .investorState
+              .interested =
+                [
+                  "pending",
+                  "accepted",
+                  "active"
+                ].includes(
+                  interest.status
+                );
+
+
+            venture
+              .investorState
+              .interestStatus =
+                interest.status;
+
+
+            venture
+              .investorState
+              .investmentInterest = {
+
+                id:
+                  interest._id,
+
+                status:
+                  interest.status,
+
+                amountMin:
+                  interest.amountMin ||
+                  0,
+
+                amountMax:
+                  interest.amountMax ||
+                  0,
+
+                currency:
+                  interest.currency ||
+                  "PHP",
+
+                createdAt:
+                  interest.createdAt,
+
+                updatedAt:
+                  interest.updatedAt
+
+              };
+
+          }
+        );
+
+      }
+
+
+      return res.json({
+
+        ventures,
+
+        total:
+          ventures.length
+
+      });
+
+
+    }catch(error){
+
+      console.error(
+        "GET /api/ventures/investor/saved error:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          message:
+            "Failed to load saved Investor opportunities"
+        });
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   INVESTOR INTERESTED VENTURES
+   GET /api/ventures/investor/interested
+========================================================= */
+
+router.get(
+  "/investor/interested",
+  auth,
+  async (
+    req,
+    res
+  ) => {
+
+    try{
+
+      const investor =
+        await User
+          .findById(
+            req.user._id ||
+            req.user.id
+          )
+          .select(
+            "role familyProfile"
+          );
+
+
+      if(!investor){
+
+        return res
+          .status(401)
+          .json({
+            message:
+              "User account not found"
+          });
+
+      }
+
+
+      if(
+        !hasInvestorAccess(
+          investor
+        )
+      ){
+
+        return res
+          .status(403)
+          .json({
+            message:
+              "Enable Investor Mode to view investment interests"
+          });
+
+      }
+
+
+      const interests =
+        await VentureInterest
+          .find({
+
+            userId:
+              investor._id,
+
+            type:
+              "investment",
+
+            status:{
+              $in:[
+                "pending",
+                "accepted",
+                "active",
+                "declined",
+                "withdrawn",
+                "closed"
+              ]
+            }
+
+          })
+          .sort({
+            updatedAt:-1,
+            createdAt:-1
+          })
+          .populate({
+
+            path:
+              "ventureId",
+
+            populate:[
+              {
+
+                path:
+                  "ownerId",
+
+                select:
+                  [
+                    "name",
+                    "role",
+                    "profileImage",
+                    "headline",
+                    "companyName",
+                    "aiftVerified"
+                  ].join(" ")
+
+              },
+              {
+
+                path:
+                  "schoolId",
+
+                select:
+                  [
+                    "name",
+                    "schoolName",
+                    "profileImage",
+                    "aiftVerified"
+                  ].join(" ")
+
+              }
+            ]
+
+          });
+
+
+      const ventureIds =
+        interests
+          .map(
+            item =>
+              item.ventureId
+                ? item.ventureId._id
+                : null
+          )
+          .filter(Boolean);
+
+
+      const savedInterests =
+        ventureIds.length >
+        0
+
+          ? await VentureInterest
+              .find({
+
+                userId:
+                  investor._id,
+
+                ventureId:{
+                  $in:
+                    ventureIds
+                },
+
+                type:
+                  "save",
+
+                status:
+                  "active"
+
+              })
+              .select(
+                "ventureId"
+              )
+              .lean()
+
+          : [];
+
+
+      const savedSet =
+        new Set(
+          savedInterests
+            .map(
+              item =>
+                String(
+                  item.ventureId
+                )
+            )
+        );
+
+
+      const results =
+        interests
+          .filter(
+            item =>
+              item.ventureId
+          )
+          .map(
+            item => {
+
+              const venture =
+                item.ventureId
+                  .toObject
+                    ? item.ventureId
+                        .toObject()
+                    : item.ventureId;
+
+
+              return {
+
+                ...venture,
+
+                investorState:{
+
+                  saved:
+                    savedSet.has(
+                      String(
+                        item.ventureId._id
+                      )
+                    ),
+
+                  interested:
+                    [
+                      "pending",
+                      "accepted",
+                      "active"
+                    ].includes(
+                      item.status
+                    ),
+
+                  interestStatus:
+                    item.status,
+
+                  investmentInterest:{
+
+                    id:
+                      item._id,
+
+                    status:
+                      item.status,
+
+                    message:
+                      item.message ||
+                      "",
+
+                    amountMin:
+                      item.amountMin ||
+                      0,
+
+                    amountMax:
+                      item.amountMax ||
+                      0,
+
+                    currency:
+                      item.currency ||
+                      "PHP",
+
+                    founderResponse:
+                      item.founderResponse ||
+                      "",
+
+                    respondedAt:
+                      item.respondedAt ||
+                      null,
+
+                    createdAt:
+                      item.createdAt,
+
+                    updatedAt:
+                      item.updatedAt
+
+                  }
+
+                }
+
+              };
+
+            }
+          );
+
+
+      return res.json({
+
+        ventures:
+          results,
+
+        total:
+          results.length
+
+      });
+
+
+    }catch(error){
+
+      console.error(
+        "GET /api/ventures/investor/interested error:",
+        error
+      );
+
+
+      return res
+        .status(500)
+        .json({
+          message:
+            "Failed to load Investor interests"
+        });
+
+    }
+
+  }
+);
 
 /* =========================================================
    CURRENT USER'S VENTURES
