@@ -34,8 +34,20 @@ passwordChangedAt: {
     ============================================ */
 role: {
   type: String,
-  enum: ["talent", "employer", "admin", "agent", "school", "teacher", "student"],
+
+  enum: [
+    "talent",
+    "employer",
+    "admin",
+    "agent",
+    "school",
+    "teacher",
+    "student",
+    "family"
+  ],
+
   default: "talent",
+
   index: true
 },
 
@@ -202,6 +214,89 @@ deletionScheduledFor: {
       }],
       default: []
     },
+
+
+    /* ============================================
+       FAMILY & INVESTOR PROFILE
+    ============================================ */
+
+    familyProfile: {
+
+      /*
+        Investor Mode is a capability of a Family
+        account.
+
+        It is intentionally NOT a separate User role.
+      */
+
+      investorEnabled: {
+        type: Boolean,
+        default: false
+      },
+
+
+      /* --------------------------------------------
+         FAMILY RELATIONSHIP
+      -------------------------------------------- */
+
+      relationshipType: {
+
+        type: String,
+
+        enum: [
+          "",
+          "parent",
+          "guardian",
+          "family_member",
+          "other"
+        ],
+
+        default: ""
+      },
+
+
+      /* --------------------------------------------
+         EDUCATION PREFERENCES
+      -------------------------------------------- */
+
+      preferredLocation: {
+        type: String,
+        trim: true,
+        default: ""
+      },
+
+      educationPriorities: {
+        type: [String],
+        default: []
+      },
+
+
+      /* --------------------------------------------
+         INVESTOR PREFERENCES
+      -------------------------------------------- */
+
+      investmentInterests: {
+        type: [String],
+        default: []
+      },
+
+      investorProfileCompleted: {
+        type: Boolean,
+        default: false
+      },
+
+
+      /* --------------------------------------------
+         FAMILY ACCOUNT SETUP
+      -------------------------------------------- */
+
+      onboardingCompleted: {
+        type: Boolean,
+        default: false
+      }
+
+    },
+
 
     /* ============================================
        SCHOOL PROFILE
