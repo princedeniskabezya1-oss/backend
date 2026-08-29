@@ -363,7 +363,51 @@ router.post(
         password,
         role,
         referralCode
-      } = req.body;
+      } = req.body || {};
+
+
+      /*
+        Only roles intended for public self-registration
+        are accepted here.
+
+        Administrative/staff roles must continue to be
+        created through their controlled AIFT workflows.
+      */
+
+      const PUBLIC_REGISTRATION_ROLES =
+        new Set([
+          "talent",
+          "employer",
+          "school",
+          "student",
+          "family"
+        ]);
+
+
+      const requestedRole =
+        String(
+          role || "talent"
+        )
+          .trim()
+          .toLowerCase();
+
+
+      if(
+        !PUBLIC_REGISTRATION_ROLES.has(
+          requestedRole
+        )
+      ){
+
+        return res
+          .status(400)
+          .json({
+
+            message:
+              "Invalid account type"
+
+          });
+
+      }
 
 
       if (
@@ -476,8 +520,37 @@ router.post(
             hashedPassword,
 
           role:
-            role ||
-            "talent",
+            requestedRole,
+
+
+          familyProfile:
+            requestedRole === "family"
+              ? {
+
+                  investorEnabled:
+                    false,
+
+                  relationshipType:
+                    "",
+
+                  preferredLocation:
+                    "",
+
+                  educationPriorities:
+                    [],
+
+                  investmentInterests:
+                    [],
+
+                  investorProfileCompleted:
+                    false,
+
+                  onboardingCompleted:
+                    false
+
+                }
+              : undefined,
+
 
           referredBy:
             referredByUser
