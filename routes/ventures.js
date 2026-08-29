@@ -1030,6 +1030,7 @@ router.post(
           "school",
           "employer",
           "agent",
+          "family",
           "admin"
         ]);
 
@@ -3107,17 +3108,86 @@ router.post(
 
       if(
         type ===
-          "investment" &&
-        !venture
-          .seekingInvestment
+          "investment"
       ){
 
-        return res
-          .status(400)
-          .json({
-            message:
-              "This venture is not currently seeking investment interest"
-          });
+        /*
+          Investment actions are reserved for
+          AIFT Family accounts with Investor Mode
+          enabled.
+
+          This does NOT create a separate
+          "investor" User role.
+        */
+
+        const investorUser =
+          await User
+            .findById(
+              userId
+            )
+            .select(
+              "role familyProfile"
+            );
+
+
+        if(!investorUser){
+
+          return res
+            .status(401)
+            .json({
+              message:
+                "User account not found"
+            });
+
+        }
+
+
+        const investorRole =
+          normalizeRole(
+            investorUser
+          );
+
+
+        const investorAllowed =
+          (
+            investorRole ===
+              "admin" ||
+            (
+              investorRole ===
+                "family" &&
+              investorUser
+                .familyProfile
+                ?.investorEnabled ===
+                true
+            )
+          );
+
+
+        if(!investorAllowed){
+
+          return res
+            .status(403)
+            .json({
+              message:
+                "Enable Investor Mode before expressing investment interest"
+            });
+
+        }
+
+
+        if(
+          !venture
+            .seekingInvestment
+        ){
+
+          return res
+            .status(400)
+            .json({
+              message:
+                "This venture is not currently seeking investment interest"
+            });
+
+        }
 
       }
 
