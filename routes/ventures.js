@@ -152,33 +152,16 @@ function hasInvestorAccess(
 ){
 
   if(!user){
-
     return false;
-
   }
 
-
-  if(
-    isAdmin(
-      user
-    )
-  ){
-
+  if(isAdmin(user)){
     return true;
-
   }
 
-
-  return (
-    normalizeRole(
-      user
-    ) ===
-      "family" &&
-    user
-      .familyProfile
-      ?.investorEnabled ===
-      true
-  );
+  // Investor Mode belongs to the authenticated account's Family workspace.
+  // The account keeps its primary AIFT role (school, employer, student, etc.).
+  return user.familyProfile?.investorEnabled === true;
 
 }
 
@@ -828,17 +811,8 @@ router.get(
 
 
       const investorAllowed =
-        (
-          role ===
-            "admin" ||
-          (
-            role ===
-              "family" &&
-            investor
-              .familyProfile
-              ?.investorEnabled ===
-              true
-          )
+        hasInvestorAccess(
+          investor
         );
 
 
