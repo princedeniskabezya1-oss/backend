@@ -1,4 +1,4 @@
-name: Enable Family workspace for authenticated AIFT accounts
+name: Enable Family workspace access
 
 on:
   push:
@@ -10,122 +10,31 @@ permissions:
   contents: write
 
 jobs:
-  patch-family-access:
+  patch:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
 
-      - name: Allow Family workspace as an account capability
+      - name: Patch Family access guards
+        shell: bash
         run: |
-          python3 - <<'PY'
-          from pathlib import Path
+          python3 -c 'from pathlib import Path; p=Path("routes/family.js"); s=p.read_text(); old="function isFamilyUser(user){\n  return Boolean(\n    user &&\n    (user.role === \"family\" || user.role === \"admin\")\n  );\n}"; new="function isFamilyUser(user){\n  return Boolean(user && (user._id || user.id));\n}"; assert old in s; p.write_text(s.replace(old,new,1))'
+          python3 -c 'from pathlib import Path; p=Path("routes/familyChildren.js"); s=p.read_text(); old="function isFamilyUser(user) {\n\n  return (\n    user &&\n    (\n      user.role === \"family\" ||\n      user.role === \"admin\"\n    )\n  );\n\n}"; new="function isFamilyUser(user) {\n\n  return Boolean(\n    user &&\n    (user._id || user.id)\n  );\n\n}"; assert old in s; p.write_text(s.replace(old,new,1))'
+          sed -i 's/Family account access required/Sign in to access Family Advantage/g' routes/family.js routes/familyChildren.js
 
-          replacements = {
-            Path('routes/family.js'): (
-'''function isFamilyUser(user){
-  return Boolean(
-    user &&
-    (user.role === "family" || user.role === "admin")
-  );
-}
-
-function familyAccessGuard(req,res,next){
-  if(!isFamilyUser(req.user)){
-    return res.status(403).json({
-      success:false,
-      message:"Family account access required"
-    });
-  }
-  next();
-}
-''',
-'''function hasFamilyWorkspaceAccess(user){
-  // Family is an authenticated AIFT workspace capability, not an exclusive role.
-  // This lets a school, employer, student, talent, agent, family, or admin account
-  // use its own Family workspace without changing the account's primary role.
-  return Boolean(user && (user._id || user.id));
-}
-
-function familyAccessGuard(req,res,next){
-  if(!hasFamilyWorkspaceAccess(req.user)){
-    return res.status(401).json({
-      success:false,
-      message:"Sign in to access Family Advantage"
-    });
-  }
-  next();
-}
-'''
-            ),
-            Path('routes/familyChildren.js'): (
-'''function isFamilyUser(user) {
-
-  return (
-    user &&
-    (
-      user.role === "family" ||
-      user.role === "admin"
-    )
-  );
-
-}
-''',
-'''function hasFamilyWorkspaceAccess(user) {
-
-  // Family child profiles belong to the authenticated account's Family workspace.
-  // The account keeps its existing primary AIFT role.
-  return Boolean(
-    user &&
-    (user._id || user.id)
-  );
-
-}
-'''
-            )
-          }
-
-          for path, (old, new) in replacements.items():
-            text = path.read_text(encoding='utf-8')
-            if old not in text:
-              raise SystemExit(f'Expected access block not found in {path}')
-            text = text.replace(old, new, 1)
-
-            if path.name == 'familyChildren.js':
-              old_guard = '''    if(
-      !isFamilyUser(
-        req.user
-      )
-    ){'''
-              new_guard = '''    if(
-      !hasFamilyWorkspaceAccess(
-        req.user
-      )
-    ){'''
-              if old_guard not in text:
-                raise SystemExit('Family children guard invocation not found')
-              text = text.replace(old_guard, new_guard, 1)
-              text = text.replace('''          message:
-            "Family account access required"''','''          message:
-            "Sign in to access Family Advantage"''',1)
-
-            path.write_text(text, encoding='utf-8')
-          PY
-
-      - name: Validate route syntax and access policy
+      - name: Validate
         run: |
           node --check routes/family.js
           node --check routes/familyChildren.js
-          grep -q 'hasFamilyWorkspaceAccess' routes/family.js
-          grep -q 'hasFamilyWorkspaceAccess' routes/familyChildren.js
           ! grep -q 'Family account access required' routes/family.js
           ! grep -q 'Family account access required' routes/familyChildren.js
 
-      - name: Commit Family access fix
+      - name: Commit
         run: |
           git config user.name "AIFT Production Bot"
           git config user.email "actions@users.noreply.github.com"
           git add routes/family.js routes/familyChildren.js
-          git commit -m "Allow authenticated accounts to use Family workspace"
+          git commit -m "Allow authenticated AIFT accounts to use Family workspace"
           git push origin main
