@@ -24,12 +24,9 @@ const router =
 
 function isFamilyUser(user) {
 
-  return (
+  return Boolean(
     user &&
-    (
-      user.role === "family" ||
-      user.role === "admin"
-    )
+    (user._id || user.id)
   );
 
 }
@@ -248,7 +245,7 @@ router.use(
         .json({
 
           message:
-            "Family account access required"
+            "Sign in to access Family Advantage"
 
         });
 

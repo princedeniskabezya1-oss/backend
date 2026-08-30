@@ -52,17 +52,14 @@ function cleanStringArray(value,maxItems = 30,maxLength = 100){
 }
 
 function isFamilyUser(user){
-  return Boolean(
-    user &&
-    (user.role === "family" || user.role === "admin")
-  );
+  return Boolean(user && (user._id || user.id));
 }
 
 function familyAccessGuard(req,res,next){
   if(!isFamilyUser(req.user)){
     return res.status(403).json({
       success:false,
-      message:"Family account access required"
+      message:"Sign in to access Family Advantage"
     });
   }
   next();
