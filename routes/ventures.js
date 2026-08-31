@@ -4562,24 +4562,9 @@ router.post(
         }
 
 
-        const investorRole =
-          normalizeRole(
-            investorUser
-          );
-
-
         const investorAllowed =
-          (
-            investorRole ===
-              "admin" ||
-            (
-              investorRole ===
-                "family" &&
-              investorUser
-                .familyProfile
-                ?.investorEnabled ===
-                true
-            )
+          hasInvestorAccess(
+            investorUser
           );
 
 
