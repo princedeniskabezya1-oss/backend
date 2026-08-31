@@ -19,6 +19,11 @@ const notificationSchema = new mongoose.Schema({
       "family_link_revoked",
       "student_identity",
       "review_case",
+      "review_submitted",
+      "review_approved",
+      "review_rejected",
+      "review_needs_information",
+      "chat_safety_warning",
       "venture",
       "scholarship",
       "opportunity"
