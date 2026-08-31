@@ -26,6 +26,23 @@ const SharedDocumentSchema=new mongoose.Schema({
   sharedAt:{type:Date,default:Date.now}
 },{_id:true});
 
+const DueDiligenceSchema=new mongoose.Schema({
+  key:{type:String,trim:true,maxlength:80,required:true},
+  label:{type:String,trim:true,maxlength:180,required:true},
+  status:{type:String,enum:["pending","in_review","satisfied","needs_attention"],default:"pending"},
+  note:{type:String,trim:true,maxlength:1500,default:""},
+  updatedBy:{type:mongoose.Schema.Types.ObjectId,ref:"User",default:null},
+  updatedAt:{type:Date,default:Date.now}
+},{_id:true});
+
+const DecisionSchema=new mongoose.Schema({
+  userId:{type:mongoose.Schema.Types.ObjectId,ref:"User",required:true},
+  role:{type:String,enum:["investor","owner"],required:true},
+  decision:{type:String,enum:["continue","hold","withdraw"],required:true},
+  note:{type:String,trim:true,maxlength:1500,default:""},
+  decidedAt:{type:Date,default:Date.now}
+},{_id:true});
+
 const HistorySchema=new mongoose.Schema({
   status:{type:String,trim:true,maxlength:60,required:true},
   note:{type:String,trim:true,maxlength:1000,default:""},
@@ -41,9 +58,12 @@ const DealRoomSchema=new mongoose.Schema({
   ownerId:{type:mongoose.Schema.Types.ObjectId,ref:"User",required:true,index:true},
   openedBy:{type:mongoose.Schema.Types.ObjectId,ref:"User",required:true},
   status:{type:String,enum:["negotiation","completed","closed"],default:"negotiation",index:true},
+  workflowStage:{type:String,enum:["due_diligence","meeting","decision","completed","closed"],default:"due_diligence",index:true},
   messages:{type:[MessageSchema],default:[]},
   meetings:{type:[MeetingSchema],default:[]},
   sharedDocuments:{type:[SharedDocumentSchema],default:[]},
+  dueDiligence:{type:[DueDiligenceSchema],default:[]},
+  decisions:{type:[DecisionSchema],default:[]},
   history:{type:[HistorySchema],default:[]},
   completedAt:{type:Date,default:null},
   closedAt:{type:Date,default:null}
