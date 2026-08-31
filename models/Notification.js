@@ -8,7 +8,21 @@ const notificationSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ["message", "follow", "like", "comment"],
+    enum: [
+      "message",
+      "follow",
+      "like",
+      "comment",
+      "family_link_request",
+      "family_link_accepted",
+      "family_link_declined",
+      "family_link_revoked",
+      "student_identity",
+      "review_case",
+      "venture",
+      "scholarship",
+      "opportunity"
+    ],
     required: true
   },
   sender: {
@@ -26,5 +40,8 @@ const notificationSchema = new mongoose.Schema({
     default: false
   }
 }, { timestamps: true });
+
+notificationSchema.index({ user:1, read:1, createdAt:-1 });
+notificationSchema.index({ user:1, type:1, createdAt:-1 });
 
 module.exports = mongoose.model("Notification", notificationSchema);
