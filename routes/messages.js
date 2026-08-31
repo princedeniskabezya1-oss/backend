@@ -9,6 +9,7 @@ const CallLog = require("../models/CallLog");
 
 const authMiddleware = require("../middleware/auth");
 const cloudinary = require("../config/cloudinary");
+const { enforceContactSafety, hasMessagingRestriction } = require("../utils/contactSafety");
 
 const router = express.Router();
 
@@ -293,6 +294,15 @@ if(!text.trim() && !req.file && !fileUrl){
   return res.status(400).json({ message:"Message text, file, GIF, or sticker is required" });
 }
 
+    if(await hasMessagingRestriction(senderId)){
+      return res.status(403).json({ code:"AIFT_MESSAGING_RESTRICTED", message:"Messaging is restricted pending AIFT review." });
+    }
+
+    const safety = await enforceContactSafety({ user:req.user, text, receiverId });
+    if(!safety.allowed){
+      return res.status(safety.statusCode).json({ code:"AIFT_CONTACT_SHARING_BLOCKED", message:safety.message, warningNumber:safety.warningNumber, action:safety.action });
+    }
+
     const conversation =
       await findOrCreateDirectConversation(senderId,receiverId,senderId);
 
@@ -513,6 +523,15 @@ router.patch("/:id/edit", authMiddleware, async (req,res)=>{
 
     if(message.deletedForEveryone){
       return res.status(400).json({ message:"Deleted message cannot be edited" });
+    }
+
+    if(await hasMessagingRestriction(userId)){
+      return res.status(403).json({ code:"AIFT_MESSAGING_RESTRICTED", message:"Messaging is restricted pending AIFT review." });
+    }
+
+    const safety = await enforceContactSafety({ user:req.user, text, conversationId:message.conversationId, receiverId:message.receiver });
+    if(!safety.allowed){
+      return res.status(safety.statusCode).json({ code:"AIFT_CONTACT_SHARING_BLOCKED", message:safety.message, warningNumber:safety.warningNumber, action:safety.action });
     }
 
     message.editText(String(text || "").trim());

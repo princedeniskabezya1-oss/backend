@@ -85,6 +85,9 @@ const studentIdentityRoutes =
 const familyStudentLinkRoutes =
   require("./routes/familyStudentLinks");
 
+const reviewCaseRoutes =
+  require("./routes/reviewCases");
+
 
 const groupRoutes =
   require("./routes/groups");
@@ -610,6 +613,12 @@ app.use(
 app.use(
   "/api/family-student-links",
   familyStudentLinkRoutes
+);
+
+/* Central AIFT trust and approval queue */
+app.use(
+  "/api/review-cases",
+  reviewCaseRoutes
 );
 
 
