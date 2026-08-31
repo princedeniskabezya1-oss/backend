@@ -21,6 +21,12 @@ const VentureInterest =
 const User =
   require("../models/User");
 
+const ReviewCase =
+  require("../models/ReviewCase");
+
+const Notification =
+  require("../models/Notification");
+
 
 const auth =
   require("../middleware/auth");
@@ -2115,6 +2121,66 @@ router.get(
 );
 
 /* =========================================================
+   INVESTOR VENTURE DETAIL
+   GET /api/ventures/investor/:id
+
+   Allows an authenticated account with Investor Mode to
+   open public or AIFT-only ventures from Investor discovery.
+   Personal contact data and private documents are never
+   released through this endpoint.
+========================================================= */
+
+router.get(
+  "/investor/:id",
+  auth,
+  async (req,res) => {
+    try{
+      const investor = await User.findById(req.user._id || req.user.id).select("role familyProfile");
+      if(!investor) return res.status(401).json({ message:"User account not found" });
+      if(!hasInvestorAccess(investor)) return res.status(403).json({ message:"Enable Investor Mode to view this investment opportunity" });
+
+      const value=safeString(req.params.id,120);
+      const query=isValidId(value)?{_id:value}:{slug:value.toLowerCase()};
+      const venture=await populateVenture(Venture.findOne({
+        ...query,
+        status:"active",
+        visibility:{ $in:["public","aift-only"] }
+      }));
+      if(!venture) return res.status(404).json({ message:"Venture not found" });
+
+      const interest=await VentureInterest.findOne({
+        ventureId:venture._id,
+        userId:investor._id,
+        type:"investment"
+      }).sort({createdAt:-1}).lean();
+      const review=interest ? await ReviewCase.findOne({type:"investment_interest",resourceId:interest._id}).sort({createdAt:-1}).lean() : null;
+      const approvedAccess=Boolean(review && ["approved","matched","negotiation","completed"].includes(review.status));
+
+      const result=venture.toObject();
+      if(result.ownerId){ delete result.ownerId.email; delete result.ownerId.contactEmail; delete result.ownerId.contactPhone; delete result.ownerId.website; }
+      result.documents=(Array.isArray(result.documents)?result.documents:[]).filter(document =>
+        document.visibility === "public" || (document.visibility === "interested-only" && approvedAccess)
+      );
+      result.investorState={
+        interested:Boolean(interest && ["pending","accepted","active"].includes(interest.status)),
+        interestStatus:interest?.status || null,
+        reviewStatus:review?.status || null,
+        reviewCaseNumber:review?.caseNumber || null,
+        approvedForIntroduction:approvedAccess,
+        investmentInterest:interest ? {
+          id:interest._id, status:interest.status, amountMin:interest.amountMin||0, amountMax:interest.amountMax||0,
+          currency:interest.currency||"PHP", createdAt:interest.createdAt, updatedAt:interest.updatedAt
+        } : null
+      };
+      return res.json(result);
+    }catch(error){
+      console.error("GET /api/ventures/investor/:id error:",error);
+      return res.status(500).json({message:"Failed to load Investor venture detail"});
+    }
+  }
+);
+
+/* =========================================================
    CURRENT USER'S VENTURES
    GET /api/ventures/mine
 ========================================================= */
@@ -2258,115 +2324,26 @@ router.get(
 router.get(
   "/:id/interests",
   auth,
-  async (
-    req,
-    res
-  ) => {
-
+  async (req,res) => {
     try{
+      if(!isValidId(req.params.id)) return res.status(400).json({message:"Invalid venture ID"});
+      const venture=await Venture.findById(req.params.id);
+      if(!venture) return res.status(404).json({message:"Venture not found"});
+      if(!canManageVenture(req.user,venture)) return res.status(403).json({message:"Not allowed to view this venture's interest requests"});
 
-      if(
-        !isValidId(
-          req.params.id
-        )
-      ){
-
-        return res
-          .status(400)
-          .json({
-            message:
-              "Invalid venture ID"
-          });
-
-      }
-
-
-      const venture =
-        await Venture.findById(
-          req.params.id
-        );
-
-
-      if(!venture){
-
-        return res
-          .status(404)
-          .json({
-            message:
-              "Venture not found"
-          });
-
-      }
-
-
-      if(
-        !canManageVenture(
-          req.user,
-          venture
-        )
-      ){
-
-        return res
-          .status(403)
-          .json({
-            message:
-              "Not allowed to view this venture's interest requests"
-          });
-
-      }
-
-
-      const interests =
-        await VentureInterest
-          .find({
-            ventureId:
-              venture._id,
-
-            type:{
-              $nin:[
-                "save",
-                "follow"
-              ]
-            }
-          })
-          .populate(
-            "userId",
-            [
-              "name",
-              "email",
-              "role",
-              "profileImage",
-              "headline",
-              "companyName",
-              "aiftVerified"
-            ].join(" ")
-          )
-          .sort({
-            createdAt:-1
-          });
-
-
-      res.json(
-        interests
-      );
-
-    }catch(error){
-
-      console.error(
-        "GET /api/ventures/:id/interests error:",
-        error
-      );
-
-
-      res
-        .status(500)
-        .json({
-          message:
-            "Failed to load venture interest"
-        });
-
-    }
-
+      const raw=await VentureInterest.find({ventureId:venture._id,type:{$nin:["save","follow"]}})
+        .populate("userId","name role profileImage headline companyName aiftVerified")
+        .sort({createdAt:-1}).lean();
+      const ids=raw.map(item=>item._id);
+      const reviews=ids.length?await ReviewCase.find({resourceType:"VentureInterest",resourceId:{$in:ids},status:{$in:["approved","matched","negotiation","completed"]}}).sort({createdAt:-1}).lean():[];
+      const reviewMap=new Map();
+      reviews.forEach(review=>{const key=String(review.resourceId);if(!reviewMap.has(key))reviewMap.set(key,review);});
+      const interests=raw.filter(item=>item.type!=="investment"||reviewMap.has(String(item._id))).map(item=>({
+        ...item,
+        aiftReview:item.type==="investment"?{status:reviewMap.get(String(item._id))?.status||null,caseNumber:reviewMap.get(String(item._id))?.caseNumber||null}:null
+      }));
+      return res.json(interests);
+    }catch(error){console.error("GET /api/ventures/:id/interests error:",error);return res.status(500).json({message:"Failed to load venture interest"});}
   }
 );
 
@@ -4860,6 +4837,22 @@ router.patch(
       }
 
 
+      let investmentReview = null;
+
+      if(interest.type === "investment"){
+        investmentReview = await ReviewCase.findOne({
+          type:"investment_interest",
+          resourceId:interest._id
+        }).sort({createdAt:-1});
+
+        if(!investmentReview || investmentReview.status !== "approved"){
+          return res.status(409).json({
+            message:"This investment introduction is not ready for founder action. AIFT approval must be completed first.",
+            reviewStatus:investmentReview?.status || null
+          });
+        }
+      }
+
       interest.status =
         status;
 
@@ -4877,6 +4870,28 @@ router.patch(
 
 
       await interest.save();
+
+      if(investmentReview){
+        investmentReview.status = status === "accepted" ? "matched" : "cancelled";
+        investmentReview.resolvedAt = status === "declined" ? new Date() : null;
+        investmentReview.history.push({
+          status:investmentReview.status,
+          note:status === "accepted"
+            ? "Venture owner accepted the AIFT-approved investor introduction. Both parties are now matched."
+            : "Venture owner declined the AIFT-approved investor introduction.",
+          actorId:req.user._id || req.user.id
+        });
+        await investmentReview.save();
+        await Notification.create({
+          user:interest.userId,
+          type:"review_case",
+          sender:req.user._id || req.user.id,
+          text:status === "accepted"
+            ? `Your AIFT investor introduction for ${venture.title} was accepted. The case is now matched.`
+            : `The venture owner declined your AIFT investor introduction for ${venture.title}.`,
+          link:"/family.html"
+        }).catch(()=>{});
+      }
 
 
       res.json({
