@@ -1,5 +1,6 @@
 const express = require("express");
 const crypto = require("crypto");
+const mongoose = require("mongoose");
 const auth = require("../middleware/auth");
 const ReviewCase = require("../models/ReviewCase");
 const Notification = require("../models/Notification");
@@ -7,9 +8,12 @@ const Notification = require("../models/Notification");
 const router = express.Router();
 const allowedTypes = new Set(["venture","investment_interest","scholarship","scholarship_application","internship","partnership","opportunity","family_verification","student_verification","chat_safety","other"]);
 const allowedStatuses = new Set(["submitted","under_review","information_requested","approved","rejected","matched","negotiation","completed","cancelled","expired"]);
+const openStatuses = ["submitted","under_review","information_requested","approved","matched","negotiation"];
 
 function uid(user){ return user?._id || user?.id; }
 function clean(value,max=500){ return String(value || "").trim().slice(0,max); }
+function validId(value){ return mongoose.Types.ObjectId.isValid(String(value?._id || value || "")); }
+
 async function caseNumber(){
   for(let i=0;i<10;i+=1){
     const value=`AIFT-${new Date().getFullYear()}-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
@@ -18,23 +22,83 @@ async function caseNumber(){
   throw new Error("Could not create case number");
 }
 
+async function createOrReuseReviewCase({
+  type,
+  requesterId,
+  targetUserId=null,
+  resourceType="",
+  resourceId=null,
+  title,
+  summary="",
+  metadata={},
+  priority="normal",
+  note="Submitted for AIFT review"
+}){
+  const safeType=clean(type,60);
+  const safeTitle=clean(title,220);
+  if(!allowedTypes.has(safeType) || !safeTitle || !validId(requesterId)){
+    throw new Error("Valid review type, requester and title are required");
+  }
+
+  const normalizedResourceId=validId(resourceId) ? resourceId : null;
+  const existing=normalizedResourceId
+    ? await ReviewCase.findOne({
+        type:safeType,
+        resourceId:normalizedResourceId,
+        status:{ $in:openStatuses }
+      }).sort({ createdAt:-1 })
+    : null;
+
+  if(existing){
+    existing.requesterId=requesterId;
+    if(validId(targetUserId)) existing.targetUserId=targetUserId;
+    if(resourceType) existing.resourceType=clean(resourceType,80);
+    existing.title=safeTitle;
+    existing.summary=clean(summary,3000);
+    existing.metadata=metadata && typeof metadata === "object" ? metadata : {};
+    if(["low","normal","high","urgent"].includes(priority)) existing.priority=priority;
+    await existing.save();
+    return existing;
+  }
+
+  return ReviewCase.create({
+    caseNumber:await caseNumber(),
+    type:safeType,
+    requesterId,
+    targetUserId:validId(targetUserId) ? targetUserId : null,
+    resourceType:clean(resourceType,80),
+    resourceId:normalizedResourceId,
+    title:safeTitle,
+    summary:clean(summary,3000),
+    status:"submitted",
+    priority:["low","normal","high","urgent"].includes(priority) ? priority : "normal",
+    metadata:metadata && typeof metadata === "object" ? metadata : {},
+    history:[{ status:"submitted", note:clean(note,1000) || "Submitted for AIFT review", actorId:requesterId }]
+  });
+}
+
+async function getLatestReviewCase(type,resourceId){
+  if(!allowedTypes.has(clean(type,60)) || !validId(resourceId)) return null;
+  return ReviewCase.findOne({ type:clean(type,60), resourceId }).sort({ createdAt:-1 });
+}
+
 router.post("/", auth, async (req,res)=>{
   try{
-    const type=clean(req.body?.type,60);
-    const title=clean(req.body?.title,220);
-    if(!allowedTypes.has(type) || !title) return res.status(400).json({ message:"Valid review type and title are required" });
-    const review=await ReviewCase.create({
-      caseNumber:await caseNumber(), type, requesterId:uid(req.user),
-      targetUserId:req.body?.targetUserId || null,
-      resourceType:clean(req.body?.resourceType,80), resourceId:req.body?.resourceId || null,
-      title, summary:clean(req.body?.summary,3000), status:"submitted",
-      metadata:req.body?.metadata && typeof req.body.metadata === "object" ? req.body.metadata : {},
-      history:[{ status:"submitted", note:"Submitted for AIFT review", actorId:uid(req.user) }]
+    const review=await createOrReuseReviewCase({
+      type:req.body?.type,
+      requesterId:uid(req.user),
+      targetUserId:req.body?.targetUserId,
+      resourceType:req.body?.resourceType,
+      resourceId:req.body?.resourceId,
+      title:req.body?.title,
+      summary:req.body?.summary,
+      metadata:req.body?.metadata,
+      priority:req.body?.priority
     });
     return res.status(201).json(review);
   }catch(error){
     console.error("CREATE REVIEW CASE ERROR:",error);
-    return res.status(500).json({ message:"Could not create AIFT review case" });
+    return res.status(400).json({ message:error.message || "Could not create AIFT review case" });
   }
 });
 
@@ -88,5 +152,9 @@ router.patch("/:id/admin", auth, async (req,res)=>{
     return res.status(500).json({ message:"Could not update review case" });
   }
 });
+
+router.createOrReuseReviewCase=createOrReuseReviewCase;
+router.getLatestReviewCase=getLatestReviewCase;
+router.allowedReviewStatuses=allowedStatuses;
 
 module.exports=router;
