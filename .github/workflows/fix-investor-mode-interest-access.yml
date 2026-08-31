@@ -1,0 +1,21 @@
+name: Fix Investor Mode Interest Access
+"on":
+  push:
+    branches: [main]
+    paths: [".github/workflows/fix-investor-mode-interest-access.yml","scripts/fix-investor-mode-interest-access.js"]
+permissions: { contents: write }
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: node scripts/fix-investor-mode-interest-access.js
+      - run: node --check routes/ventures.js
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add routes/ventures.js
+          if git diff --cached --quiet; then echo "No changes"; else git commit -m "Fix Investor Mode investment interest authorization [skip ci]" && git push; fi
