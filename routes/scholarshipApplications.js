@@ -5,6 +5,7 @@ const auth = require("../middleware/auth");
 const ScholarshipApplication = require("../models/ScholarshipApplication");
 const SchoolScholarship = require("../models/SchoolScholarship");
 const FamilyChild = require("../models/FamilyChild");
+const { queueScholarshipApplication } = require("../services/aiftReviewWorkflow");
 
 const router = express.Router();
 router.use(auth);
@@ -604,10 +605,24 @@ router.post("/",async (req,res) => {
       ScholarshipApplication.findById(application._id)
     ).lean();
 
-    return res.status(201).json({
+    let reviewCase = null;
+    if(initialStatus === "submitted"){
+      reviewCase = await queueScholarshipApplication({
+        application,
+        scholarship,
+        actor:req.user
+      });
+    }
+
+    return res.status(initialStatus === "submitted" ? 202 : 201).json({
       success:true,
       application:populated,
-      item:populated
+      item:populated,
+      reviewCase,
+      reviewStatus:reviewCase?.status || null,
+      message:reviewCase
+        ? "Scholarship application submitted for AIFT review before school processing."
+        : "Scholarship application draft saved."
     });
   }catch(error){
     console.error("CREATE SCHOLARSHIP APPLICATION ERROR:",error);

@@ -25,6 +25,12 @@ const User =
 const auth =
   require("../middleware/auth");
 
+const {
+  queueVenturePublish,
+  queueVentureInterest,
+  latestReview
+} = require("../services/aiftReviewWorkflow");
+
 
 /* =========================================================
    CONSTANTS
@@ -4120,18 +4126,49 @@ router.patch(
       }
 
 
-      venture.status =
-        "active";
+      if(isAdmin(req.user)){
+        venture.status = "active";
+        await venture.save();
+        return res.json({
+          message:"Venture published successfully",
+          venture,
+          reviewStatus:"approved"
+        });
+      }
 
+      const existingReview = await latestReview("venture", venture._id);
 
+      if(existingReview?.status === "approved"){
+        venture.status = "active";
+        await venture.save();
+        return res.json({
+          message:"Venture published successfully",
+          venture,
+          reviewCase:existingReview,
+          reviewStatus:"approved"
+        });
+      }
+
+      if(existingReview && ["submitted","under_review","information_requested","matched","negotiation"].includes(existingReview.status)){
+        venture.status = "submitted";
+        await venture.save();
+        return res.status(202).json({
+          message:"Venture is already in AIFT review.",
+          venture,
+          reviewCase:existingReview,
+          reviewStatus:existingReview.status
+        });
+      }
+
+      const reviewCase = await queueVenturePublish({ venture, actor:req.user });
+      venture.status = "submitted";
       await venture.save();
 
-
-      res.json({
-        message:
-          "Venture published successfully",
-
-        venture
+      return res.status(202).json({
+        message:"Venture submitted for AIFT review. It will become discoverable after approval.",
+        venture,
+        reviewCase,
+        reviewStatus:reviewCase.status
       });
 
     }catch(error){
@@ -4701,15 +4738,19 @@ router.post(
             "name role profileImage headline companyName aiftVerified"
           );
 
+      const reviewCase = await queueVentureInterest({
+        venture,
+        interest,
+        actor:req.user
+      });
 
       res
-        .status(201)
+        .status(202)
         .json({
-          message:
-            "Interest sent successfully",
-
-          interest:
-            populated
+          message:"Interest submitted for AIFT review before founder action.",
+          interest:populated,
+          reviewCase,
+          reviewStatus:reviewCase.status
         });
 
     }catch(error){

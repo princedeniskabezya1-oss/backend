@@ -10,6 +10,9 @@ const SchoolCompanyPartnership =
 const User =
   require("../models/User");
 
+const { queuePartnership } =
+  require("../services/aiftReviewWorkflow");
+
 
 const router =
   express.Router();
@@ -1546,14 +1549,20 @@ router.post(
           .lean();
 
 
+      const reviewCase = await queuePartnership({
+        partnership,
+        actor:req.user
+      });
+
       res
-        .status(201)
+        .status(202)
         .json({
           success:true,
-          partnership:
-            populated,
-          item:
-            populated
+          partnership:populated,
+          item:populated,
+          reviewCase,
+          reviewStatus:reviewCase.status,
+          message:"Partnership proposal submitted for AIFT review before receiving-party action."
         });
 
 

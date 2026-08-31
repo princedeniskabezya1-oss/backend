@@ -13,6 +13,9 @@ const SchoolOpportunity =
 const User =
   require("../models/User");
 
+const { queueInternshipApplication } =
+  require("../services/aiftReviewWorkflow");
+
 
 const router =
   express.Router();
@@ -1645,18 +1648,21 @@ router.post(
           .lean();
 
 
+      const reviewCase = await queueInternshipApplication({
+        application,
+        opportunity,
+        actor:req.user
+      });
+
       res
-        .status(201)
+        .status(202)
         .json({
-
           success:true,
-
-          application:
-            populated,
-
-          item:
-            populated
-
+          application:populated,
+          item:populated,
+          reviewCase,
+          reviewStatus:reviewCase.status,
+          message:"Application submitted for AIFT review before receiving-party processing."
         });
 
 
