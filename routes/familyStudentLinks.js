@@ -157,6 +157,8 @@ router.patch("/:id/respond", auth, async (req,res) => {
     if(child){
       child.linkedStudentId = decision === "accept" ? userId(req.user) : null;
       child.linkStatus = decision === "accept" ? "linked" : "unlinked";
+      child.consentConfirmed = decision === "accept";
+      child.consentConfirmedAt = decision === "accept" ? new Date() : null;
       await child.save();
     }
 
@@ -182,7 +184,7 @@ router.patch("/:id/revoke", auth, async (req,res) => {
     if(!request) return res.status(404).json({ message:"Active family connection not found" });
 
     request.status = "revoked"; request.revokedAt = new Date(); await request.save();
-    await FamilyChild.updateOne({ _id:request.familyChildId, familyId:request.familyId, linkedStudentId:userId(req.user) }, { $set:{ linkedStudentId:null, linkStatus:"unlinked" } });
+    await FamilyChild.updateOne({ _id:request.familyChildId, familyId:request.familyId, linkedStudentId:userId(req.user) }, { $set:{ linkedStudentId:null, linkStatus:"unlinked", consentConfirmed:false, consentConfirmedAt:null } });
     await Notification.create({ user:request.familyId, type:"family_link_revoked", sender:userId(req.user), text:"An AIFT student revoked a Family account connection.", link:"/family.html" });
     return res.json({ message:"Family connection revoked" });
   }catch(error){

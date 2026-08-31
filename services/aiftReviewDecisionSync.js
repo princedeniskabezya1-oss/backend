@@ -4,6 +4,7 @@ const ScholarshipApplication = require("../models/ScholarshipApplication");
 const InternshipApplication = require("../models/InternshipApplication");
 const SchoolCompanyPartnership = require("../models/SchoolCompanyPartnership");
 const Notification = require("../models/Notification");
+const ChatSafetyViolation = require("../models/ChatSafetyViolation");
 
 function id(value){ return value?._id || value?.id || value || null; }
 function clean(value,max=1000){ return String(value ?? "").trim().slice(0,max); }
@@ -208,6 +209,17 @@ async function syncPartnership(review,admin){
   return { synced:true, resourceStatus:partnership.status };
 }
 
+async function syncChatSafety(review,admin){
+  const violation=await ChatSafetyViolation.findById(review.resourceId);
+  if(!violation)return {synced:false,reason:"Chat safety violation not found"};
+  if(["approved","completed","rejected","cancelled"].includes(review.status)){
+    violation.reviewed=true;violation.reviewedBy=id(admin);violation.reviewedAt=new Date();violation.reviewNotes=historyNote(review);violation.restrictedUntil=new Date();await violation.save();
+    await notify(violation.userId,`AIFT completed messaging safety review ${review.caseNumber}. Your review restriction has been released.`,"/messages.html",admin);
+    return {synced:true,resourceStatus:"restriction_released"};
+  }
+  return {synced:false,reason:"Chat restriction remains pending AIFT review"};
+}
+
 async function syncReviewDecision(review,admin){
   if(!review?.resourceId) return { synced:false, reason:"Review case has no resource" };
 
@@ -220,6 +232,7 @@ async function syncReviewDecision(review,admin){
     case "scholarship_application": return syncScholarshipApplication(review,admin);
     case "internship": return syncInternshipApplication(review,admin);
     case "partnership": return syncPartnership(review,admin);
+    case "chat_safety": return syncChatSafety(review,admin);
     default: return { synced:false, reason:"Review type does not require resource synchronization" };
   }
 }
