@@ -1,0 +1,16 @@
+const fs=require("fs");const path=require("path");const root=path.join(__dirname,"..");
+function patch(file,fn){const p=path.join(root,file);const before=fs.readFileSync(p,"utf8");const after=fn(before);if(after===before)throw new Error(`${file}: patch not applied`);fs.writeFileSync(p,after);console.log(`patched ${file}`);}
+function one(s,a,b,label){const n=s.split(a).length-1;if(n!==1)throw new Error(`${label}: expected 1 anchor, got ${n}`);return s.replace(a,b);}
+patch("routes/familyChildren.js",s=>{
+ const start='router.patch(\n  "/:id/link-student",'; const i=s.indexOf(start); if(i<0)throw new Error("legacy link route missing"); const end=s.indexOf('/* ============================================\n   UNLINK STUDENT',i);if(end<0)throw new Error("unlink marker missing");
+ const replacement='router.patch(\n  "/:id/link-student",\n  async (req,res) => {\n    return res.status(410).json({\n      message:"Direct student linking has been retired. Use the verified AIFT Student ID connection request so the student can approve or decline the Family connection.",\n      code:"AIFT_STUDENT_CONSENT_REQUIRED"\n    });\n  }\n);\n\n\n';return s.slice(0,i)+replacement+s.slice(end);
+});
+patch("routes/familyStudentLinks.js",s=>{
+ s=one(s,'      child.linkedStudentId = decision === "accept" ? userId(req.user) : null;\n      child.linkStatus = decision === "accept" ? "linked" : "unlinked";','      child.linkedStudentId = decision === "accept" ? userId(req.user) : null;\n      child.linkStatus = decision === "accept" ? "linked" : "unlinked";\n      child.consentConfirmed = decision === "accept";\n      child.consentConfirmedAt = decision === "accept" ? new Date() : null;','family consent response');
+ s=one(s,'{ $set:{ linkedStudentId:null, linkStatus:"unlinked" } }','{ $set:{ linkedStudentId:null, linkStatus:"unlinked", consentConfirmed:false, consentConfirmedAt:null } }','family revoke consent');return s;
+});
+patch("services/aiftReviewDecisionSync.js",s=>{
+ s=one(s,'const Notification = require("../models/Notification");','const Notification = require("../models/Notification");\nconst ChatSafetyViolation = require("../models/ChatSafetyViolation");','decision import');
+ s=one(s,'async function syncReviewDecision(review,admin){','async function syncChatSafety(review,admin){\n  const violation=await ChatSafetyViolation.findById(review.resourceId);\n  if(!violation)return {synced:false,reason:"Chat safety violation not found"};\n  if(["approved","completed","rejected","cancelled"].includes(review.status)){\n    violation.reviewed=true;violation.reviewedBy=id(admin);violation.reviewedAt=new Date();violation.reviewNotes=historyNote(review);violation.restrictedUntil=new Date();await violation.save();\n    await notify(violation.userId,`AIFT completed messaging safety review ${review.caseNumber}. Your review restriction has been released.`,"/messages.html",admin);\n    return {synced:true,resourceStatus:"restriction_released"};\n  }\n  return {synced:false,reason:"Chat restriction remains pending AIFT review"};\n}\n\nasync function syncReviewDecision(review,admin){','chat sync fn');
+ s=one(s,'    case "partnership": return syncPartnership(review,admin);','    case "partnership": return syncPartnership(review,admin);\n    case "chat_safety": return syncChatSafety(review,admin);','chat sync switch');return s;
+});
