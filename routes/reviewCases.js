@@ -141,12 +141,34 @@ router.patch("/:id/admin", auth, async (req,res)=>{
     if(Object.prototype.hasOwnProperty.call(req.body || {},"assignedTo")) review.assignedTo=req.body.assignedTo || null;
     if(Object.prototype.hasOwnProperty.call(req.body || {},"decisionNotes")) review.decisionNotes=clean(req.body.decisionNotes,3000);
     await review.save();
+
+    let resourceSync={ synced:false, reason:"No decision status supplied" };
+    if(status){
+      try{
+        const { syncReviewDecision }=require("../services/aiftReviewDecisionSync");
+        resourceSync=await syncReviewDecision(review,req.user);
+      }catch(syncError){
+        console.error("REVIEW RESOURCE SYNC ERROR:",syncError);
+        review.history.push({
+          status:review.status,
+          note:`Resource synchronization failed: ${clean(syncError.message,700)}`,
+          actorId:uid(req.user)
+        });
+        await review.save();
+        return res.status(500).json({
+          message:"Review decision was saved, but the linked resource could not be synchronized. Please retry the decision.",
+          review,
+          resourceSync:{ synced:false, reason:syncError.message }
+        });
+      }
+    }
+
     await Notification.create({
       user:review.requesterId, type:"review_case", sender:uid(req.user),
       text:`AIFT Review ${review.caseNumber} is now ${review.status.replaceAll("_"," ")}.`,
       link:"/home.html"
     }).catch(()=>{});
-    return res.json(review);
+    return res.json({ review, resourceSync });
   }catch(error){
     console.error("UPDATE REVIEW CASE ERROR:",error);
     return res.status(500).json({ message:"Could not update review case" });
