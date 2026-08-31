@@ -79,6 +79,12 @@ const familyRoutes =
 const familyChildrenRoutes =
   require("./routes/familyChildren");
 
+const studentIdentityRoutes =
+  require("./routes/studentIdentity");
+
+const familyStudentLinkRoutes =
+  require("./routes/familyStudentLinks");
+
 
 const groupRoutes =
   require("./routes/groups");
@@ -592,6 +598,18 @@ app.use(
 app.use(
   "/api/family/children",
   familyChildrenRoutes
+);
+
+/* AIFT verified Student Identity */
+app.use(
+  "/api/student-identity",
+  studentIdentityRoutes
+);
+
+/* Consent-based Family ↔ Student connections */
+app.use(
+  "/api/family-student-links",
+  familyStudentLinkRoutes
 );
 
 
