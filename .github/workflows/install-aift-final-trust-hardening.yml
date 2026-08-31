@@ -1,0 +1,33 @@
+name: Apply AIFT Final Trust Hardening
+"on":
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/install-aift-final-trust-hardening.yml"
+      - "scripts/install-aift-final-trust-hardening.js"
+permissions:
+  contents: write
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: node scripts/install-aift-final-trust-hardening.js
+      - name: Validate production backend
+        run: |
+          node --check routes/familyChildren.js
+          node --check routes/familyStudentLinks.js
+          node --check routes/studentIdentity.js
+          node --check utils/contactSafety.js
+          node --check services/aiftReviewDecisionSync.js
+          node --check routes/reviewCases.js
+          node --check routes/messages.js
+      - name: Commit one production bundle
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add routes/familyChildren.js routes/familyStudentLinks.js services/aiftReviewDecisionSync.js
+          if git diff --cached --quiet; then echo "No bundle changes"; else git commit -m "Complete AIFT trust security hardening [skip ci]" && git push; fi
