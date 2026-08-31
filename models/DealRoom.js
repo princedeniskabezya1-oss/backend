@@ -10,18 +10,25 @@ const MeetingSchema=new mongoose.Schema({
   title:{type:String,trim:true,maxlength:180,default:"AIFT Deal Room Meeting"},
   startAt:{type:Date,required:true},
   durationMinutes:{type:Number,min:15,max:240,default:30},
-  status:{type:String,enum:["proposed","accepted","declined","cancelled"],default:"proposed"},
+  status:{type:String,enum:["proposed","accepted","declined","cancelled","completed"],default:"proposed"},
   proposedBy:{type:mongoose.Schema.Types.ObjectId,ref:"User",required:true},
   respondedBy:{type:mongoose.Schema.Types.ObjectId,ref:"User",default:null},
   respondedAt:{type:Date,default:null},
+  completedBy:{type:mongoose.Schema.Types.ObjectId,ref:"User",default:null},
+  completedAt:{type:Date,default:null},
+  joinUrl:{type:String,trim:true,maxlength:1600,default:""},
   note:{type:String,trim:true,maxlength:1000,default:""}
 },{timestamps:true});
 
 const SharedDocumentSchema=new mongoose.Schema({
   ventureDocumentId:{type:mongoose.Schema.Types.ObjectId,default:null},
   name:{type:String,trim:true,maxlength:180,required:true},
+  originalName:{type:String,trim:true,maxlength:220,default:""},
   type:{type:String,trim:true,maxlength:80,default:"other"},
-  url:{type:String,trim:true,maxlength:1200,required:true},
+  mimeType:{type:String,trim:true,maxlength:160,default:""},
+  resourceType:{type:String,trim:true,maxlength:40,default:"raw"},
+  bytes:{type:Number,min:0,default:0},
+  url:{type:String,trim:true,maxlength:1600,required:true},
   sharedBy:{type:mongoose.Schema.Types.ObjectId,ref:"User",required:true},
   sharedAt:{type:Date,default:Date.now}
 },{_id:true});
