@@ -67,6 +67,22 @@ async function ensureIdentity(student){
   });
 }
 
+function publicIdentity(identity){
+  return {
+    aiftStudentId:identity.aiftStudentId,
+    verifiedAt:identity.verifiedAt,
+    verificationSource:identity.verificationSource,
+    student:{
+      _id:identity.studentId?._id || identity.studentId,
+      name:identity.studentId?.name || "",
+      profileImage:identity.studentId?.profileImage || "",
+      course:identity.studentId?.course || "",
+      yearLevel:identity.studentId?.yearLevel || ""
+    },
+    school:identity.schoolId || null
+  };
+}
+
 router.get("/me", auth, async (req,res) => {
   try{
     if(req.user.role !== "student") return res.status(403).json({ message:"Student account required" });
@@ -113,25 +129,40 @@ router.get("/lookup/:aiftStudentId", auth, async (req,res) => {
       return res.status(404).json({ message:"Verified AIFT Student ID not found" });
     }
 
-    return res.json({
-      verified:true,
-      identity:{
-        aiftStudentId:identity.aiftStudentId,
-        verifiedAt:identity.verifiedAt,
-        verificationSource:identity.verificationSource,
-        student:{
-          _id:identity.studentId._id,
-          name:identity.studentId.name,
-          profileImage:identity.studentId.profileImage,
-          course:identity.studentId.course,
-          yearLevel:identity.studentId.yearLevel
-        },
-        school:identity.schoolId || null
-      }
-    });
+    return res.json({ verified:true, identity:publicIdentity(identity) });
   }catch(error){
     console.error("LOOKUP STUDENT IDENTITY ERROR:",error);
     return res.status(500).json({ message:"Could not verify AIFT Student ID" });
+  }
+});
+
+router.post("/batch", auth, async (req,res) => {
+  try{
+    if(!["school","employer","admin"].includes(req.user.role)){
+      return res.status(403).json({ message:"AIFT Student identity access is not available for this account" });
+    }
+
+    const rawIds = Array.isArray(req.body?.studentIds) ? req.body.studentIds : [];
+    const studentIds = [...new Set(rawIds.map(value => clean(value,50)).filter(value => /^[a-f\d]{24}$/i.test(value)))].slice(0,100);
+
+    if(!studentIds.length) return res.json({ identities:[] });
+
+    const query = { studentId:{ $in:studentIds }, status:"active" };
+    if(req.user.role === "school") query.schoolId = getUserId(req.user);
+
+    const identities = await StudentIdentity.find(query)
+      .populate("studentId", "name profileImage course yearLevel role status")
+      .populate("schoolId", "name schoolName schoolLogo profileImage")
+      .lean();
+
+    return res.json({
+      identities:identities
+        .filter(item => item.studentId?.role === "student" && item.studentId?.status === "active")
+        .map(publicIdentity)
+    });
+  }catch(error){
+    console.error("BATCH STUDENT IDENTITY ERROR:",error);
+    return res.status(500).json({ message:"Could not load verified AIFT Student identities" });
   }
 });
 
@@ -142,10 +173,15 @@ router.get("/school/students", auth, async (req,res) => {
     const query = req.user.role === "admin" ? {} : { schoolId:getUserId(req.user) };
     const identities = await StudentIdentity.find({ ...query, status:"active" })
       .populate("studentId", "name profileImage course yearLevel schoolId linkedSchoolId status")
+      .populate("schoolId", "name schoolName schoolLogo profileImage")
       .sort({ createdAt:-1 })
       .lean();
 
-    return res.json({ identities:identities.filter(item => item.studentId?.status === "active") });
+    return res.json({
+      identities:identities
+        .filter(item => item.studentId?.status === "active")
+        .map(publicIdentity)
+    });
   }catch(error){
     console.error("GET SCHOOL STUDENT IDENTITIES ERROR:",error);
     return res.status(500).json({ message:"Could not load AIFT Student IDs" });
