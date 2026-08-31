@@ -1,0 +1,22 @@
+name: Install AIFT Deal Room Route
+"on":
+  push:
+    branches: [main]
+    paths: [".github/workflows/install-deal-room-route.yml","scripts/install-deal-room-route.js"]
+permissions: { contents: write }
+jobs:
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - uses: actions/setup-node@v4
+        with: { node-version: "20" }
+      - run: node --check models/DealRoom.js && node --check routes/dealRooms.js && node --check scripts/install-deal-room-route.js
+      - run: node scripts/install-deal-room-route.js
+      - run: node --check server.js
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server.js
+          if git diff --cached --quiet; then echo "No changes"; else git commit -m "Mount AIFT Deal Room API [skip ci]" && git push; fi
