@@ -88,6 +88,9 @@ const familyStudentLinkRoutes =
 const reviewCaseRoutes =
   require("./routes/reviewCases");
 
+const dealRoomRoutes =
+  require("./routes/dealRooms");
+
 
 const groupRoutes =
   require("./routes/groups");
@@ -619,6 +622,12 @@ app.use(
 app.use(
   "/api/review-cases",
   reviewCaseRoutes
+);
+
+/* Controlled AIFT investor ↔ Venture negotiation rooms */
+app.use(
+  "/api/deal-rooms",
+  dealRoomRoutes
 );
 
 
