@@ -85,7 +85,10 @@ const SchoolCompanyPartnershipSchema = new mongoose.Schema(
       type:mongoose.Schema.Types.ObjectId,
       ref:"User",
       default:null,
-      index:true
+      index:true,
+      get:function getSemanticSchoolId(value){
+        return this.relationshipKind === "company_company" ? null : value;
+      }
     },
     companyId:{
       type:mongoose.Schema.Types.ObjectId,
@@ -210,15 +213,12 @@ SchoolCompanyPartnershipSchema.pre("validate",function validatePartnership(next)
 
     /*
       Legacy MongoDB deployments may still have the historical
-      unique index on {schoolId, companyId, type}. Keep the second
-      company in schoolId as an internal compatibility key so two
-      different partner companies do not collide on schoolId:null.
-
-      relationshipKind remains the authoritative semantic type and
-      partnerCompanyId remains the authoritative second company.
-      Normal School-partnership list queries exclude these records.
+      unique index on {schoolId, companyId, type}. Store the second
+      company as a raw compatibility key so different company pairs
+      never collide on schoolId:null. The schoolId getter above keeps
+      this internal value out of runtime School semantics.
     */
-    this.schoolId = this.partnerCompanyId;
+    this.$set("schoolId",this.partnerCompanyId,{strict:false});
     this.schoolName = this.partnerCompanyName || "";
   }else{
     this.relationshipKind = "school_company";
