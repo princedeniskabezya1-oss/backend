@@ -38,6 +38,11 @@ const {
 } =
   require("../controllers/employerCareerHubController");
 
+const {
+  applyToCareerOpportunity
+} =
+  require("../controllers/studentCareerHubController");
+
 const router =
   express.Router();
 
@@ -68,9 +73,6 @@ router.post(
 
 /* =========================================================
    EMPLOYER CAREER HUB V2
-
-   Human-friendly adaptive creation paths. Existing collection
-   routes remain available for backward compatibility.
 ========================================================= */
 
 router.post(
@@ -96,6 +98,19 @@ router.patch(
 router.post(
   "/employer-campus-programs",
   createEmployerCampusProgram
+);
+
+/* =========================================================
+   STUDENT CAREER HUB V2
+
+   New Employer Career Hub opportunities use this endpoint so
+   Student/Talent applications remain attached to the actual
+   SchoolOpportunity and the trusted AIFT Review lifecycle.
+========================================================= */
+
+router.post(
+  "/:id/apply",
+  applyToCareerOpportunity
 );
 
 /* =========================================================
