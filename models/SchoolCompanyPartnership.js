@@ -34,6 +34,11 @@ const REQUESTED_BY_VALUES = [
   "admin"
 ];
 
+const RELATIONSHIP_KINDS = [
+  "school_company",
+  "company_company"
+];
+
 const contactPersonSchema = new mongoose.Schema(
   {
     name:{type:String,trim:true,maxlength:180,default:""},
@@ -69,10 +74,17 @@ const partnershipHistorySchema = new mongoose.Schema(
 
 const SchoolCompanyPartnershipSchema = new mongoose.Schema(
   {
+    relationshipKind:{
+      type:String,
+      enum:RELATIONSHIP_KINDS,
+      default:"school_company",
+      index:true
+    },
+
     schoolId:{
       type:mongoose.Schema.Types.ObjectId,
       ref:"User",
-      required:true,
+      default:null,
       index:true
     },
     companyId:{
@@ -81,8 +93,16 @@ const SchoolCompanyPartnershipSchema = new mongoose.Schema(
       required:true,
       index:true
     },
+    partnerCompanyId:{
+      type:mongoose.Schema.Types.ObjectId,
+      ref:"User",
+      default:null,
+      index:true
+    },
+
     schoolName:{type:String,trim:true,maxlength:250,default:""},
     companyName:{type:String,trim:true,maxlength:250,default:""},
+    partnerCompanyName:{type:String,trim:true,maxlength:250,default:""},
 
     title:{type:String,trim:true,maxlength:300,default:""},
     type:{
@@ -106,6 +126,12 @@ const SchoolCompanyPartnershipSchema = new mongoose.Schema(
       type:String,
       enum:REQUESTED_BY_VALUES,
       required:true
+    },
+    requestedByOrganizationId:{
+      type:mongoose.Schema.Types.ObjectId,
+      ref:"User",
+      default:null,
+      index:true
     },
 
     message:{type:String,trim:true,maxlength:10000,default:""},
@@ -146,11 +172,13 @@ const SchoolCompanyPartnershipSchema = new mongoose.Schema(
 
     schoolContact:{type:contactPersonSchema,default:()=>({})},
     companyContact:{type:contactPersonSchema,default:()=>({})},
+    partnerCompanyContact:{type:contactPersonSchema,default:()=>({})},
 
     documents:{type:[partnershipDocumentSchema],default:[]},
 
     schoolNotes:{type:String,trim:true,maxlength:10000,default:""},
     companyNotes:{type:String,trim:true,maxlength:10000,default:""},
+    partnerCompanyNotes:{type:String,trim:true,maxlength:10000,default:""},
     rejectionReason:{type:String,trim:true,maxlength:5000,default:""},
 
     metrics:{
@@ -172,6 +200,24 @@ const SchoolCompanyPartnershipSchema = new mongoose.Schema(
 );
 
 SchoolCompanyPartnershipSchema.pre("validate",function validatePartnership(next){
+  if(this.relationshipKind === "company_company"){
+    if(!this.companyId || !this.partnerCompanyId){
+      return next(new Error("A company partnership requires two company accounts."));
+    }
+    if(String(this.companyId) === String(this.partnerCompanyId)){
+      return next(new Error("A company cannot create a partnership with itself."));
+    }
+    this.schoolId = null;
+    this.schoolName = "";
+  }else{
+    this.relationshipKind = "school_company";
+    if(!this.schoolId || !this.companyId){
+      return next(new Error("A school-company partnership requires both a school and a company."));
+    }
+    this.partnerCompanyId = null;
+    this.partnerCompanyName = "";
+  }
+
   if(
     this.proposedStartDate &&
     this.proposedEndDate &&
@@ -188,15 +234,6 @@ SchoolCompanyPartnershipSchema.pre("validate",function validatePartnership(next)
     return next(new Error("Partnership end date cannot be before the start date."));
   }
 
-  /*
-    A School or Company must never be able to approve/activate
-    a partnership before AIFT has verified the introduction.
-
-    AIFT Review synchronization moves the resource into the
-    `review` stage and records that change as an Admin action.
-    The receiving organization can only approve after that
-    trusted history exists.
-  */
   if(
     this.isModified("status") &&
     ["approved","active"].includes(this.status)
@@ -218,21 +255,35 @@ SchoolCompanyPartnershipSchema.pre("validate",function validatePartnership(next)
 });
 
 SchoolCompanyPartnershipSchema.index({schoolId:1,companyId:1,status:1});
+SchoolCompanyPartnershipSchema.index({companyId:1,partnerCompanyId:1,status:1});
 SchoolCompanyPartnershipSchema.index({schoolId:1,createdAt:-1});
 SchoolCompanyPartnershipSchema.index({companyId:1,createdAt:-1});
+SchoolCompanyPartnershipSchema.index({partnerCompanyId:1,createdAt:-1});
 SchoolCompanyPartnershipSchema.index({schoolId:1,type:1,status:1});
 SchoolCompanyPartnershipSchema.index({companyId:1,type:1,status:1});
+SchoolCompanyPartnershipSchema.index({partnerCompanyId:1,type:1,status:1});
 
 SchoolCompanyPartnershipSchema.index(
   {schoolId:1,companyId:1,type:1},
   {
     unique:true,
     partialFilterExpression:{
-      status:{
-        $in:["draft","pending","review","approved","active","paused"]
-      }
+      relationshipKind:"school_company",
+      status:{$in:["draft","pending","review","approved","active","paused"]}
     },
     name:"unique_live_school_company_partnership"
+  }
+);
+
+SchoolCompanyPartnershipSchema.index(
+  {companyId:1,partnerCompanyId:1,type:1},
+  {
+    unique:true,
+    partialFilterExpression:{
+      relationshipKind:"company_company",
+      status:{$in:["draft","pending","review","approved","active","paused"]}
+    },
+    name:"unique_live_company_company_partnership"
   }
 );
 
@@ -242,3 +293,4 @@ module.exports =
 
 module.exports.PARTNERSHIP_TYPES = PARTNERSHIP_TYPES;
 module.exports.PARTNERSHIP_STATUSES = PARTNERSHIP_STATUSES;
+module.exports.RELATIONSHIP_KINDS = RELATIONSHIP_KINDS;
