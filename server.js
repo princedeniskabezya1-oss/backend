@@ -103,6 +103,7 @@ const conferenceRecordingRoutes = require("./routes/conferenceRecordings");
 const conferenceTranscriptRoutes = require("./routes/conferenceTranscripts");
 const chatBotConversationRoutes = require("./routes/chatBotConversations");
 const chatAssetRoutes = require("./routes/chatAssets");
+const storyRoutes = require("./routes/stories");
 
 const classModuleRoutes = require("./routes/classModules");
 const classLessonRoutes = require("./routes/classLessons");
@@ -343,12 +344,6 @@ const corsOptions = {
     "RateLimit-Reset"
   ],
 
-  /*
-    Some Media Library modules use credentials: "include".
-
-    Access-Control-Allow-Credentials must therefore be enabled
-    for cross-origin browser requests.
-  */
   credentials:
     true,
 
@@ -366,13 +361,6 @@ app.use(
   cors(corsOptions)
 );
 
-/*
-  Handle every preflight request before authentication,
-  uploads, routes, and other middleware execute.
-
-  The regular expression is compatible with newer Express
-  and path-to-regexp versions.
-*/
 app.options(
   /.*/,
   cors(corsOptions)
@@ -382,13 +370,6 @@ app.options(
    MIDDLEWARE
 ============================================ */
 
-/*
-  Limit JSON request bodies to protect public API endpoints
-  from unexpectedly large payloads.
-
-  Multer-based image, video, CV, and document uploads are not
-  affected by this JSON body limit.
-*/
 app.use(
   express.json({
     limit: "1mb",
@@ -396,10 +377,6 @@ app.use(
   })
 );
 
-/*
-  Support URL-encoded form bodies while limiting the total
-  size and number of submitted parameters.
-*/
 app.use(
   express.urlencoded({
     extended: true,
@@ -439,6 +416,7 @@ app.use("/api/conference-recordings", conferenceRecordingRoutes);
 app.use("/api/conference-transcripts", conferenceTranscriptRoutes);
 app.use("/api/chatbot-conversations", chatBotConversationRoutes);
 app.use("/api/chat-assets", chatAssetRoutes);
+app.use("/api/stories", storyRoutes);
 
 /* ============================================
    NEW ADVANCED HIRING + BPO OPERATIONS SYSTEM
@@ -456,12 +434,9 @@ app.use("/api/classes", classRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/assignments", assignmentRoutes);
 app.use("/api/submissions", submissionRoutes);
-/* ============================================
-   CAREER HUB
-============================================ */
 
 /* ============================================
-   OPPORTUNITIES
+   CAREER HUB
 ============================================ */
 
 app.use(
@@ -469,171 +444,79 @@ app.use(
   opportunityRoutes
 );
 
-
-/* ============================================
-   SCHOOL ↔ COMPANY PARTNERSHIPS
-============================================ */
-
 app.use(
   "/api/school-company-partnerships",
   schoolCompanyPartnershipRoutes
 );
-
-
-/* ============================================
-   INTERNSHIP APPLICATIONS
-============================================ */
 
 app.use(
   "/api/internship-applications",
   internshipApplicationRoutes
 );
 
-
-/* ============================================
-   CAMPUS RECRUITMENT CAMPAIGNS
-============================================ */
-
 app.use(
   "/api/campus-recruitment-campaigns",
   campusRecruitmentCampaignRoutes
 );
-
-/* ============================================
-   SCHOLARSHIPS
-============================================ */
 
 app.use(
   "/api/scholarships",
   scholarshipRoutes
 );
 
-
-/* ============================================
-   SCHOLARSHIP APPLICATIONS
-============================================ */
-
 app.use(
   "/api/scholarship-applications",
   scholarshipApplicationRoutes
 );
-
-
-/* ============================================
-   CAREER EVENTS
-============================================ */
 
 app.use(
   "/api/career-events",
   careerEventRoutes
 );
 
-
-/* ============================================
-   CAREER EVENT REGISTRATIONS
-============================================ */
-
 app.use(
   "/api/career-event-registrations",
   careerEventRegistrationRoutes
 );
-
-
-/* ============================================
-   SHARED AIFT VENTURES
-============================================ */
 
 app.use(
   "/api/ventures",
   ventureRoutes
 );
 
-
 /* ============================================
    FAMILY & INVESTOR
 ============================================ */
-
-/*
-  Main Family account API.
-
-  Final endpoints include:
-
-  GET
-  /api/family/profile
-
-  PATCH
-  /api/family/profile
-
-  PATCH
-  /api/family/investor
-*/
 
 app.use(
   "/api/family",
   familyRoutes
 );
 
-
-/*
-  Family child profiles.
-
-  Final endpoints include:
-
-  GET
-  /api/family/children
-
-  GET
-  /api/family/children/:id
-
-  POST
-  /api/family/children
-
-  PATCH
-  /api/family/children/:id
-
-  PATCH
-  /api/family/children/:id/link-student
-
-  PATCH
-  /api/family/children/:id/unlink-student
-
-  DELETE
-  /api/family/children/:id
-*/
-
 app.use(
   "/api/family/children",
   familyChildrenRoutes
 );
 
-/* AIFT verified Student Identity */
 app.use(
   "/api/student-identity",
   studentIdentityRoutes
 );
 
-/* Consent-based Family ↔ Student connections */
 app.use(
   "/api/family-student-links",
   familyStudentLinkRoutes
 );
 
-/* Central AIFT trust and approval queue */
 app.use(
   "/api/review-cases",
   reviewCaseRoutes
 );
 
-/* Controlled AIFT investor ↔ Venture negotiation rooms */
 app.use(
   "/api/deal-rooms",
   dealRoomRoutes
 );
-
-
-/* ============================================
-   SCHOOL UPDATES
-============================================ */
 
 app.use(
   "/api/school-updates",
@@ -645,14 +528,7 @@ app.use(
   attendanceRoutes
 );
 
-/*
-  Analytics endpoints:
-
-  POST /api/analytics/events
-  GET  /api/analytics/school/:schoolId
-*/
 app.use("/api/analytics", analyticsRoutes);
-
 app.use("/api/saved", savedRoutes);
 app.use("/api/groups", groupRoutes);
 
@@ -701,18 +577,8 @@ app.use(
   studentPortfolioRoutes
 );
 
-
 /* ============================================
    KABEZYA AI
-============================================ */
-
-
-/* ============================================
-   STUDENT KABEZYA
-
-   Existing Student AI system.
-
-   This remains unchanged.
 ============================================ */
 
 app.use(
@@ -720,114 +586,25 @@ app.use(
   studentAIRoutes
 );
 
-
-/* ============================================
-   TEACHER KABEZYA
-
-   Existing Teacher Studio AI system.
-
-   IMPORTANT:
-   Keep the existing /api/kabezya mount because
-   teacherKabezya.js owns its /teacher routes.
-
-   Existing endpoints include:
-
-   POST
-   /api/kabezya/teacher/assistant
-
-   POST
-   /api/kabezya/teacher/analyze-class
-
-   POST
-   /api/kabezya/teacher/analyze-student
-
-   POST
-   /api/kabezya/teacher/inspect-submission
-
-   POST
-   /api/kabezya/teacher/generate-quiz
-
-   POST
-   /api/kabezya/teacher/generate-assignment
-
-   POST
-   /api/kabezya/teacher/lesson-plan
-
-   GET
-   /api/kabezya/teacher/conversations
-
-   POST
-   /api/kabezya/teacher/conversations
-
-   GET
-   /api/kabezya/teacher/conversations/:conversationId
-============================================ */
-
 app.use(
   "/api/kabezya",
   teacherKabezyaRoutes
 );
-
-
-/* ============================================
-   EMPLOYER KABEZYA
-
-   Employer Kabezya is intentionally mounted
-   separately because employerKabezya.js defines
-   its routes from / directly.
-
-   Final API paths:
-
-   GET
-   /api/kabezya/employer
-
-   POST
-   /api/kabezya/employer/assistant
-
-   GET
-   /api/kabezya/employer/conversations
-
-   POST
-   /api/kabezya/employer/conversations
-
-   GET
-   /api/kabezya/employer/conversations/:conversationId
-
-   POST
-   /api/kabezya/employer/conversations/:conversationId/messages
-
-   PATCH
-   /api/kabezya/employer/conversations/:conversationId/messages/:messageId
-
-   DELETE
-   /api/kabezya/employer/conversations/:conversationId
-============================================ */
 
 app.use(
   "/api/kabezya/employer",
   employerKabezyaRoutes
 );
 
-
-/* ============================================
-   SUPPORT
-============================================ */
-
 app.use(
   "/api/support",
   supportRoutes
 );
 
-
-/* ============================================
-   MEDIA
-============================================ */
-
 app.use(
   "/api/media",
   mediaRoutes
 );
-
 
 /* ============================================
    SOCKET.IO
@@ -867,40 +644,20 @@ const io = new Server(server, {
       true
   },
 
-  /*
-    Limit the size of one Socket.IO message to approximately
-    one megabyte.
-  */
   maxHttpBufferSize: 1e6,
-
-  /*
-    Heartbeat settings used to detect disconnected clients.
-  */
   pingInterval: 25000,
   pingTimeout: 20000
 });
 
 const onlineUsers = new Map();
 
-
 io.on("connection", socket => {
   console.log("User connected:", socket.id);
-
-
-  /* ============================================
-     AUTHENTICATED PRIVATE SOCKET ROOM
-  ============================================ */
 
   socket.on(
     "join",
     async payload => {
-
       try {
-
-        /* ========================================
-           NORMALIZE CLIENT PAYLOAD
-        ======================================== */
-
         const joinData =
           payload &&
           typeof payload === "object"
@@ -908,16 +665,6 @@ io.on("connection", socket => {
             : {
                 userId: payload
               };
-
-
-        /* ========================================
-           GET AUTHENTICATION TOKEN
-
-           Prefer the Socket.IO handshake token.
-
-           joinData.token remains supported during
-           frontend migration.
-        ======================================== */
 
         const token =
           String(
@@ -929,9 +676,7 @@ io.on("connection", socket => {
           )
             .trim();
 
-
         if (!token) {
-
           console.warn(
             "Socket join rejected: missing token",
             {
@@ -939,7 +684,6 @@ io.on("connection", socket => {
                 socket.id
             }
           );
-
 
           socket.emit(
             "socketAuthError",
@@ -949,39 +693,27 @@ io.on("connection", socket => {
             }
           );
 
-
           return;
         }
 
-
-        /* ========================================
-           VERIFY JWT
-        ======================================== */
-
         let decoded;
 
-
         try {
-
           decoded =
             jwt.verify(
               token,
               process.env.JWT_SECRET
             );
-
         } catch (error) {
-
           console.warn(
             "Socket join rejected: invalid token",
             {
               socketId:
                 socket.id,
-
               message:
                 error.message
             }
           );
-
 
           socket.emit(
             "socketAuthError",
@@ -991,10 +723,8 @@ io.on("connection", socket => {
             }
           );
 
-
           return;
         }
-
 
         const authenticatedUserId =
           String(
@@ -1004,9 +734,7 @@ io.on("connection", socket => {
           )
             .trim();
 
-
         if (!authenticatedUserId) {
-
           socket.emit(
             "socketAuthError",
             {
@@ -1015,20 +743,8 @@ io.on("connection", socket => {
             }
           );
 
-
           return;
         }
-
-
-        /* ========================================
-           LOAD AUTHORITATIVE USER
-
-           IMPORTANT:
-           Do not trust userId or role supplied by
-           the browser.
-
-           JWT + MongoDB determine the real user.
-        ======================================== */
 
         const user =
           await User.findById(
@@ -1039,9 +755,7 @@ io.on("connection", socket => {
             )
             .lean();
 
-
         if (!user) {
-
           socket.emit(
             "socketAuthError",
             {
@@ -1050,22 +764,13 @@ io.on("connection", socket => {
             }
           );
 
-
           return;
         }
-
-
-        /* ========================================
-           ACCOUNT ACCESS CHECKS
-
-           Match middleware/auth.js behavior.
-        ======================================== */
 
         if (
           user.status ===
           "suspended"
         ) {
-
           socket.emit(
             "socketAuthError",
             {
@@ -1074,16 +779,13 @@ io.on("connection", socket => {
             }
           );
 
-
           return;
         }
-
 
         if (
           user.isBlockedByEmployer ===
           true
         ) {
-
           socket.emit(
             "socketAuthError",
             {
@@ -1092,20 +794,13 @@ io.on("connection", socket => {
             }
           );
 
-
           return;
         }
-
-
-        /* ========================================
-           AUTHORITATIVE SOCKET IDENTITY
-        ======================================== */
 
         const userId =
           String(
             user._id
           );
-
 
         const userRole =
           String(
@@ -1115,48 +810,21 @@ io.on("connection", socket => {
             .trim()
             .toLowerCase();
 
-
         socket.userId =
           userId;
-
 
         socket.userRole =
           userRole;
 
-
         socket.data.userId =
           userId;
-
 
         socket.data.userRole =
           userRole;
 
-
-        /* ========================================
-           PRIVATE USER ROOM
-
-           Used by:
-           - messages
-           - notifications
-           - calls
-           - submissions
-           - grading
-           - realtime teacher updates
-        ======================================== */
-
         socket.join(
           userId
         );
-
-
-        /* ========================================
-           SCHOOL ANALYTICS ROOM
-
-           Preserve your existing behavior.
-
-           Teachers and students do not join the
-           school analytics room.
-        ======================================== */
 
         if (
           userRole ===
@@ -1164,90 +832,63 @@ io.on("connection", socket => {
           userRole ===
             "admin"
         ) {
-
           socket.join(
             schoolAnalyticsRoom(
               userId
             )
           );
-
         }
-
-
-        /* ========================================
-           ONLINE PRESENCE
-        ======================================== */
 
         onlineUsers.set(
           userId,
           {
             socketId:
               socket.id,
-
             lastSeen:
               new Date(),
-
             online:
               true
           }
         );
-
 
         io.emit(
           "userOnline",
           {
             userId,
-
             online:
               true
           }
         );
 
-
-        /* ========================================
-           CONFIRM SUCCESSFUL AUTHENTICATED JOIN
-
-           Teacher Studio Part 19 can listen for
-           this event.
-        ======================================== */
-
         socket.emit(
           "socketReady",
           {
             userId,
-
             role:
               userRole
           }
         );
-
 
         console.log(
           "Authenticated socket joined:",
           {
             socketId:
               socket.id,
-
             userId,
-
             role:
               userRole
           }
         );
-
       } catch (error) {
-
         console.error(
           "Socket join failed:",
           {
             socketId:
               socket.id,
-
             message:
               error.message
           }
         );
-
 
         socket.emit(
           "socketAuthError",
@@ -1256,9 +897,7 @@ io.on("connection", socket => {
               "Realtime authentication could not be completed."
           }
         );
-
       }
-
     }
   );
 
@@ -1298,126 +937,122 @@ io.on("connection", socket => {
     });
   });
 
-socket.on("callUser", ({
-  to,
-  from,
-  callerName,
-  callerAvatar,
-  callType,
-  conversationId,
-  meetingId,
-  callId,
-  offer
-}) => {
-  if (!to) return;
-
-  io.to(String(to)).emit("incomingCall", {
-    from: from || socket.userId,
-    callerName: callerName || "AIFT User",
-    callerAvatar: callerAvatar || "",
-    callType: callType || "audio",
+  socket.on("callUser", ({
+    to,
+    from,
+    callerName,
+    callerAvatar,
+    callType,
     conversationId,
     meetingId,
     callId,
-    offer,
-    startedAt: new Date()
+    offer
+  }) => {
+    if (!to) return;
+
+    io.to(String(to)).emit("incomingCall", {
+      from: from || socket.userId,
+      callerName: callerName || "AIFT User",
+      callerAvatar: callerAvatar || "",
+      callType: callType || "audio",
+      conversationId,
+      meetingId,
+      callId,
+      offer,
+      startedAt: new Date()
+    });
   });
-});
 
-socket.on("acceptCall", ({ to, meetingId, callId, answer }) => {
-  if (!to) return;
+  socket.on("acceptCall", ({ to, meetingId, callId, answer }) => {
+    if (!to) return;
 
-  io.to(String(to)).emit("callAccepted", {
-    from: socket.userId,
-    meetingId,
-    callId,
-    answer,
-    acceptedAt: new Date()
+    io.to(String(to)).emit("callAccepted", {
+      from: socket.userId,
+      meetingId,
+      callId,
+      answer,
+      acceptedAt: new Date()
+    });
   });
-});
 
-socket.on("declineCall", ({ to, meetingId, callId, reason }) => {
-  if (!to) return;
+  socket.on("declineCall", ({ to, meetingId, callId, reason }) => {
+    if (!to) return;
 
-  io.to(String(to)).emit("callDeclined", {
-    from: socket.userId,
-    meetingId,
-    callId,
-    reason: reason || "declined",
-    declinedAt: new Date()
+    io.to(String(to)).emit("callDeclined", {
+      from: socket.userId,
+      meetingId,
+      callId,
+      reason: reason || "declined",
+      declinedAt: new Date()
+    });
   });
-});
 
-socket.on("endCall", ({ to, meetingId, callId }) => {
-  if (!to) return;
+  socket.on("endCall", ({ to, meetingId, callId }) => {
+    if (!to) return;
 
-  io.to(String(to)).emit("callEnded", {
-    from: socket.userId,
-    meetingId,
-    callId,
-    endedAt: new Date()
+    io.to(String(to)).emit("callEnded", {
+      from: socket.userId,
+      meetingId,
+      callId,
+      endedAt: new Date()
+    });
   });
-});
 
-  /* ============================================
-   MEDIA LIBRARY ROOM
-============================================ */
+  socket.on(
+    "joinMediaRoom",
+    ({
+      classId,
+      schoolId
+    } = {}) => {
+      if (!socket.userId) {
+        return;
+      }
 
-socket.on(
-  "joinMediaRoom",
-  ({
-    classId,
-    schoolId
-  } = {}) => {
-    if (!socket.userId) {
-      return;
+      const normalizedClassId =
+        String(classId || "").trim();
+
+      const normalizedSchoolId =
+        String(schoolId || "").trim();
+
+      if (normalizedClassId) {
+        socket.join(
+          `media:class:${normalizedClassId}`
+        );
+      }
+
+      if (normalizedSchoolId) {
+        socket.join(
+          `media:school:${normalizedSchoolId}`
+        );
+      }
     }
+  );
 
-    const normalizedClassId =
-      String(classId || "").trim();
+  socket.on(
+    "leaveMediaRoom",
+    ({
+      classId,
+      schoolId
+    } = {}) => {
+      const normalizedClassId =
+        String(classId || "").trim();
 
-    const normalizedSchoolId =
-      String(schoolId || "").trim();
+      const normalizedSchoolId =
+        String(schoolId || "").trim();
 
-    if (normalizedClassId) {
-      socket.join(
-        `media:class:${normalizedClassId}`
-      );
+      if (normalizedClassId) {
+        socket.leave(
+          `media:class:${normalizedClassId}`
+        );
+      }
+
+      if (normalizedSchoolId) {
+        socket.leave(
+          `media:school:${normalizedSchoolId}`
+        );
+      }
     }
-
-    if (normalizedSchoolId) {
-      socket.join(
-        `media:school:${normalizedSchoolId}`
-      );
-    }
-  }
-);
-
-socket.on(
-  "leaveMediaRoom",
-  ({
-    classId,
-    schoolId
-  } = {}) => {
-    const normalizedClassId =
-      String(classId || "").trim();
-
-    const normalizedSchoolId =
-      String(schoolId || "").trim();
-
-    if (normalizedClassId) {
-      socket.leave(
-        `media:class:${normalizedClassId}`
-      );
-    }
-
-    if (normalizedSchoolId) {
-      socket.leave(
-        `media:school:${normalizedSchoolId}`
-      );
-    }
-  }
-);
+  );
 
   socket.on("joinMeetingRoom", ({ meetingId }) => {
     if (!meetingId || !socket.userId) return;
@@ -1469,66 +1104,54 @@ socket.on(
     });
   });
 
-socket.on("webrtcOffer", ({ to, offer, meetingId, callId }) => {
-  if (!to || !offer) return;
+  socket.on("webrtcOffer", ({ to, offer, meetingId, callId }) => {
+    if (!to || !offer) return;
 
-  io.to(String(to)).emit("webrtcOffer", {
-    from: socket.userId,
-    offer,
-    meetingId,
-    callId
+    io.to(String(to)).emit("webrtcOffer", {
+      from: socket.userId,
+      offer,
+      meetingId,
+      callId
+    });
   });
-});
 
-socket.on("webrtcAnswer", ({ to, answer, meetingId, callId }) => {
-  if (!to || !answer) return;
+  socket.on("webrtcAnswer", ({ to, answer, meetingId, callId }) => {
+    if (!to || !answer) return;
 
-  io.to(String(to)).emit("webrtcAnswer", {
-    from: socket.userId,
-    answer,
-    meetingId,
-    callId
+    io.to(String(to)).emit("webrtcAnswer", {
+      from: socket.userId,
+      answer,
+      meetingId,
+      callId
+    });
   });
-});
 
-socket.on("webrtcIceCandidate", ({ to, candidate, meetingId, callId }) => {
-  if (!to || !candidate) return;
+  socket.on("webrtcIceCandidate", ({ to, candidate, meetingId, callId }) => {
+    if (!to || !candidate) return;
 
-  io.to(String(to)).emit("webrtcIceCandidate", {
-    from: socket.userId,
-    candidate,
-    meetingId,
-    callId
+    io.to(String(to)).emit("webrtcIceCandidate", {
+      from: socket.userId,
+      candidate,
+      meetingId,
+      callId
+    });
   });
-});
 
   socket.on("disconnect", () => {
     console.log("User disconnected:", socket.id);
 
     if (socket.userId) {
-      /*
-  Leave analytics room.
+      if (
+        socket.userRole === "school" ||
+        socket.userRole === "admin"
+      ) {
+        socket.leave(
+          schoolAnalyticsRoom(
+            socket.userId
+          )
+        );
+      }
 
-  Socket.IO removes all rooms automatically,
-  but this keeps our own state explicit.
-*/
-
-if (
-  socket.userRole === "school" ||
-  socket.userRole === "admin"
-) {
-
-  socket.leave(
-
-    schoolAnalyticsRoom(
-
-      socket.userId
-
-    )
-
-  );
-
-}
       onlineUsers.set(socket.userId, {
         socketId: socket.id,
         lastSeen: new Date(),
@@ -1550,10 +1173,6 @@ app.set("io", io);
    GLOBAL EXPRESS ERROR HANDLER
 ============================================ */
 
-/*
-  This must remain after all route declarations and before
-  MongoDB connects and starts the HTTP server.
-*/
 app.use((error, req, res, next) => {
   console.error("Unhandled Express error:", {
     message: error.message,
