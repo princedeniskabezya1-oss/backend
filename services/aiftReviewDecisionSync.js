@@ -3,6 +3,9 @@ const VentureInterest = require("../models/VentureInterest");
 const ScholarshipApplication = require("../models/ScholarshipApplication");
 const InternshipApplication = require("../models/InternshipApplication");
 const SchoolCompanyPartnership = require("../models/SchoolCompanyPartnership");
+const SchoolOpportunity = require("../models/SchoolOpportunity");
+const SchoolScholarship = require("../models/SchoolScholarship");
+const CareerEvent = require("../models/CareerEvent");
 const Notification = require("../models/Notification");
 const ChatSafetyViolation = require("../models/ChatSafetyViolation");
 
@@ -74,6 +77,84 @@ async function syncVentureInterest(review,admin){
   }
 
   return { synced:true, resourceStatus:interest.status };
+}
+
+async function syncCareerOpportunity(review,admin){
+  const opportunity=await SchoolOpportunity.findById(review.resourceId);
+  if(!opportunity) return { synced:false, reason:"Career Hub opportunity not found" };
+
+  if(review.status === "approved"){
+    opportunity.status="active";
+    opportunity.publishedAt=opportunity.publishedAt || new Date();
+  } else if(review.status === "rejected"){
+    opportunity.status="rejected";
+  } else if(review.status === "information_requested"){
+    opportunity.status="pending";
+  } else if(review.status === "cancelled"){
+    opportunity.status="draft";
+  } else {
+    return { synced:false, reason:"No Career Hub opportunity state change required" };
+  }
+
+  opportunity.updatedBy=id(admin);
+  await opportunity.save();
+  const owner=opportunity.employerId || opportunity.schoolId;
+  await notify(
+    owner,
+    `AIFT Review ${review.caseNumber}: opportunity “${opportunity.title}” is ${review.status.replaceAll("_"," ")}.`,
+    opportunity.employerId ? "/employer.html" : "/school.html",
+    admin
+  );
+  return { synced:true, resourceStatus:opportunity.status };
+}
+
+async function syncScholarshipPublish(review,admin){
+  const scholarship=await SchoolScholarship.findById(review.resourceId);
+  if(!scholarship) return { synced:false, reason:"Scholarship not found" };
+
+  if(review.status === "approved"){
+    scholarship.status="open";
+    scholarship.publishedAt=scholarship.publishedAt || new Date();
+  } else if(["rejected","cancelled","information_requested"].includes(review.status)){
+    scholarship.status="draft";
+  } else {
+    return { synced:false, reason:"No scholarship publication state change required" };
+  }
+
+  scholarship.updatedBy=id(admin);
+  await scholarship.save();
+  await notify(
+    scholarship.schoolId,
+    `AIFT Review ${review.caseNumber}: scholarship “${scholarship.title}” is ${review.status.replaceAll("_"," ")}.`,
+    "/school.html",
+    admin
+  );
+  return { synced:true, resourceStatus:scholarship.status };
+}
+
+async function syncCareerEvent(review,admin){
+  const event=await CareerEvent.findById(review.resourceId);
+  if(!event) return { synced:false, reason:"Career event not found" };
+
+  if(review.status === "approved"){
+    event.status=event.registrationRequired === false ? "published" : "registration_open";
+    event.publishedAt=event.publishedAt || new Date();
+  } else if(["rejected","cancelled","information_requested"].includes(review.status)){
+    event.status="draft";
+  } else {
+    return { synced:false, reason:"No career event publication state change required" };
+  }
+
+  event.updatedBy=id(admin);
+  await event.save();
+  const owner=event.companyId || event.schoolId;
+  await notify(
+    owner,
+    `AIFT Review ${review.caseNumber}: career event “${event.title}” is ${review.status.replaceAll("_"," ")}.`,
+    event.companyId ? "/employer.html" : "/school.html",
+    admin
+  );
+  return { synced:true, resourceStatus:event.status };
 }
 
 async function syncScholarshipApplication(review,admin){
@@ -226,9 +307,13 @@ async function syncReviewDecision(review,admin){
   switch(review.type){
     case "venture": return syncVenture(review,admin);
     case "investment_interest":
+      return syncVentureInterest(review,admin);
     case "opportunity":
       if(review.resourceType === "VentureInterest") return syncVentureInterest(review,admin);
+      if(review.resourceType === "SchoolOpportunity") return syncCareerOpportunity(review,admin);
       return { synced:false, reason:"Unsupported opportunity resource" };
+    case "scholarship": return syncScholarshipPublish(review,admin);
+    case "career_event": return syncCareerEvent(review,admin);
     case "scholarship_application": return syncScholarshipApplication(review,admin);
     case "internship": return syncInternshipApplication(review,admin);
     case "partnership": return syncPartnership(review,admin);
