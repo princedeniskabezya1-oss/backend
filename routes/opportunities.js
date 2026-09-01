@@ -12,22 +12,54 @@ const {
 } =
   require("../controllers/opportunityController");
 
+const {
+  createCareerHubListing,
+  getPartnerDirectory,
+  getVerifiedPartnerships
+} =
+  require("../controllers/careerHubCreateController");
+
 
 const router =
   express.Router();
 
 
 /* =========================================================
-   ALL CAREER OPPORTUNITY ROUTES REQUIRE AUTHENTICATION
+   VERIFIED PARTNERSHIPS — PUBLIC PROFILE SAFE DATA
 
-   Student public/discovery behavior can still be supported
-   through authenticated student accounts.
+   Only active AIFT-approved School ↔ Company relationships
+   are exposed by this endpoint.
+========================================================= */
 
-   We can add a specifically designed public endpoint later
-   if AIFT needs logged-out opportunity discovery.
+router.get(
+  "/verified-partnerships",
+  getVerifiedPartnerships
+);
+
+
+/* =========================================================
+   AUTHENTICATED CAREER HUB
 ========================================================= */
 
 router.use(auth);
+
+
+/* =========================================================
+   SIMPLE CAREER HUB CREATION
+
+   Shared by School and Employer dashboards. The controller
+   normalizes friendly form values and queues AIFT review.
+========================================================= */
+
+router.get(
+  "/career-hub-directory",
+  getPartnerDirectory
+);
+
+router.post(
+  "/career-hub-create",
+  createCareerHubListing
+);
 
 
 /* =========================================================
