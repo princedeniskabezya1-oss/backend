@@ -5,6 +5,7 @@ const Job = require("../models/Job");
 const User = require("../models/User");
 const Application = require("../models/Application");
 const adminOnly = require("../middleware/adminOnly");
+const adminWorkTicketRoutes = require("./adminWorkTickets");
 
 /*
 ================================================
@@ -45,5 +46,15 @@ router.get("/stats", adminOnly, async (req, res) => {
     res.status(500).json({ message: "Failed to load admin stats" });
   }
 });
+
+/*
+================================================
+AIFT ADMIN WORK QUEUE
+Persistent operational tickets generated from Review Cases,
+Deal Rooms, submitted documents, meeting expectations,
+negotiation decisions, and Partnership Workspace activity.
+================================================
+*/
+router.use("/work-tickets", adminWorkTicketRoutes);
 
 module.exports = router;
