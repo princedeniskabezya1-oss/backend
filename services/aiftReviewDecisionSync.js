@@ -148,12 +148,14 @@ async function syncInternshipApplication(review,admin){
 async function syncPartnership(review,admin){
   const partnership=await SchoolCompanyPartnership.findById(review.resourceId);
   if(!partnership) return { synced:false, reason:"Partnership not found" };
+
   let next=null;
   if(review.status === "approved") next="review";
   else if(review.status === "rejected") next="rejected";
   else if(review.status === "cancelled") next="cancelled";
   else if(review.status === "information_requested") next="pending";
   else return { synced:false, reason:"No partnership state change required" };
+
   if(partnership.status !== next){
     partnership.status=next;
     partnership.statusHistory=Array.isArray(partnership.statusHistory) ? partnership.statusHistory : [];
@@ -164,12 +166,54 @@ async function syncPartnership(review,admin){
     if(next === "cancelled") partnership.cancelledAt=partnership.cancelledAt || new Date();
     await partnership.save();
   }
-  const requester=id(review.requesterId);
-  const school=id(partnership.schoolId);
-  const company=id(partnership.companyId);
-  const recipient=String(requester) === String(school) ? company : school;
-  await notify(requester,`AIFT Review ${review.caseNumber}: partnership proposal is ${review.status.replaceAll("_"," ")}.`,String(requester) === String(school) ? "/school.html" : "/employer.html",admin);
-  if(review.status === "approved") await notify(recipient,`AIFT approved partnership proposal ${review.caseNumber} for your review.`,String(recipient) === String(school) ? "/school.html" : "/employer.html",admin);
+
+  const requester=String(id(review.requesterId) || "");
+  const relationshipKind=partnership.relationshipKind || "school_company";
+
+  if(relationshipKind === "company_company"){
+    const firstCompany=String(id(partnership.companyId) || "");
+    const secondCompany=String(id(partnership.partnerCompanyId) || "");
+    const recipient=requester === firstCompany ? secondCompany : firstCompany;
+
+    await notify(
+      requester,
+      `AIFT Review ${review.caseNumber}: company partnership proposal is ${review.status.replaceAll("_"," ")}.`,
+      "/employer.html",
+      admin
+    );
+
+    if(review.status === "approved" && recipient){
+      await notify(
+        recipient,
+        `AIFT approved company partnership proposal ${review.caseNumber}. You can now privately negotiate the agreement, request a meeting and review the proposal.`,
+        "/employer.html",
+        admin
+      );
+    }
+
+    return { synced:true, resourceStatus:partnership.status };
+  }
+
+  const school=String(id(partnership.schoolId) || "");
+  const company=String(id(partnership.companyId) || "");
+  const recipient=requester === school ? company : school;
+
+  await notify(
+    requester,
+    `AIFT Review ${review.caseNumber}: partnership proposal is ${review.status.replaceAll("_"," ")}.`,
+    requester === school ? "/school.html" : "/employer.html",
+    admin
+  );
+
+  if(review.status === "approved"){
+    await notify(
+      recipient,
+      `AIFT approved partnership proposal ${review.caseNumber} for your review.`,
+      recipient === school ? "/school.html" : "/employer.html",
+      admin
+    );
+  }
+
   return { synced:true, resourceStatus:partnership.status };
 }
 
@@ -177,7 +221,12 @@ async function syncChatSafety(review,admin){
   const violation=await ChatSafetyViolation.findById(review.resourceId);
   if(!violation)return {synced:false,reason:"Chat safety violation not found"};
   if(["approved","completed","rejected","cancelled"].includes(review.status)){
-    violation.reviewed=true;violation.reviewedBy=id(admin);violation.reviewedAt=new Date();violation.reviewNotes=historyNote(review);violation.restrictedUntil=new Date();await violation.save();
+    violation.reviewed=true;
+    violation.reviewedBy=id(admin);
+    violation.reviewedAt=new Date();
+    violation.reviewNotes=historyNote(review);
+    violation.restrictedUntil=new Date();
+    await violation.save();
     await notify(violation.userId,`AIFT completed messaging safety review ${review.caseNumber}. Your review restriction has been released.`,"/messages.html",admin);
     return {synced:true,resourceStatus:"restriction_released"};
   }
