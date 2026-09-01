@@ -109,7 +109,12 @@ async function applyToCareerOpportunity(req,res){
     const profile=applicationProfile(opportunity);
     const passportSnapshot=await buildPassportSnapshot(applicant,bool(req.body.includePassport));
     const preferredStartDate=dateOrNull(req.body.preferredStartDate);
-    const schoolId=id(applicant.linkedSchoolId || applicant.schoolId || opportunity.schoolId) || null;
+    const schoolId=id(
+      applicant.linkedSchoolId ||
+      applicant.createdBySchool ||
+      applicant.schoolId ||
+      opportunity.schoolId
+    ) || null;
     const now=new Date();
 
     const application=await InternshipApplication.create({
