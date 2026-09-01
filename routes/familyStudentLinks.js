@@ -8,8 +8,16 @@ const Notification = require("../models/Notification");
 
 const router = express.Router();
 
+const FAMILY_STUDENT_EXCLUDED_ROLES = new Set(["student","employer","school"]);
+
 function userId(user){ return user?._id || user?.id; }
 function clean(value,max=100){ return String(value || "").trim().slice(0,max); }
+function roleOf(user){ return clean(user?.role,50).toLowerCase(); }
+function canManageFamilyStudents(user){
+  const id=userId(user);
+  const role=roleOf(user);
+  return Boolean(id && role && !FAMILY_STUDENT_EXCLUDED_ROLES.has(role));
+}
 
 async function expireRequests(query){
   await FamilyStudentLinkRequest.updateMany(
@@ -20,7 +28,7 @@ async function expireRequests(query){
 
 router.get("/family", auth, async (req,res) => {
   try{
-    if(req.user.role !== "family") return res.status(403).json({ message:"Family account required" });
+    if(!canManageFamilyStudents(req.user)) return res.status(403).json({ message:"This account cannot manage Family students" });
     await expireRequests({ familyId:userId(req.user) });
     const requests = await FamilyStudentLinkRequest.find({ familyId:userId(req.user) })
       .populate("familyChildId", "firstName lastName profileImage linkStatus linkedStudentId")
@@ -37,7 +45,7 @@ router.get("/family", auth, async (req,res) => {
 
 router.post("/request", auth, async (req,res) => {
   try{
-    if(req.user.role !== "family") return res.status(403).json({ message:"Family account required" });
+    if(!canManageFamilyStudents(req.user)) return res.status(403).json({ message:"This account cannot manage Family students" });
 
     const familyChildId = clean(req.body?.familyChildId,50);
     const aiftStudentId = clean(req.body?.aiftStudentId,50).toUpperCase();
@@ -45,12 +53,12 @@ router.post("/request", auth, async (req,res) => {
     const allowedRelationships = new Set(["parent","guardian","sibling","family_member","other"]);
 
     if(!familyChildId || !/^AIFT-STU-[A-F0-9]{10}$/.test(aiftStudentId) || !allowedRelationships.has(relationshipType)){
-      return res.status(400).json({ message:"Child, valid AIFT Student ID and relationship are required" });
+      return res.status(400).json({ message:"Student profile, valid AIFT Student ID and relationship are required" });
     }
 
     const child = await FamilyChild.findOne({ _id:familyChildId, familyId:userId(req.user), status:{ $ne:"archived" } });
-    if(!child) return res.status(404).json({ message:"Family child profile not found" });
-    if(child.linkStatus === "linked") return res.status(409).json({ message:"This child is already linked" });
+    if(!child) return res.status(404).json({ message:"Family student profile not found" });
+    if(child.linkStatus === "linked") return res.status(409).json({ message:"This student is already linked" });
 
     const identity = await StudentIdentity.findOne({ aiftStudentId, status:"active" });
     if(!identity) return res.status(404).json({ message:"Verified AIFT Student ID not found" });
@@ -60,7 +68,7 @@ router.post("/request", auth, async (req,res) => {
 
     await expireRequests({ familyId:userId(req.user), familyChildId:child._id });
     const existing = await FamilyStudentLinkRequest.findOne({ familyId:userId(req.user), familyChildId:child._id, status:"pending" });
-    if(existing) return res.status(409).json({ message:"This child already has a pending connection request" });
+    if(existing) return res.status(409).json({ message:"This student already has a pending connection request" });
 
     const request = await FamilyStudentLinkRequest.create({
       familyId:userId(req.user), familyChildId:child._id, studentId:student._id,
@@ -74,7 +82,7 @@ router.post("/request", auth, async (req,res) => {
 
     await Notification.create({
       user:student._id, type:"family_link_request", sender:userId(req.user),
-      text:`A Family account requested to connect as your ${relationshipType.replaceAll("_"," ")}. Review the request before sharing Family access.`,
+      text:`An AIFT ${roleOf(req.user).replaceAll("_"," ")} account requested to connect as your ${relationshipType.replaceAll("_"," ")} for Family access. Review the request before sharing Family access.`,
       link:`/student.html?section=notifications&familyLinkRequest=${request._id}`
     });
 
@@ -87,7 +95,7 @@ router.post("/request", auth, async (req,res) => {
 
 router.patch("/:id/cancel", auth, async (req,res) => {
   try{
-    if(req.user.role !== "family") return res.status(403).json({ message:"Family account required" });
+    if(!canManageFamilyStudents(req.user)) return res.status(403).json({ message:"This account cannot manage Family students" });
     const request = await FamilyStudentLinkRequest.findOne({ _id:req.params.id, familyId:userId(req.user), status:"pending" });
     if(!request) return res.status(404).json({ message:"Pending connection request not found" });
     request.status = "cancelled";
@@ -106,7 +114,7 @@ router.get("/student/pending", auth, async (req,res) => {
     if(req.user.role !== "student") return res.status(403).json({ message:"Student account required" });
     await expireRequests({ studentId:userId(req.user) });
     const requests = await FamilyStudentLinkRequest.find({ studentId:userId(req.user), status:"pending" })
-      .populate("familyId", "name profileImage")
+      .populate("familyId", "name profileImage role")
       .populate("familyChildId", "firstName lastName profileImage")
       .sort({ createdAt:-1 }).lean();
     return res.json({ requests });
@@ -120,7 +128,7 @@ router.get("/student/active", auth, async (req,res) => {
   try{
     if(req.user.role !== "student") return res.status(403).json({ message:"Student account required" });
     const requests = await FamilyStudentLinkRequest.find({ studentId:userId(req.user), status:"accepted" })
-      .populate("familyId", "name profileImage")
+      .populate("familyId", "name profileImage role")
       .populate("familyChildId", "firstName lastName profileImage")
       .sort({ respondedAt:-1 }).lean();
     return res.json({ requests });
@@ -146,7 +154,7 @@ router.patch("/:id/respond", auth, async (req,res) => {
 
     if(decision === "accept"){
       const conflict = await FamilyChild.exists({ familyId:request.familyId, linkedStudentId:userId(req.user), _id:{ $ne:request.familyChildId }, status:{ $ne:"archived" } });
-      if(conflict) return res.status(409).json({ message:"This student is already linked in that Family account" });
+      if(conflict) return res.status(409).json({ message:"This student is already linked in that Family workspace" });
     }
 
     request.status = decision === "accept" ? "accepted" : "declined";
@@ -185,7 +193,7 @@ router.patch("/:id/revoke", auth, async (req,res) => {
 
     request.status = "revoked"; request.revokedAt = new Date(); await request.save();
     await FamilyChild.updateOne({ _id:request.familyChildId, familyId:request.familyId, linkedStudentId:userId(req.user) }, { $set:{ linkedStudentId:null, linkStatus:"unlinked", consentConfirmed:false, consentConfirmedAt:null } });
-    await Notification.create({ user:request.familyId, type:"family_link_revoked", sender:userId(req.user), text:"An AIFT student revoked a Family account connection.", link:"/family.html" });
+    await Notification.create({ user:request.familyId, type:"family_link_revoked", sender:userId(req.user), text:"An AIFT student revoked a Family workspace connection.", link:"/family.html" });
     return res.json({ message:"Family connection revoked" });
   }catch(error){
     console.error("REVOKE FAMILY STUDENT LINK ERROR:",error);
