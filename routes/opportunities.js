@@ -19,6 +19,16 @@ const {
 } =
   require("../controllers/careerHubCreateController");
 
+const {
+  getWorkspace,
+  updateAgreement,
+  proposeWorkItem,
+  respondWorkItem,
+  requestMeeting,
+  respondMeeting
+} =
+  require("../controllers/partnershipWorkspaceController");
+
 
 const router =
   express.Router();
@@ -59,6 +69,46 @@ router.get(
 router.post(
   "/career-hub-create",
   createCareerHubListing
+);
+
+
+/* =========================================================
+   PRIVATE PARTNERSHIP WORKSPACE
+
+   AIFT first verifies the introduction. While the partnership
+   is in review, the School and Company can privately agree on
+   scope, propose work and request an AIFT meeting before the
+   relationship becomes approved/active/public.
+========================================================= */
+
+router.get(
+  "/partnership-workspace/:partnershipId",
+  getWorkspace
+);
+
+router.patch(
+  "/partnership-workspace/:partnershipId/agreement",
+  updateAgreement
+);
+
+router.post(
+  "/partnership-workspace/:partnershipId/work-items",
+  proposeWorkItem
+);
+
+router.patch(
+  "/partnership-workspace/:partnershipId/work-items/:itemId/respond",
+  respondWorkItem
+);
+
+router.post(
+  "/partnership-workspace/:partnershipId/meetings",
+  requestMeeting
+);
+
+router.patch(
+  "/partnership-workspace/:partnershipId/meetings/:requestId/respond",
+  respondMeeting
 );
 
 
