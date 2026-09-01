@@ -10,27 +10,10 @@ const COMPANY_ROLES = new Set(["employer","company"]);
 const WORKSPACE_STATUSES = new Set(["review","approved","active","paused"]);
 const EDITABLE_STATUSES = new Set(["review","approved"]);
 const CAPABILITY_KEYS = [
-  "internships",
-  "jobs",
-  "recruitment",
-  "training",
-  "careerEvents",
-  "scholarships",
-  "mentorship",
-  "research"
+  "internships","jobs","recruitment","training","careerEvents","scholarships","mentorship","research"
 ];
 const WORK_TYPES = new Set([
-  "internship",
-  "job",
-  "recruitment",
-  "training",
-  "scholarship",
-  "career_event",
-  "mentorship",
-  "research",
-  "student_project",
-  "industry_project",
-  "other"
+  "internship","job","recruitment","training","scholarship","career_event","mentorship","research","student_project","industry_project","other"
 ]);
 
 function id(value){
@@ -47,23 +30,45 @@ function list(value,max=500){
   return [...new Set(source.map(item=>text(item,max)).filter(Boolean))].slice(0,100);
 }
 function bool(value){ return value === true || value === "true" || value === 1 || value === "1"; }
+function isCompanyPartnership(partnership){ return partnership?.relationshipKind === "company_company"; }
+
 function partyRole(req,partnership){
   if(role(req) === "admin") return "admin";
-  if(role(req) === "school" && same(partnership.schoolId,userId(req))) return "school";
-  if(COMPANY_ROLES.has(role(req)) && same(partnership.companyId,userId(req))) return "company";
+  const me=userId(req);
+
+  if(role(req) === "school" && same(partnership.schoolId,me)) return "school";
+
+  if(COMPANY_ROLES.has(role(req))){
+    if(same(partnership.companyId,me)) return "company";
+    if(isCompanyPartnership(partnership) && same(partnership.partnerCompanyId,me)) return "partner_company";
+  }
+
   return "";
 }
+
 function counterpartId(req,partnership){
   const party=partyRole(req,partnership);
   if(party === "school") return id(partnership.companyId);
-  if(party === "company") return id(partnership.schoolId);
+  if(party === "company"){
+    return isCompanyPartnership(partnership)
+      ? id(partnership.partnerCompanyId)
+      : id(partnership.schoolId);
+  }
+  if(party === "partner_company") return id(partnership.companyId);
   return "";
 }
+
 function counterpartLabel(req,partnership){
   const party=partyRole(req,partnership);
-  return party === "school" ? (partnership.companyName || "Company") : (partnership.schoolName || "School");
+  if(party === "school") return partnership.companyName || "Company";
+  if(party === "partner_company") return partnership.companyName || "Company";
+  if(party === "company" && isCompanyPartnership(partnership)) return partnership.partnerCompanyName || "Partner company";
+  return partnership.schoolName || "School";
 }
-function dashboardLink(req){ return partyRole(req,{schoolId:userId(req),companyId:userId(req)}) === "school" ? "/school.html" : "/employer.html"; }
+
+function counterpartDashboard(req,partnership){
+  return isCompanyPartnership(partnership) ? "/employer.html" : partyRole(req,partnership) === "school" ? "/employer.html" : "/school.html";
+}
 
 async function notify(user,sender,message,link){
   if(!validId(user)) return;
@@ -81,7 +86,8 @@ async function loadPartnership(req,partnershipId){
 
   const partnership=await SchoolCompanyPartnership.findById(partnershipId)
     .populate("schoolId","name schoolName schoolLogo profileImage profilePicture avatar email")
-    .populate("companyId","name companyName logo profileImage profilePicture avatar email industry");
+    .populate("companyId","name companyName logo profileImage profilePicture avatar email industry")
+    .populate("partnerCompanyId","name companyName logo profileImage profilePicture avatar email industry");
 
   if(!partnership) return {error:{status:404,message:"Partnership not found."}};
   if(!partyRole(req,partnership)) return {error:{status:403,message:"You are not part of this partnership."}};
@@ -107,14 +113,18 @@ function workspaceView(workspace,partnership,req){
     ...obj,
     partnership:{
       _id:partnership._id,
+      relationshipKind:partnership.relationshipKind || "school_company",
       title:partnership.title,
       type:partnership.type,
       status:partnership.status,
       requestedBy:partnership.requestedBy,
+      requestedByOrganizationId:partnership.requestedByOrganizationId,
       schoolId:partnership.schoolId,
       companyId:partnership.companyId,
+      partnerCompanyId:partnership.partnerCompanyId,
       schoolName:partnership.schoolName,
       companyName:partnership.companyName,
+      partnerCompanyName:partnership.partnerCompanyName,
       capabilities:partnership.capabilities,
       activities:partnership.activities,
       targetPrograms:partnership.targetPrograms,
@@ -167,7 +177,6 @@ async function getWorkspace(req,res){
   try{
     const loaded=await loadPartnership(req,req.params.partnershipId);
     if(loaded.error) return res.status(loaded.error.status).json({success:false,message:loaded.error.message,partnershipStatus:loaded.partnership?.status});
-
     const workspace=await getOrCreateWorkspace(loaded.partnership);
     const populated=await populateWorkspace(workspace._id);
     return res.json({success:true,workspace:workspaceView(populated,loaded.partnership,req)});
@@ -182,16 +191,12 @@ async function updateAgreement(req,res){
     const loaded=await loadPartnership(req,req.params.partnershipId);
     if(loaded.error) return res.status(loaded.error.status).json({success:false,message:loaded.error.message});
     const partnership=loaded.partnership;
-
-    if(!EDITABLE_STATUSES.has(partnership.status)){
-      return res.status(409).json({success:false,message:"Agreement details can only be negotiated before the partnership becomes active."});
-    }
+    if(!EDITABLE_STATUSES.has(partnership.status)) return res.status(409).json({success:false,message:"Agreement details can only be negotiated before the partnership becomes active."});
 
     const workspace=await getOrCreateWorkspace(partnership);
     if(req.body.agreementSummary !== undefined) workspace.agreementSummary=text(req.body.agreementSummary,8000);
     if(req.body.activities !== undefined) workspace.activities=list(req.body.activities,1000);
     if(req.body.targetPrograms !== undefined) workspace.targetPrograms=list(req.body.targetPrograms,180);
-
     if(req.body.capabilities && typeof req.body.capabilities === "object"){
       CAPABILITY_KEYS.forEach(key=>{
         if(req.body.capabilities[key] !== undefined) workspace.capabilities[key]=bool(req.body.capabilities[key]);
@@ -229,13 +234,7 @@ async function proposeWorkItem(req,res){
     const type=WORK_TYPES.has(String(req.body.type||"").toLowerCase()) ? String(req.body.type).toLowerCase() : "other";
 
     const workspace=await getOrCreateWorkspace(loaded.partnership);
-    workspace.workItems.push({
-      type,
-      title,
-      description:text(req.body.description,3000),
-      proposedBy:userId(req),
-      status:"proposed"
-    });
+    workspace.workItems.push({type,title,description:text(req.body.description,3000),proposedBy:userId(req),status:"proposed"});
     workspace.updatedBy=userId(req);
     workspace.lastActivityAt=new Date();
     await workspace.save();
@@ -244,7 +243,7 @@ async function proposeWorkItem(req,res){
       counterpartId(req,loaded.partnership),
       userId(req),
       `A new ${type.replaceAll("_"," ")} idea was added to your partnership workspace: ${title}.`,
-      partyRole(req,loaded.partnership) === "school" ? "/employer.html" : "/school.html"
+      counterpartDashboard(req,loaded.partnership)
     );
 
     const populated=await populateWorkspace(workspace._id);
@@ -309,19 +308,10 @@ async function requestMeeting(req,res){
 
     const duration=Math.max(15,Math.min(Number(req.body.durationMinutes||30),180));
     const workspace=await getOrCreateWorkspace(loaded.partnership);
-
-    const existing=workspace.meetingRequests.some(item=>
-      same(item.requestedBy,userId(req)) && item.status === "requested"
-    );
+    const existing=workspace.meetingRequests.some(item=>same(item.requestedBy,userId(req)) && item.status === "requested");
     if(existing) return res.status(409).json({success:false,message:"You already have a meeting request waiting for the other party."});
 
-    workspace.meetingRequests.push({
-      requestedBy:userId(req),
-      preferredAt,
-      durationMinutes:duration,
-      purpose:text(req.body.purpose,1800),
-      status:"requested"
-    });
+    workspace.meetingRequests.push({requestedBy:userId(req),preferredAt,durationMinutes:duration,purpose:text(req.body.purpose,1800),status:"requested"});
     workspace.updatedBy=userId(req);
     workspace.lastActivityAt=new Date();
     await workspace.save();
@@ -330,7 +320,7 @@ async function requestMeeting(req,res){
       counterpartId(req,loaded.partnership),
       userId(req),
       `${counterpartLabel(req,loaded.partnership)} partnership: a private agreement meeting was requested.`,
-      partyRole(req,loaded.partnership) === "school" ? "/employer.html" : "/school.html"
+      counterpartDashboard(req,loaded.partnership)
     );
 
     const populated=await populateWorkspace(workspace._id);
@@ -371,13 +361,16 @@ async function respondMeeting(req,res){
       const counterparty=userId(req);
       const startTime=request.preferredAt;
       const endTime=new Date(startTime.getTime() + request.durationMinutes * 60000);
+      const partnership=loaded.partnership;
+      const relationshipLabel=isCompanyPartnership(partnership)
+        ? `${partnership.companyName || "Company"} × ${partnership.partnerCompanyName || "Company"}`
+        : `${partnership.schoolName || "School"} × ${partnership.companyName || "Company"}`;
 
-      const meeting=await Meeting.create({
-        title:`Partnership Agreement — ${loaded.partnership.schoolName || "School"} × ${loaded.partnership.companyName || "Company"}`,
+      const meetingPayload={
+        title:`Partnership Agreement — ${relationshipLabel}`,
         description:request.purpose || "Private AIFT partnership agreement meeting.",
         host:requester,
-        schoolId:id(loaded.partnership.schoolId),
-        companyId:id(loaded.partnership.companyId),
+        companyId:id(partnership.companyId),
         meetingCode:code,
         joinUrl:meetingJoinUrl(req,code),
         meetingType:"scheduled",
@@ -392,13 +385,11 @@ async function respondMeeting(req,res){
         waitingRoomEnabled:false,
         recordingEnabled:false,
         allowFileSharing:false,
-        participants:[{
-          user:requester,
-          role:"host",
-          audioEnabled:true,
-          videoEnabled:true
-        }]
-      });
+        participants:[{user:requester,role:"host",audioEnabled:true,videoEnabled:true}]
+      };
+      if(validId(partnership.schoolId)) meetingPayload.schoolId=id(partnership.schoolId);
+
+      const meeting=await Meeting.create(meetingPayload);
 
       request.status="scheduled";
       request.meetingId=meeting._id;
@@ -406,18 +397,8 @@ async function respondMeeting(req,res){
       workspace.lastActivityAt=new Date();
       await workspace.save();
 
-      await notify(
-        requester,
-        userId(req),
-        `Your partnership meeting request was accepted. The AIFT meeting is scheduled for ${startTime.toLocaleString()}.`,
-        `/meeting.html?code=${code}`
-      );
-      await notify(
-        counterparty,
-        requester,
-        `Partnership meeting scheduled for ${startTime.toLocaleString()}.`,
-        `/meeting.html?code=${code}`
-      );
+      await notify(requester,userId(req),`Your partnership meeting request was accepted. The AIFT meeting is scheduled for ${startTime.toLocaleString()}.`,`/meeting.html?code=${code}`);
+      await notify(counterparty,requester,`Partnership meeting scheduled for ${startTime.toLocaleString()}.`,`/meeting.html?code=${code}`);
     }
 
     const populated=await populateWorkspace(workspace._id);
