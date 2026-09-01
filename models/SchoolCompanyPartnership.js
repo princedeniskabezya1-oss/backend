@@ -207,8 +207,19 @@ SchoolCompanyPartnershipSchema.pre("validate",function validatePartnership(next)
     if(String(this.companyId) === String(this.partnerCompanyId)){
       return next(new Error("A company cannot create a partnership with itself."));
     }
-    this.schoolId = null;
-    this.schoolName = "";
+
+    /*
+      Legacy MongoDB deployments may still have the historical
+      unique index on {schoolId, companyId, type}. Keep the second
+      company in schoolId as an internal compatibility key so two
+      different partner companies do not collide on schoolId:null.
+
+      relationshipKind remains the authoritative semantic type and
+      partnerCompanyId remains the authoritative second company.
+      Normal School-partnership list queries exclude these records.
+    */
+    this.schoolId = this.partnerCompanyId;
+    this.schoolName = this.partnerCompanyName || "";
   }else{
     this.relationshipKind = "school_company";
     if(!this.schoolId || !this.companyId){
@@ -249,6 +260,35 @@ SchoolCompanyPartnershipSchema.pre("validate",function validatePartnership(next)
         "AIFT verification must be completed before this partnership can be approved or activated."
       ));
     }
+  }
+
+  next();
+});
+
+function queryContainsOrganizationFilter(query){
+  if(!query || typeof query !== "object") return false;
+  if(Object.prototype.hasOwnProperty.call(query,"companyId")) return true;
+  if(Object.prototype.hasOwnProperty.call(query,"schoolId")) return true;
+  return Object.values(query).some(value=>{
+    if(Array.isArray(value)) return value.some(queryContainsOrganizationFilter);
+    return value && typeof value === "object" && queryContainsOrganizationFilter(value);
+  });
+}
+
+SchoolCompanyPartnershipSchema.pre(/^find/,function hideCompanyPartnershipsFromLegacyLists(next){
+  const query=this.getQuery() || {};
+
+  /*
+    New company-partnership code always requests relationshipKind
+    explicitly. Existing School↔Company list/public/Campus queries do
+    not, so keep company_company records out of those legacy surfaces.
+    ID-only internal lookups remain available for AIFT sync/workspaces.
+  */
+  if(
+    !Object.prototype.hasOwnProperty.call(query,"relationshipKind") &&
+    queryContainsOrganizationFilter(query)
+  ){
+    this.where({relationshipKind:{$ne:"company_company"}});
   }
 
   next();
