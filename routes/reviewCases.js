@@ -4,6 +4,10 @@ const mongoose = require("mongoose");
 const auth = require("../middleware/auth");
 const ReviewCase = require("../models/ReviewCase");
 const Notification = require("../models/Notification");
+const Venture = require("../models/Venture");
+const VentureInterest = require("../models/VentureInterest");
+const ScholarshipApplication = require("../models/ScholarshipApplication");
+const SchoolScholarship = require("../models/SchoolScholarship");
 
 const router = express.Router();
 const allowedTypes = new Set(["venture","investment_interest","scholarship","scholarship_application","internship","partnership","opportunity","family_verification","student_verification","chat_safety","other"]);
@@ -21,6 +25,7 @@ const transitions={
 function uid(user){ return user?._id || user?.id; }
 function clean(value,max=500){ return String(value || "").trim().slice(0,max); }
 function validId(value){ return mongoose.Types.ObjectId.isValid(String(value?._id || value || "")); }
+function sameId(left,right){ return Boolean(left&&right&&String(left?._id||left)===String(right?._id||right)); }
 async function caseNumber(){for(let i=0;i<10;i+=1){const value=`AIFT-${new Date().getFullYear()}-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;if(!(await ReviewCase.exists({caseNumber:value})))return value;}throw new Error("Could not create case number");}
 async function createOrReuseReviewCase({type,requesterId,targetUserId=null,resourceType="",resourceId=null,title,summary="",metadata={},priority="normal",note="Submitted for AIFT review"}){
  const safeType=clean(type,60),safeTitle=clean(title,220);if(!allowedTypes.has(safeType)||!safeTitle||!validId(requesterId))throw new Error("Valid review type, requester and title are required");
@@ -32,6 +37,46 @@ async function getLatestReviewCase(type,resourceId){if(!allowedTypes.has(clean(t
 router.post("/",auth,async(req,res)=>{try{const review=await createOrReuseReviewCase({type:req.body?.type,requesterId:uid(req.user),targetUserId:req.body?.targetUserId,resourceType:req.body?.resourceType,resourceId:req.body?.resourceId,title:req.body?.title,summary:req.body?.summary,metadata:req.body?.metadata,priority:req.body?.priority});return res.status(201).json(review);}catch(error){console.error("CREATE REVIEW CASE ERROR:",error);return res.status(400).json({message:error.message||"Could not create AIFT review case"});}});
 router.get("/mine",auth,async(req,res)=>{try{return res.json({cases:await ReviewCase.find({requesterId:uid(req.user)}).sort({createdAt:-1}).lean()});}catch{return res.status(500).json({message:"Could not load review cases"});}});
 router.get("/admin",auth,async(req,res)=>{try{if(req.user.role!=="admin")return res.status(403).json({message:"Admin access required"});const query={};if(req.query.status&&allowedStatuses.has(String(req.query.status)))query.status=String(req.query.status);if(req.query.type&&allowedTypes.has(String(req.query.type)))query.type=String(req.query.type);const cases=await ReviewCase.find(query).populate("requesterId","name role profileImage companyName schoolName familyProfile").populate("targetUserId","name role profileImage companyName schoolName").populate("assignedTo","name role profileImage").sort({priority:-1,createdAt:1}).limit(500).lean();return res.json({cases,total:cases.length});}catch{return res.status(500).json({message:"Could not load AIFT Review Center"});}});
+
+router.delete("/:id/request",auth,async(req,res)=>{try{
+ if(!validId(req.params.id))return res.status(400).json({message:"Invalid review case id"});
+ const review=await ReviewCase.findById(req.params.id);
+ if(!review)return res.status(404).json({message:"Review case not found"});
+ if(!sameId(review.requesterId,uid(req.user)))return res.status(403).json({message:"You can only delete your own submitted request"});
+ if(review.status!=="submitted")return res.status(409).json({message:"A request can only be deleted while its AIFT review status is submitted.",currentStatus:review.status});
+ if(!validId(review.resourceId))return res.status(409).json({message:"This review request is not linked to a deletable resource"});
+
+ let deletedResourceType="";
+ if(review.type==="venture"||String(review.resourceType||"").toLowerCase()==="venture"){
+   const venture=await Venture.findById(review.resourceId);
+   if(!venture)return res.status(404).json({message:"The submitted Venture request no longer exists"});
+   if(!sameId(venture.ownerId,uid(req.user)))return res.status(403).json({message:"You do not own this Venture request"});
+   if(venture.status!=="submitted")return res.status(409).json({message:"A Venture request can only be deleted while its status is submitted.",currentStatus:venture.status});
+   await VentureInterest.deleteMany({ventureId:venture._id});
+   await venture.deleteOne();
+   deletedResourceType="venture";
+ }else if(review.type==="scholarship_application"||String(review.resourceType||"").toLowerCase()==="scholarshipapplication"){
+   const application=await ScholarshipApplication.findById(review.resourceId);
+   if(!application)return res.status(404).json({message:"The submitted scholarship application no longer exists"});
+   const ownsApplication=sameId(application.submittedByFamilyId,uid(req.user))||sameId(application.studentId,uid(req.user));
+   if(!ownsApplication)return res.status(403).json({message:"You do not own this scholarship application"});
+   if(application.status!=="submitted")return res.status(409).json({message:"A scholarship application can only be deleted while its status is submitted.",currentStatus:application.status});
+   const scholarshipId=application.scholarshipId;
+   await application.deleteOne();
+   if(validId(scholarshipId))await SchoolScholarship.updateOne({_id:scholarshipId,applicationCount:{$gt:0}},{$inc:{applicationCount:-1}}).catch(()=>{});
+   deletedResourceType="scholarship_application";
+ }else{
+   return res.status(409).json({message:"This submitted request type cannot be deleted from My Requests yet."});
+ }
+
+ review.status="cancelled";
+ review.resolvedAt=new Date();
+ review.decisionNotes="Request deleted by the requester while still submitted.";
+ review.history.push({status:"cancelled",note:"Requester deleted the submitted request before AIFT processing was completed.",actorId:uid(req.user)});
+ await review.save();
+ return res.json({message:"Submitted request deleted successfully",deletedResourceType,reviewStatus:review.status,review});
+}catch(error){console.error("DELETE SUBMITTED REVIEW REQUEST ERROR:",error);return res.status(500).json({message:"Could not delete the submitted request"});}});
+
 router.patch("/:id/admin",auth,async(req,res)=>{try{
  if(req.user.role!=="admin")return res.status(403).json({message:"Admin access required"});const review=await ReviewCase.findById(req.params.id);if(!review)return res.status(404).json({message:"Review case not found"});const status=clean(req.body?.status,40);if(status&&!allowedStatuses.has(status))return res.status(400).json({message:"Invalid review status"});
  if(review.type==="investment_interest"&&review.status==="matched"&&status==="negotiation")return res.status(409).json({message:"Matched investment introductions enter negotiation only by opening an AIFT Deal Room.",currentStatus:review.status,requiredAction:"POST /api/deal-rooms/from-review/:reviewCaseId"});
