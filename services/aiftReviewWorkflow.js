@@ -161,17 +161,33 @@ async function queueInternshipApplication({ application, opportunity, actor }){
 }
 
 async function queuePartnership({ partnership, actor }){
+  const requester=String(id(actor) || "");
+  const relationshipKind=partnership.relationshipKind || "school_company";
+  let targetUserId=null;
+
+  if(relationshipKind === "company_company"){
+    targetUserId=requester === String(id(partnership.companyId))
+      ? id(partnership.partnerCompanyId)
+      : id(partnership.companyId);
+  }else{
+    targetUserId=requester === String(id(partnership.schoolId))
+      ? id(partnership.companyId)
+      : id(partnership.schoolId);
+  }
+
   return createOrReuseReviewCase({
     type:"partnership",
     requesterId:id(actor),
-    targetUserId:String(id(actor)) === String(id(partnership.schoolId)) ? id(partnership.companyId) : id(partnership.schoolId),
+    targetUserId,
     resourceType:"SchoolCompanyPartnership",
     resourceId:id(partnership),
-    title:`Review partnership: ${text(partnership.title || partnership.type || "School-company partnership",160)}`,
+    title:`Review partnership: ${text(partnership.title || partnership.type || "Organization partnership",160)}`,
     summary:text(partnership.description || partnership.objective || partnership.message || "Partnership proposal submitted through AIFT.",3000),
     metadata:{
+      relationshipKind,
       schoolId:String(id(partnership.schoolId) || ""),
       companyId:String(id(partnership.companyId) || ""),
+      partnerCompanyId:String(id(partnership.partnerCompanyId) || ""),
       partnershipType:partnership.type || partnership.partnershipType || "",
       requestedBy:partnership.requestedBy || ""
     },
