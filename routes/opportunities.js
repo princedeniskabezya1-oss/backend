@@ -29,16 +29,20 @@ const {
 } =
   require("../controllers/partnershipWorkspaceController");
 
+const {
+  createEmployerOpportunity,
+  listCompanyPartnerships,
+  createCompanyPartnership,
+  updateCompanyPartnershipStatus,
+  createEmployerCampusProgram
+} =
+  require("../controllers/employerCareerHubController");
 
 const router =
   express.Router();
 
-
 /* =========================================================
    VERIFIED PARTNERSHIPS — PUBLIC PROFILE SAFE DATA
-
-   Only active AIFT-approved School ↔ Company relationships
-   are exposed by this endpoint.
 ========================================================= */
 
 router.get(
@@ -46,20 +50,11 @@ router.get(
   getVerifiedPartnerships
 );
 
-
 /* =========================================================
    AUTHENTICATED CAREER HUB
 ========================================================= */
 
 router.use(auth);
-
-
-/* =========================================================
-   SIMPLE CAREER HUB CREATION
-
-   Shared by School and Employer dashboards. The controller
-   normalizes friendly form values and queues AIFT review.
-========================================================= */
 
 router.get(
   "/career-hub-directory",
@@ -71,14 +66,40 @@ router.post(
   createCareerHubListing
 );
 
+/* =========================================================
+   EMPLOYER CAREER HUB V2
+
+   Human-friendly adaptive creation paths. Existing collection
+   routes remain available for backward compatibility.
+========================================================= */
+
+router.post(
+  "/employer-create",
+  createEmployerOpportunity
+);
+
+router.get(
+  "/company-partnerships",
+  listCompanyPartnerships
+);
+
+router.post(
+  "/company-partnerships",
+  createCompanyPartnership
+);
+
+router.patch(
+  "/company-partnerships/:id/status",
+  updateCompanyPartnershipStatus
+);
+
+router.post(
+  "/employer-campus-programs",
+  createEmployerCampusProgram
+);
 
 /* =========================================================
    PRIVATE PARTNERSHIP WORKSPACE
-
-   AIFT first verifies the introduction. While the partnership
-   is in review, the School and Company can privately agree on
-   scope, propose work and request an AIFT meeting before the
-   relationship becomes approved/active/public.
 ========================================================= */
 
 router.get(
@@ -111,7 +132,6 @@ router.patch(
   respondMeeting
 );
 
-
 /* =========================================================
    COLLECTION
 ========================================================= */
@@ -121,12 +141,10 @@ router.get(
   getOpportunities
 );
 
-
 router.post(
   "/",
   createOpportunity
 );
-
 
 /* =========================================================
    SINGLE OPPORTUNITY
@@ -137,18 +155,15 @@ router.get(
   getOpportunityById
 );
 
-
 router.patch(
   "/:id",
   updateOpportunity
 );
 
-
 router.delete(
   "/:id",
   deleteOpportunity
 );
-
 
 module.exports =
   router;
