@@ -30,13 +30,13 @@ function applicationProfile(opportunity){
   const offering=text(opportunity?.metadata?.offeringType,100).toLowerCase();
   const kind=text(opportunity?.metadata?.applicationKind,100).toLowerCase();
 
-  if(kind === "graduate_program" || offering === "graduate_program") return "graduate_program";
-  if(kind === "placement" || ["apprenticeship","placement"].includes(offering)) return "placement";
-  if(kind === "project" || ["student_project","freelance_project","volunteer_project"].includes(offering)) return "project";
-  if(kind === "internship" || opportunity?.type === "internship") return "internship";
-  if(kind === "job" || opportunity?.type === "job") return "job";
+  if(kind.includes("graduate_program") || offering === "graduate_program") return "graduate_program";
+  if(kind.includes("internship") || opportunity?.type === "internship") return "internship";
+  if(kind.includes("project") || ["student_project","freelance_project","volunteer_project"].includes(offering)) return "project";
+  if(kind.includes("placement") || ["apprenticeship","placement"].includes(offering)) return "placement";
+  if(kind.includes("job") || opportunity?.type === "job") return "job";
   if(opportunity?.type === "project") return "project";
-  if(opportunity?.type === "placement") return "placement";
+  if(opportunity?.type === "placement") return offering === "graduate_program" ? "graduate_program" : "placement";
   return "general";
 }
 
@@ -106,6 +106,7 @@ async function applyToCareerOpportunity(req,res){
       return res.status(409).json({success:false,message:"You already have an application for this opportunity.",applicationId:existing._id,status:existing.status});
     }
 
+    const profile=applicationProfile(opportunity);
     const passportSnapshot=await buildPassportSnapshot(applicant,bool(req.body.includePassport));
     const preferredStartDate=dateOrNull(req.body.preferredStartDate);
     const schoolId=id(applicant.linkedSchoolId || applicant.schoolId || opportunity.schoolId) || null;
@@ -118,7 +119,7 @@ async function applyToCareerOpportunity(req,res){
       companyId:id(opportunity.employerId) || null,
       status:"pending",
       source:"student",
-      applicationProfile:applicationProfile(opportunity),
+      applicationProfile:profile,
       message:text(req.body.message,5000),
       coverLetter:text(req.body.coverLetter,10000),
       resumeUrl:text(req.body.resumeUrl,2000),
@@ -138,7 +139,7 @@ async function applyToCareerOpportunity(req,res){
         status:"pending",
         changedBy:applicant._id,
         changedByRole:role(req),
-        note:`${applicationProfile(opportunity).replaceAll("_"," ")} application submitted through Student Career Hub.`,
+        note:`${profile.replaceAll("_"," ")} application submitted through Student Career Hub.`,
         changedAt:now
       }]
     });
