@@ -55,6 +55,16 @@ router.delete("/:id/request",auth,async(req,res)=>{try{
    await VentureInterest.deleteMany({ventureId:venture._id});
    await venture.deleteOne();
    deletedResourceType="venture";
+ }else if(review.type==="investment_interest"||String(review.resourceType||"").toLowerCase()==="ventureinterest"){
+   const interest=await VentureInterest.findById(review.resourceId);
+   if(!interest)return res.status(404).json({message:"The submitted investment interest no longer exists"});
+   if(!sameId(interest.userId,uid(req.user)))return res.status(403).json({message:"You do not own this investment interest"});
+   if(interest.type!=="investment")return res.status(409).json({message:"Only submitted investment interests can be deleted from Investor Mode"});
+   if(interest.status!=="pending")return res.status(409).json({message:"This investment interest can no longer be deleted because it has already progressed.",currentStatus:interest.status});
+   const ventureId=interest.ventureId;
+   await interest.deleteOne();
+   if(validId(ventureId))await Venture.updateOne({_id:ventureId,interestCount:{$gt:0}},{$inc:{interestCount:-1}}).catch(()=>{});
+   deletedResourceType="investment_interest";
  }else if(review.type==="scholarship_application"||String(review.resourceType||"").toLowerCase()==="scholarshipapplication"){
    const application=await ScholarshipApplication.findById(review.resourceId);
    if(!application)return res.status(404).json({message:"The submitted scholarship application no longer exists"});
@@ -71,10 +81,10 @@ router.delete("/:id/request",auth,async(req,res)=>{try{
 
  review.status="cancelled";
  review.resolvedAt=new Date();
- review.decisionNotes="Request deleted by the requester while still submitted.";
- review.history.push({status:"cancelled",note:"Requester deleted the submitted request before AIFT processing was completed.",actorId:uid(req.user)});
+ review.decisionNotes=deletedResourceType==="investment_interest"?"Investment interest deleted by the investor while still submitted.":"Request deleted by the requester while still submitted.";
+ review.history.push({status:"cancelled",note:deletedResourceType==="investment_interest"?"Investor deleted the submitted investment interest before AIFT processing began.":"Requester deleted the submitted request before AIFT processing was completed.",actorId:uid(req.user)});
  await review.save();
- return res.json({message:"Submitted request deleted successfully",deletedResourceType,reviewStatus:review.status,review});
+ return res.json({message:deletedResourceType==="investment_interest"?"Submitted investment interest deleted successfully":"Submitted request deleted successfully",deletedResourceType,reviewStatus:review.status,review});
 }catch(error){console.error("DELETE SUBMITTED REVIEW REQUEST ERROR:",error);return res.status(500).json({message:"Could not delete the submitted request"});}});
 
 router.patch("/:id/admin",auth,async(req,res)=>{try{
