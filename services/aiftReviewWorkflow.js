@@ -96,7 +96,7 @@ async function queueScholarshipPublish({ scholarship, actor }){
 
 async function queueCareerEventPublish({ event, actor }){
   return createOrReuseReviewCase({
-    type:"career_event",
+    type:"opportunity",
     requesterId:id(actor),
     targetUserId:null,
     resourceType:"CareerEvent",
