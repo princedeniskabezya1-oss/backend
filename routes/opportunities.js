@@ -2,6 +2,8 @@ const express = require("express");
 
 const auth =
   require("../middleware/auth");
+const upload =
+  require("../middleware/upload");
 
 const {
   getOpportunities,
@@ -42,6 +44,11 @@ const {
   applyToCareerOpportunity
 } =
   require("../controllers/studentCareerHubController");
+
+const {
+  uploadCareerApplicationDocument
+} =
+  require("../controllers/careerHubUploadController");
 
 const router =
   express.Router();
@@ -98,6 +105,16 @@ router.patch(
 router.post(
   "/employer-campus-programs",
   createEmployerCampusProgram
+);
+
+/* =========================================================
+   CAREER HUB APPLICATION FILES
+========================================================= */
+
+router.post(
+  "/career-application-upload",
+  upload.single("file"),
+  uploadCareerApplicationDocument
 );
 
 /* =========================================================
