@@ -62,10 +62,10 @@ router.post("/", auth, upload.single("cv"), async (req, res) => {
     }
 
     if (
-      !["talent", "agent", "school"].includes(applicant.role)
+      !["student", "talent", "agent", "school"].includes(applicant.role)
     ) {
       return res.status(403).json({
-        message: "Only talents, agents, and students can apply"
+        message: "Only students, talents, agents, and school-managed applicants can apply"
       });
     }
 
@@ -218,7 +218,7 @@ router.post("/", auth, upload.single("cv"), async (req, res) => {
 
     /* =========================================
        NOTIFICATIONS
-    ========================================= */
+========================================= */
 
     await Notification.create({
       user: job.employerId,
@@ -327,10 +327,10 @@ router.get("/", auth, async (req, res) => {
       return res.json(apps);
     }
 
-    /* TALENT / AGENT / SCHOOL */
+    /* STUDENT / TALENT / AGENT / SCHOOL */
 
     if (
-      ["talent", "agent", "school"]
+      ["student", "talent", "agent", "school"]
         .includes(actor.role)
     ) {
 
