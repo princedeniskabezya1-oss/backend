@@ -2,7 +2,7 @@ const mongoose = require("mongoose");
 
 const ReviewCaseSchema = new mongoose.Schema({
   caseNumber:{ type:String, required:true, unique:true, index:true, uppercase:true, trim:true },
-  type:{ type:String, enum:["venture","investment_interest","scholarship","scholarship_application","internship","partnership","opportunity","family_verification","student_verification","chat_safety","other"], required:true, index:true },
+  type:{ type:String, enum:["venture","investment_interest","scholarship","scholarship_application","internship","partnership","opportunity","career_event","family_verification","student_verification","chat_safety","other"], required:true, index:true },
   requesterId:{ type:mongoose.Schema.Types.ObjectId, ref:"User", required:true, index:true },
   targetUserId:{ type:mongoose.Schema.Types.ObjectId, ref:"User", default:null, index:true },
   resourceType:{ type:String, default:"", trim:true, maxlength:80 },
