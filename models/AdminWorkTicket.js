@@ -177,6 +177,65 @@ const adminWorkTicketSchema = new Schema(
   { timestamps: true }
 );
 
+/*
+  Preserve an Admin's explicit Waiting decision until the linked
+  workflow actually produces newer source activity.
+
+  The queue synchronizer may still describe the source as "new",
+  but that should not undo a manual Waiting state on every refresh.
+  Once lastSourceActivityAt advances, the synchronizer is allowed to
+  move the ticket back to New so AIFT sees the fresh user activity.
+*/
+adminWorkTicketSchema.pre("save", async function preserveManualWaiting(next){
+  try{
+    if(this.isNew || this.status !== "new" || !this.isModified("status")){
+      return next();
+    }
+
+    const previous = await this.constructor
+      .findById(this._id)
+      .select("status waitingOn lastAdminActivityAt lastSourceActivityAt history")
+      .lean();
+
+    if(!previous || previous.status !== "waiting"){
+      return next();
+    }
+
+    const previousAdminAt = previous.lastAdminActivityAt ? new Date(previous.lastAdminActivityAt) : null;
+    const previousSourceAt = previous.lastSourceActivityAt ? new Date(previous.lastSourceActivityAt) : null;
+    const currentSourceAt = this.lastSourceActivityAt ? new Date(this.lastSourceActivityAt) : null;
+
+    const adminExplicitlyWaited = Boolean(
+      previousAdminAt &&
+      previousSourceAt &&
+      previousAdminAt.getTime() >= previousSourceAt.getTime()
+    );
+
+    const sourceAdvanced = Boolean(
+      currentSourceAt &&
+      previousSourceAt &&
+      currentSourceAt.getTime() > previousSourceAt.getTime()
+    );
+
+    if(adminExplicitlyWaited && !sourceAdvanced){
+      this.status = "waiting";
+      this.waitingOn = previous.waitingOn || "user";
+
+      const last = this.history?.[this.history.length - 1];
+      if(
+        last?.status === "new" &&
+        last?.note === "This item now requires AIFT action."
+      ){
+        this.history.pop();
+      }
+    }
+
+    next();
+  }catch(error){
+    next(error);
+  }
+});
+
 adminWorkTicketSchema.index({ status: 1, priority: 1, updatedAt: -1 });
 adminWorkTicketSchema.index({ category: 1, status: 1, updatedAt: -1 });
 adminWorkTicketSchema.index({ reminderAt: 1, status: 1 });
