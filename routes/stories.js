@@ -75,10 +75,12 @@ function storyPayload(story, viewerId){
   value.seen = viewers.some(item => String(item?.user?._id || item?.user || "") === String(viewerId));
   value.viewerCount = viewers.length;
   value.likedByMe = likes.some(user => String(user?._id || user || "") === String(viewerId));
-  value.likeCount = likes.length;
+  if(owner) value.privateLikeCount = likes.length;
+  delete value.likeCount;
   if(!owner){
     delete value.viewers;
     delete value.likes;
+    delete value.privateLikeCount;
   }
   return value;
 }
@@ -315,7 +317,7 @@ router.patch("/:id/like", auth, async (req,res)=>{
     const likeCount = story.likes.length;
     const io = req.app.get("io") || req.io;
     io?.to?.(String(story.author)).emit("storyLiked", { storyId:String(story._id), userId, liked, likeCount });
-    res.json({ storyId:String(story._id), liked, likeCount });
+    res.json({ storyId:String(story._id), liked });
   }catch(error){
     console.error("LIKE STORY ERROR:", error);
     res.status(500).json({ message:"Unable to update story like" });
@@ -328,7 +330,7 @@ router.get("/:id/likes", auth, async (req,res)=>{
     const story = await Story.findById(req.params.id).populate("likes", storyAuthorFields());
     if(!story) return res.status(404).json({ message:"Story not found" });
     if(String(story.author) !== String(req.user._id)) return res.status(403).json({ message:"Only the story owner can view likes" });
-    res.json({ likes:story.likes || [], likeCount:(story.likes || []).length });
+    res.json({ likes:story.likes || [] });
   }catch(error){
     console.error("STORY LIKES ERROR:", error);
     res.status(500).json({ message:"Unable to load story likes" });
@@ -387,18 +389,31 @@ router.get("/:id/viewers", auth, async (req, res)=>{
     if(!story) return res.status(404).json({ message:"Story not found" });
     if(String(story.author) !== String(req.user._id)) return res.status(403).json({ message:"Only the story owner can view viewers" });
 
+    const ownerId = String(req.user._id);
     const likedIds = new Set((story.likes || []).map(user=>String(user?._id || user)));
+    const directConversations = await Conversation.find({ type:"direct", participantIds:req.user._id })
+      .select("_id participants participantIds")
+      .lean();
+    const conversationByViewer = new Map();
+    directConversations.forEach(conversation=>{
+      const participantIds = Array.isArray(conversation.participantIds)
+        ? conversation.participantIds.map(String)
+        : (conversation.participants || []).map(participant=>String(participant?.user || "")).filter(Boolean);
+      const otherId = participantIds.find(id=>id && id !== ownerId);
+      if(otherId && !conversationByViewer.has(otherId)) conversationByViewer.set(otherId, String(conversation._id));
+    });
+
     const viewers = (story.viewers || []).map(item=>{
       const value = item.toObject ? item.toObject() : { ...item };
       const viewerId = String(value.user?._id || value.user || "");
-      return { ...value, liked:likedIds.has(viewerId) };
+      return {
+        ...value,
+        liked:likedIds.has(viewerId),
+        conversationId:conversationByViewer.get(viewerId) || null
+      };
     });
 
-    res.json({
-      viewers,
-      viewerCount:viewers.length,
-      privateLikeCount:(story.likes || []).length
-    });
+    res.json({ viewers, viewerCount:viewers.length });
   }catch(error){
     console.error("STORY VIEWERS ERROR:", error);
     res.status(500).json({ message:"Unable to load story viewers" });
