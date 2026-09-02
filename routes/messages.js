@@ -354,6 +354,14 @@ messageType:attachment ? attachment.type : "text",
       }
     });
 
+    const io = getIo(req);
+    const receiverRoom = io?.sockets?.adapter?.rooms?.get(String(receiverId));
+
+    if(receiverRoom?.size){
+      message.markDeliveredTo(receiverId);
+      await message.save();
+    }
+
     conversation.setLastMessage(message);
     conversation.incrementUnreadForOthers(senderId);
     await conversation.save();
@@ -370,15 +378,74 @@ messageType:attachment ? attachment.type : "text",
         }
       });
 
-    const io = getIo(req);
-
     io?.to(String(receiverId)).emit("newMessage", populated);
     io?.to(String(senderId)).emit("newMessage", populated);
+
+    if(message.status === "delivered"){
+      io?.to(String(senderId)).emit("messageDelivered", {
+        messageId:message._id,
+        by:receiverId,
+        deliveredAt:message.deliveredAt
+      });
+    }
 
     res.status(201).json(populated);
 
   }catch(error){
     console.error("SEND MESSAGE ERROR:",error);
+    res.status(500).json({ message:"Server error" });
+  }
+});
+
+/* =========================
+   MARK DELIVERED
+   PATCH /api/messages/:id/delivered
+========================= */
+
+router.patch("/:id/delivered", authMiddleware, async (req,res)=>{
+  try{
+    const userId = req.user.id;
+    const messageId = req.params.id;
+
+    if(!isValidId(messageId)){
+      return res.status(400).json({ message:"Invalid message ID" });
+    }
+
+    const message = await Message.findById(messageId);
+
+    if(!message){
+      return res.status(404).json({ message:"Message not found" });
+    }
+
+    if(String(message.receiver) !== String(userId)){
+      return res.status(403).json({ message:"Only the receiver can confirm delivery" });
+    }
+
+    if(message.deletedForEveryone){
+      return res.status(400).json({ message:"Deleted message cannot be marked delivered" });
+    }
+
+    if(message.status !== "seen"){
+      message.markDeliveredTo(userId);
+      await message.save();
+    }
+
+    getIo(req)?.to(String(message.sender)).emit("messageDelivered", {
+      messageId:message._id,
+      by:userId,
+      deliveredAt:message.deliveredAt || new Date()
+    });
+
+    res.json({
+      success:true,
+      messageId:message._id,
+      status:message.status,
+      deliveredAt:message.deliveredAt,
+      deliveredTo:message.deliveredTo
+    });
+
+  }catch(error){
+    console.error("MARK DELIVERED ERROR:",error);
     res.status(500).json({ message:"Server error" });
   }
 });
