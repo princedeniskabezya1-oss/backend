@@ -38,7 +38,7 @@ const StoryMusicSchema = new mongoose.Schema(
     artist: { type: String, trim: true, maxlength: 180, default: "" },
     coverUrl: { type: String, trim: true, maxlength: 1000, default: "" },
     startAt: { type: Number, min: 0, max: 36000, default: 0 },
-    duration: { type: Number, min: 1, max: 120, default: 15 },
+    duration: { type: Number, min: 1, max: 45, default: 15 },
     volume: { type: Number, min: 0, max: 1, default: 1 },
     muted: { type: Boolean, default: false },
     source: { type: String, enum: ["upload", "aift_catalog", "external"], default: "upload" }
