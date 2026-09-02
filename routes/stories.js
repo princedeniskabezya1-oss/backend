@@ -14,36 +14,92 @@ const router = express.Router();
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 30 * 1024 * 1024 },
+  limits: { fileSize: 30 * 1024 * 1024, files: 2 },
   fileFilter(req, file, callback){
     const mime = String(file?.mimetype || "").toLowerCase();
-    if(mime.startsWith("image/") || mime.startsWith("video/")) return callback(null, true);
-    callback(new Error("Stories support image and video uploads only"));
+    if(mime.startsWith("image/") || mime.startsWith("video/") || mime.startsWith("audio/")) return callback(null, true);
+    callback(new Error("Stories support image, video, and audio uploads only"));
   }
 });
 
+const storyUpload = upload.fields([
+  { name:"file", maxCount:1 },
+  { name:"musicFile", maxCount:1 }
+]);
+
 function validId(value){ return mongoose.Types.ObjectId.isValid(value); }
 function storyAuthorFields(){ return "name companyName schoolName role profileImage logo avatar headline profession course"; }
+function clampNumber(value, min, max, fallback){
+  const number = Number(value);
+  if(!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
+}
+function parseJSON(value, fallback){
+  if(value === undefined || value === null || value === "") return fallback;
+  if(typeof value !== "string") return value;
+  try{ return JSON.parse(value); }catch{ return fallback; }
+}
+function normalizeStoryElements(raw){
+  const source = Array.isArray(raw) ? raw.slice(0,40) : [];
+  return source.map(item=>{
+    const kind = ["text","caption","mention"].includes(item?.kind) ? item.kind : "text";
+    const user = validId(item?.user) ? item.user : null;
+    return {
+      kind,
+      text:String(item?.text || "").trim().slice(0,500),
+      user,
+      x:clampNumber(item?.x,0,100,50),
+      y:clampNumber(item?.y,0,100,50),
+      scale:clampNumber(item?.scale,0.4,4,1),
+      rotation:clampNumber(item?.rotation,-360,360,0),
+      font:String(item?.font || "Inter").trim().slice(0,80),
+      fontSize:clampNumber(item?.fontSize,12,120,34),
+      color:String(item?.color || "#ffffff").trim().slice(0,32),
+      align:["left","center","right"].includes(item?.align) ? item.align : "center",
+      style:["clean","strong","typewriter","neon","classic"].includes(item?.style) ? item.style : "clean"
+    };
+  }).filter(item=>item.text || item.user);
+}
+function normalizeTaggedUsers(raw, elements){
+  const values = Array.isArray(raw) ? raw : [];
+  const ids = new Set(values.filter(validId).map(String));
+  elements.forEach(item=>{ if(item.kind === "mention" && validId(item.user)) ids.add(String(item.user)); });
+  return [...ids].slice(0,30);
+}
 
 function storyPayload(story, viewerId){
   const value = story.toObject ? story.toObject({ virtuals:true }) : { ...story };
   const viewers = Array.isArray(value.viewers) ? value.viewers : [];
+  const likes = Array.isArray(value.likes) ? value.likes : [];
   const owner = String(value.author?._id || value.author) === String(viewerId);
   value.seen = viewers.some(item => String(item?.user?._id || item?.user || "") === String(viewerId));
   value.viewerCount = viewers.length;
-  if(!owner) delete value.viewers;
+  value.likedByMe = likes.some(user => String(user?._id || user || "") === String(viewerId));
+  value.likeCount = likes.length;
+  if(!owner){
+    delete value.viewers;
+    delete value.likes;
+  }
   return value;
 }
 
-async function uploadStoryMedia(file){
+async function uploadStoryAsset(file, folder){
   if(!file) return null;
-  const isVideo = String(file.mimetype || "").startsWith("video/");
+  const mime = String(file.mimetype || "").toLowerCase();
+  const isVideo = mime.startsWith("video/");
+  const isAudio = mime.startsWith("audio/");
+  const resourceType = isVideo || isAudio ? "video" : "image";
   return new Promise((resolve, reject)=>{
     const stream = cloudinary.uploader.upload_stream(
-      { folder:"aift/stories", resource_type:isVideo ? "video" : "image" },
+      { folder, resource_type:resourceType },
       (error, result)=>{
         if(error) return reject(error);
-        resolve({ url:result.secure_url, publicId:result.public_id, mimeType:file.mimetype, type:isVideo ? "video" : "image" });
+        resolve({
+          url:result.secure_url,
+          publicId:result.public_id,
+          mimeType:file.mimetype,
+          type:isVideo ? "video" : isAudio ? "audio" : "image"
+        });
       }
     );
     stream.end(file.buffer);
@@ -91,11 +147,11 @@ async function canViewStory(story, userId){
   return contactIds.some(id => String(id) === String(story.author));
 }
 
-async function emitStoryEvent(req, story, eventName){
+async function emitStoryEvent(req, story, eventName, extra={}){
   const io = req.app.get("io") || req.io;
   if(!io || !story) return;
   const authorId = String(story.author?._id || story.author || req.user._id);
-  const payload = { storyId:String(story._id), authorId, event:eventName };
+  const payload = { storyId:String(story._id), authorId, event:eventName, ...extra };
   if(story.audience === "everyone"){
     io.emit(eventName, payload);
     return;
@@ -114,7 +170,7 @@ router.get("/", auth, async (req, res)=>{
       deletedAt:null,
       expiresAt:{ $gt:now },
       $or:[{ author:req.user._id },{ audience:"everyone" },{ audience:"connections", author:{ $in:contactIds } }]
-    }).populate("author", storyAuthorFields()).sort({ createdAt:1 });
+    }).populate("author", storyAuthorFields()).populate("elements.user", storyAuthorFields()).populate("taggedUsers", storyAuthorFields()).sort({ createdAt:1 });
     const grouped = new Map();
     stories.forEach(story=>{
       const authorId = String(story.author?._id || story.author);
@@ -141,21 +197,41 @@ router.get("/settings/muted", auth, async (req,res)=>{
       .populate("author", storyAuthorFields())
       .sort({ mutedAt:-1 })
       .lean();
-    res.json({
-      mutedAuthors:settings.map(item=>({ author:item.author, muted:true, mutedAt:item.mutedAt || item.updatedAt }))
-    });
+    res.json({ mutedAuthors:settings.map(item=>({ author:item.author, muted:true, mutedAt:item.mutedAt || item.updatedAt })) });
   }catch(error){
     console.error("GET MUTED STORIES ERROR:", error);
     res.status(500).json({ message:"Unable to load muted stories" });
   }
 });
 
-router.post("/", auth, upload.single("file"), async (req, res)=>{
+router.post("/", auth, storyUpload, async (req, res)=>{
   try{
     const text = String(req.body?.text || "").trim();
     const audience = req.body?.audience === "everyone" ? "everyone" : "connections";
-    if(!text && !req.file) return res.status(400).json({ message:"Add text, a photo, or a video to your story" });
-    const media = await uploadStoryMedia(req.file);
+    const mediaFile = req.files?.file?.[0] || null;
+    const musicFile = req.files?.musicFile?.[0] || null;
+    if(mediaFile && String(mediaFile.mimetype || "").startsWith("audio/")) return res.status(400).json({ message:"Use the music control for audio. Story media must be a photo or video." });
+    const elements = normalizeStoryElements(parseJSON(req.body?.elements, []));
+    const taggedUsers = normalizeTaggedUsers(parseJSON(req.body?.taggedUsers, []), elements);
+    if(!text && !mediaFile && !elements.length) return res.status(400).json({ message:"Add text, a photo, or a video to your story" });
+
+    const [media, uploadedMusic] = await Promise.all([
+      uploadStoryAsset(mediaFile, "aift/stories"),
+      uploadStoryAsset(musicFile, "aift/stories/music")
+    ]);
+    const musicMeta = parseJSON(req.body?.music, {}) || {};
+    const music = uploadedMusic || musicMeta?.url ? {
+      url:uploadedMusic?.url || String(musicMeta.url || "").trim(),
+      publicId:uploadedMusic?.publicId || "",
+      mimeType:uploadedMusic?.mimeType || String(musicMeta.mimeType || "").trim(),
+      title:String(musicMeta.title || musicFile?.originalname || "Music").trim().slice(0,180),
+      artist:String(musicMeta.artist || "").trim().slice(0,180),
+      coverUrl:String(musicMeta.coverUrl || "").trim().slice(0,1000),
+      startAt:clampNumber(musicMeta.startAt,0,36000,0),
+      duration:clampNumber(musicMeta.duration,0,120,15),
+      source:uploadedMusic ? "upload" : ["aift_catalog","external"].includes(musicMeta.source) ? musicMeta.source : "external"
+    } : undefined;
+
     const type = media?.type || "text";
     const story = await Story.create({
       author:req.user._id,
@@ -164,11 +240,16 @@ router.post("/", auth, upload.single("file"), async (req, res)=>{
       mediaUrl:media?.url || "",
       mediaPublicId:media?.publicId || "",
       mediaMimeType:media?.mimeType || "",
-      background:String(req.body?.background || "").trim().slice(0,80),
+      background:"",
+      elements,
+      taggedUsers,
+      music,
       audience,
       expiresAt:new Date(Date.now() + 24 * 60 * 60 * 1000)
     });
     await story.populate("author", storyAuthorFields());
+    await story.populate("elements.user", storyAuthorFields());
+    await story.populate("taggedUsers", storyAuthorFields());
     await emitStoryEvent(req, story, "storyCreated");
     res.status(201).json({ story:storyPayload(story, req.user._id) });
   }catch(error){
@@ -216,13 +297,48 @@ router.patch("/:id/view", auth, async (req, res)=>{
   }
 });
 
+router.patch("/:id/like", auth, async (req,res)=>{
+  try{
+    if(!validId(req.params.id)) return res.status(400).json({ message:"Invalid story ID" });
+    const story = await Story.findOne({ _id:req.params.id, deletedAt:null, expiresAt:{ $gt:new Date() } });
+    if(!story) return res.status(404).json({ message:"Story not found or has expired" });
+    if(!(await canViewStory(story, req.user._id))) return res.status(403).json({ message:"You cannot like this story" });
+    if(String(story.author) === String(req.user._id)) return res.status(400).json({ message:"You cannot like your own story" });
+    const userId = String(req.user._id);
+    const index = story.likes.findIndex(id=>String(id) === userId);
+    const liked = index < 0;
+    if(liked) story.likes.push(req.user._id);
+    else story.likes.splice(index,1);
+    await story.save();
+    const likeCount = story.likes.length;
+    const io = req.app.get("io") || req.io;
+    io?.to?.(String(story.author)).emit("storyLiked", { storyId:String(story._id), userId, liked, likeCount });
+    res.json({ storyId:String(story._id), liked, likeCount });
+  }catch(error){
+    console.error("LIKE STORY ERROR:", error);
+    res.status(500).json({ message:"Unable to update story like" });
+  }
+});
+
+router.get("/:id/likes", auth, async (req,res)=>{
+  try{
+    if(!validId(req.params.id)) return res.status(400).json({ message:"Invalid story ID" });
+    const story = await Story.findById(req.params.id).populate("likes", storyAuthorFields());
+    if(!story) return res.status(404).json({ message:"Story not found" });
+    if(String(story.author) !== String(req.user._id)) return res.status(403).json({ message:"Only the story owner can view likes" });
+    res.json({ likes:story.likes || [], likeCount:(story.likes || []).length });
+  }catch(error){
+    console.error("STORY LIKES ERROR:", error);
+    res.status(500).json({ message:"Unable to load story likes" });
+  }
+});
+
 router.post("/:id/reply", auth, async (req,res)=>{
   try{
     if(!validId(req.params.id)) return res.status(400).json({ message:"Invalid story ID" });
     const text = String(req.body?.text || "").trim();
     if(!text) return res.status(400).json({ message:"Reply text is required" });
     if(text.length > 4000) return res.status(400).json({ message:"Story reply is too long" });
-
     const story = await Story.findOne({ _id:req.params.id, deletedAt:null, expiresAt:{ $gt:new Date() } });
     if(!story) return res.status(404).json({ message:"Story not found or has expired" });
     const authorId = String(story.author);
@@ -230,11 +346,8 @@ router.post("/:id/reply", auth, async (req,res)=>{
     if(authorId === senderId) return res.status(400).json({ message:"You cannot reply to your own story" });
     if(!(await canViewStory(story, req.user._id))) return res.status(403).json({ message:"You cannot reply to this story" });
     if(await hasMessagingRestriction(senderId)) return res.status(403).json({ code:"AIFT_MESSAGING_RESTRICTED", message:"Messaging is restricted pending AIFT review." });
-
     const safety = await enforceContactSafety({ user:req.user, text, receiverId:authorId });
-    if(!safety.allowed){
-      return res.status(safety.statusCode).json({ code:"AIFT_CONTACT_SHARING_BLOCKED", message:safety.message, warningNumber:safety.warningNumber, action:safety.action });
-    }
+    if(!safety.allowed) return res.status(safety.statusCode).json({ code:"AIFT_CONTACT_SHARING_BLOCKED", message:safety.message, warningNumber:safety.warningNumber, action:safety.action });
 
     const conversation = await findOrCreateDirectConversation(senderId, authorId, senderId);
     const storyPreview = story.text ? story.text.slice(0,180) : story.type === "video" ? "Video story" : story.type === "image" ? "Photo story" : "Story";
@@ -245,33 +358,18 @@ router.post("/:id/reply", auth, async (req,res)=>{
       participants:[senderId,authorId],
       text,
       messageType:"text",
-      metadata:{
-        source:"story_reply",
-        storyId:String(story._id),
-        storyAuthorId:authorId,
-        storyType:story.type,
-        storyPreview,
-        storyMediaUrl:story.mediaUrl || ""
-      }
+      metadata:{ source:"story_reply", storyId:String(story._id), storyAuthorId:authorId, storyType:story.type, storyPreview, storyMediaUrl:story.mediaUrl || "" }
     });
-
     conversation.setLastMessage(message);
     conversation.incrementUnreadForOthers(senderId);
     await conversation.save();
-
     const populated = await Message.findById(message._id)
       .populate("sender","name companyName schoolName role profileImage logo")
       .populate("receiver","name companyName schoolName role profileImage logo");
-
     const io = req.app.get("io") || req.io;
     io?.to(String(authorId)).emit("newMessage", populated);
     io?.to(String(senderId)).emit("newMessage", populated);
-
-    res.status(201).json({
-      success:true,
-      conversationId:conversation._id,
-      message:populated
-    });
+    res.status(201).json({ success:true, conversationId:conversation._id, message:populated });
   }catch(error){
     console.error("STORY REPLY ERROR:", error);
     res.status(500).json({ message:"Unable to send story reply" });
@@ -302,6 +400,7 @@ router.delete("/:id", auth, async (req, res)=>{
       const resourceType = story.type === "video" ? "video" : "image";
       cloudinary.uploader.destroy(story.mediaPublicId, { resource_type:resourceType }).catch(()=>{});
     }
+    if(story.music?.publicId) cloudinary.uploader.destroy(story.music.publicId, { resource_type:"video" }).catch(()=>{});
     await emitStoryEvent(req, story, "storyDeleted");
     res.json({ success:true });
   }catch(error){
