@@ -229,6 +229,8 @@ router.post("/", auth, storyUpload, async (req, res)=>{
       coverUrl:String(musicMeta.coverUrl || "").trim().slice(0,1000),
       startAt:clampNumber(musicMeta.startAt,0,36000,0),
       duration:clampNumber(musicMeta.duration,0,120,15),
+      volume:clampNumber(musicMeta.volume,0,1,1),
+      muted:musicMeta.muted === true,
       source:uploadedMusic ? "upload" : ["aift_catalog","external"].includes(musicMeta.source) ? musicMeta.source : "external"
     } : undefined;
 
@@ -379,10 +381,24 @@ router.post("/:id/reply", auth, async (req,res)=>{
 router.get("/:id/viewers", auth, async (req, res)=>{
   try{
     if(!validId(req.params.id)) return res.status(400).json({ message:"Invalid story ID" });
-    const story = await Story.findById(req.params.id).populate("viewers.user", storyAuthorFields());
+    const story = await Story.findById(req.params.id)
+      .populate("viewers.user", storyAuthorFields())
+      .populate("likes", storyAuthorFields());
     if(!story) return res.status(404).json({ message:"Story not found" });
     if(String(story.author) !== String(req.user._id)) return res.status(403).json({ message:"Only the story owner can view viewers" });
-    res.json({ viewers:story.viewers || [] });
+
+    const likedIds = new Set((story.likes || []).map(user=>String(user?._id || user)));
+    const viewers = (story.viewers || []).map(item=>{
+      const value = item.toObject ? item.toObject() : { ...item };
+      const viewerId = String(value.user?._id || value.user || "");
+      return { ...value, liked:likedIds.has(viewerId) };
+    });
+
+    res.json({
+      viewers,
+      viewerCount:viewers.length,
+      privateLikeCount:(story.likes || []).length
+    });
   }catch(error){
     console.error("STORY VIEWERS ERROR:", error);
     res.status(500).json({ message:"Unable to load story viewers" });
