@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const multer = require("multer");
 
 const Story = require("../models/Story");
+const StorySetting = require("../models/StorySetting");
 const Conversation = require("../models/Conversation");
 const auth = require("../middleware/auth");
 const cloudinary = require("../config/cloudinary");
@@ -130,6 +131,19 @@ async function directContactIds(userId){
     .map(id => new mongoose.Types.ObjectId(id));
 }
 
+async function mutedStoryAuthorIds(userId){
+  const settings = await StorySetting.find({
+    user:userId,
+    muted:true
+  })
+    .select("author")
+    .lean();
+
+  return settings
+    .map(item => item.author)
+    .filter(Boolean);
+}
+
 async function emitStoryEvent(req, story, eventName){
   const io = req.app.get("io") || req.io;
 
@@ -163,7 +177,14 @@ async function emitStoryEvent(req, story, eventName){
 router.get("/", auth, async (req, res)=>{
   try{
     const now = new Date();
-    const contactIds = await directContactIds(req.user._id);
+    const [contactIds, mutedAuthorIds] = await Promise.all([
+      directContactIds(req.user._id),
+      mutedStoryAuthorIds(req.user._id)
+    ]);
+
+    const mutedSet = new Set(
+      mutedAuthorIds.map(id => String(id))
+    );
 
     const stories = await Story.find({
       deletedAt:null,
@@ -181,6 +202,11 @@ router.get("/", auth, async (req, res)=>{
 
     stories.forEach(story=>{
       const authorId = String(story.author?._id || story.author);
+      const isOwner = authorId === String(req.user._id);
+
+      if(!isOwner && mutedSet.has(authorId)){
+        return;
+      }
 
       if(!grouped.has(authorId)){
         grouped.set(authorId, {
@@ -254,6 +280,53 @@ router.post("/", auth, upload.single("file"), async (req, res)=>{
     res.status(500).json({
       message:error.message || "Unable to create story"
     });
+  }
+});
+
+router.patch("/authors/:authorId/mute", auth, async (req, res)=>{
+  try{
+    const authorId = String(req.params.authorId || "");
+
+    if(!validId(authorId)){
+      return res.status(400).json({ message:"Invalid story author ID" });
+    }
+
+    if(authorId === String(req.user._id)){
+      return res.status(400).json({ message:"You cannot mute your own stories" });
+    }
+
+    const muted = req.body?.muted !== false;
+
+    const setting = await StorySetting.findOneAndUpdate(
+      {
+        user:req.user._id,
+        author:authorId
+      },
+      {
+        $set:{
+          muted,
+          mutedAt:muted ? new Date() : null
+        },
+        $setOnInsert:{
+          user:req.user._id,
+          author:authorId
+        }
+      },
+      {
+        upsert:true,
+        new:true,
+        setDefaultsOnInsert:true
+      }
+    );
+
+    res.json({
+      authorId,
+      muted:!!setting.muted,
+      mutedAt:setting.mutedAt || null
+    });
+  }catch(error){
+    console.error("MUTE STORY AUTHOR ERROR:", error);
+    res.status(500).json({ message:"Unable to update story preference" });
   }
 });
 
