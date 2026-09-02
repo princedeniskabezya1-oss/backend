@@ -6,6 +6,7 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 
 const User = require("./models/User");
+const Message = require("./models/Message");
 
 require("dotenv").config();
 
@@ -825,6 +826,59 @@ io.on("connection", socket => {
         socket.join(
           userId
         );
+
+        const deliveredAt = new Date();
+        const pendingDeliveryQuery = {
+          receiver:userId,
+          status:"sent",
+          deletedForEveryone:{
+            $ne:true
+          }
+        };
+
+        const pendingDeliveryNotifications =
+          await Message.find(
+            pendingDeliveryQuery
+          )
+            .select("_id sender")
+            .sort({ createdAt:-1 })
+            .limit(500)
+            .lean();
+
+        if(
+          pendingDeliveryNotifications.length
+        ){
+          await Message.updateMany(
+            pendingDeliveryQuery,
+            {
+              $set:{
+                status:"delivered",
+                deliveredAt
+              },
+              $addToSet:{
+                deliveredTo:{
+                  user:userId,
+                  deliveredAt
+                }
+              }
+            }
+          );
+
+          pendingDeliveryNotifications.forEach(
+            message => {
+              io.to(
+                String(message.sender)
+              ).emit(
+                "messageDelivered",
+                {
+                  messageId:message._id,
+                  by:userId,
+                  deliveredAt
+                }
+              );
+            }
+          );
+        }
 
         if (
           userRole ===
