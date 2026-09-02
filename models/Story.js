@@ -21,11 +21,18 @@ const StoryElementSchema = new mongoose.Schema(
     y: { type: Number, min: 0, max: 100, default: 50 },
     scale: { type: Number, min: 0.4, max: 4, default: 1 },
     rotation: { type: Number, min: -360, max: 360, default: 0 },
+    zIndex: { type: Number, min: 0, max: 100, default: 1 },
+    opacity: { type: Number, min: 0.1, max: 1, default: 1 },
     font: { type: String, trim: true, maxlength: 80, default: "Inter" },
     fontSize: { type: Number, min: 12, max: 120, default: 34 },
     color: { type: String, trim: true, maxlength: 32, default: "#ffffff" },
     align: { type: String, enum: ["left", "center", "right"], default: "center" },
-    style: { type: String, enum: ["clean", "strong", "typewriter", "neon", "classic"], default: "clean" }
+    style: { type: String, enum: ["clean", "strong", "typewriter", "neon", "classic"], default: "clean" },
+    animation: {
+      type: String,
+      enum: ["none", "fade", "slide_up", "slide_down", "slide_left", "slide_right", "typewriter", "pop"],
+      default: "none"
+    }
   },
   { _id: true }
 );
