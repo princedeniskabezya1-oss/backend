@@ -10,11 +10,7 @@ const StoryViewerSchema = new mongoose.Schema(
 
 const StoryElementSchema = new mongoose.Schema(
   {
-    kind: {
-      type: String,
-      enum: ["text", "caption", "mention"],
-      required: true
-    },
+    kind: { type: String, enum: ["text", "caption", "mention"], required: true },
     text: { type: String, trim: true, maxlength: 500, default: "" },
     user: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     x: { type: Number, min: 0, max: 100, default: 50 },
@@ -28,11 +24,7 @@ const StoryElementSchema = new mongoose.Schema(
     color: { type: String, trim: true, maxlength: 32, default: "#ffffff" },
     align: { type: String, enum: ["left", "center", "right"], default: "center" },
     style: { type: String, enum: ["clean", "strong", "typewriter", "neon", "classic"], default: "clean" },
-    animation: {
-      type: String,
-      enum: ["none", "fade", "slide_up", "slide_down", "slide_left", "slide_right", "typewriter", "pop"],
-      default: "none"
-    }
+    animation: { type: String, enum: ["none", "fade", "slide_up", "slide_down", "slide_left", "slide_right", "typewriter", "pop"], default: "none" }
   },
   { _id: true }
 );
@@ -54,39 +46,31 @@ const StoryMusicSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const StoryMediaTransformSchema = new mongoose.Schema(
+  {
+    x: { type: Number, min: -5000, max: 5000, default: 0 },
+    y: { type: Number, min: -5000, max: 5000, default: 0 },
+    scale: { type: Number, min: 1, max: 5, default: 1 },
+    rotation: { type: Number, min: -180, max: 180, default: 0 }
+  },
+  { _id: false }
+);
+
 const StorySchema = new mongoose.Schema(
   {
-    author: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-      index: true
-    },
-    type: {
-      type: String,
-      enum: ["text", "image", "video"],
-      required: true
-    },
-    text: {
-      type: String,
-      trim: true,
-      maxlength: 1500,
-      default: ""
-    },
+    author: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, index: true },
+    type: { type: String, enum: ["text", "image", "video"], required: true },
+    text: { type: String, trim: true, maxlength: 1500, default: "" },
     mediaUrl: { type: String, trim: true, default: "" },
     mediaPublicId: { type: String, trim: true, default: "" },
     mediaMimeType: { type: String, trim: true, default: "" },
+    mediaTransform: { type: StoryMediaTransformSchema, default: undefined },
     background: { type: String, trim: true, maxlength: 80, default: "" },
     elements: { type: [StoryElementSchema], default: [] },
     taggedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
     music: { type: StoryMusicSchema, default: undefined },
     likes: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
-    audience: {
-      type: String,
-      enum: ["connections", "everyone"],
-      default: "connections",
-      index: true
-    },
+    audience: { type: String, enum: ["connections", "everyone"], default: "connections", index: true },
     viewers: { type: [StoryViewerSchema], default: [] },
     expiresAt: { type: Date, required: true, index: true },
     deletedAt: { type: Date, default: null, index: true }
@@ -98,16 +82,8 @@ StorySchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 StorySchema.index({ author: 1, createdAt: -1 });
 StorySchema.index({ audience: 1, expiresAt: 1, createdAt: -1 });
 StorySchema.index({ taggedUsers: 1, expiresAt: 1 });
-
-StorySchema.virtual("viewerCount").get(function viewerCount(){
-  return Array.isArray(this.viewers) ? this.viewers.length : 0;
-});
-
-StorySchema.virtual("likeCount").get(function likeCount(){
-  return Array.isArray(this.likes) ? this.likes.length : 0;
-});
-
+StorySchema.virtual("viewerCount").get(function viewerCount(){ return Array.isArray(this.viewers) ? this.viewers.length : 0; });
+StorySchema.virtual("likeCount").get(function likeCount(){ return Array.isArray(this.likes) ? this.likes.length : 0; });
 StorySchema.set("toJSON", { virtuals: true });
 StorySchema.set("toObject", { virtuals: true });
-
 module.exports = mongoose.model("Story", StorySchema);
