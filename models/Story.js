@@ -24,6 +24,7 @@ const StoryElementSchema = new mongoose.Schema(
     color: { type: String, trim: true, maxlength: 32, default: "#ffffff" },
     align: { type: String, enum: ["left", "center", "right"], default: "center" },
     style: { type: String, enum: ["clean", "strong", "typewriter", "neon", "classic"], default: "clean" },
+    background: { type: String, enum: ["none", "solid", "soft", "pill", "outline"], default: "none" },
     animation: { type: String, enum: ["none", "fade", "slide_up", "slide_down", "slide_left", "slide_right", "typewriter", "pop"], default: "none" }
   },
   { _id: true }
