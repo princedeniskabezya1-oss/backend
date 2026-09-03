@@ -6,6 +6,7 @@ const Message = require("../models/Message");
 const Conversation = require("../models/Conversation");
 const ConversationSetting = require("../models/ConversationSetting");
 const CallLog = require("../models/CallLog");
+const Story = require("../models/Story");
 
 const authMiddleware = require("../middleware/auth");
 const cloudinary = require("../config/cloudinary");
@@ -246,8 +247,38 @@ router.get("/:userId", authMiddleware, async (req,res)=>{
       .sort({ createdAt:1 })
       .lean();
 
+    const storyIds = [
+      ...new Set(
+        messages
+          .filter(message => message?.metadata?.source === "story_reply")
+          .map(message => message?.metadata?.storyReply?.storyId)
+          .filter(isValidId)
+          .map(String)
+      )
+    ];
+
+    const availableStories = storyIds.length
+      ? await Story.find({
+          _id: { $in: storyIds },
+          deletedAt: null,
+          expiresAt: { $gt: new Date() }
+        }).select("_id").lean()
+      : [];
+
+    const availableStoryIds = new Set(
+      availableStories.map(story => String(story._id))
+    );
+
     res.json(
       messages.map(message=>{
+        if(
+          message?.metadata?.source === "story_reply" &&
+          message?.metadata?.storyReply?.storyId
+        ){
+          message.metadata.storyReply.available = availableStoryIds.has(
+            String(message.metadata.storyReply.storyId)
+          );
+        }
         if(message.deletedForEveryone){
           return {
             ...message,
