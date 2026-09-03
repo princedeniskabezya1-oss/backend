@@ -183,6 +183,37 @@ const callMetaSchema = new Schema(
   }
 );
 
+const storyReplySchema = new Schema(
+  {
+    storyId: {
+      type: String,
+      required: true,
+      trim: true
+    },
+    mediaUrl: {
+      type: String,
+      trim: true
+    },
+    mediaType: {
+      type: String,
+      enum: ["image", "video", "text"]
+    },
+    authorName: {
+      type: String,
+      trim: true,
+      maxlength: 160
+    },
+    previewText: {
+      type: String,
+      trim: true,
+      maxlength: 220
+    }
+  },
+  {
+    _id: false
+  }
+);
+
 const messageSchema = new Schema(
   {
     conversationId: {
@@ -368,29 +399,8 @@ metadata: {
         trim: true
       },
       storyReply: {
-        storyId: {
-          type: String,
-          trim: true
-        },
-        mediaUrl: {
-          type: String,
-          trim: true
-        },
-        mediaType: {
-          type: String,
-          enum: ["image", "video", "text"],
-          default: "text"
-        },
-        authorName: {
-          type: String,
-          trim: true,
-          maxlength: 160
-        },
-        previewText: {
-          type: String,
-          trim: true,
-          maxlength: 220
-        }
+        type: storyReplySchema,
+        default: undefined
       }
     }
   },
