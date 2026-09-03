@@ -358,7 +358,40 @@ meetingInvite: {
 metadata: {
       userAgent: String,
       ipAddress: String,
-      clientMessageId: String
+      clientMessageId: String,
+      source: {
+        type: String,
+        trim: true
+      },
+      storyId: {
+        type: String,
+        trim: true
+      },
+      storyReply: {
+        storyId: {
+          type: String,
+          trim: true
+        },
+        mediaUrl: {
+          type: String,
+          trim: true
+        },
+        mediaType: {
+          type: String,
+          enum: ["image", "video", "text"],
+          default: "text"
+        },
+        authorName: {
+          type: String,
+          trim: true,
+          maxlength: 160
+        },
+        previewText: {
+          type: String,
+          trim: true,
+          maxlength: 220
+        }
+      }
     }
   },
   {
