@@ -304,7 +304,7 @@ router.get("/:userId", authMiddleware, async (req,res)=>{
    POST /api/messages
 ========================= */
 
-router.post("/", authMiddleware, upload.single("file"), async (req,res)=>{
+router.post("/", authMiddleware, upload.fields([{name:"file",maxCount:1},{name:"files",maxCount:10}]), async (req,res)=>{
   try{
     const senderId = req.user.id;
 const {
@@ -321,7 +321,8 @@ const {
       return res.status(400).json({ message:"Valid receiverId is required" });
     }
 
-if(!text.trim() && !req.file && !fileUrl){
+const uploadedFiles=[...(req.files?.file||[]),...(req.files?.files||[])];
+if(!text.trim() && !uploadedFiles.length && !fileUrl){
   return res.status(400).json({ message:"Message text, file, GIF, or sticker is required" });
 }
 
@@ -337,10 +338,10 @@ if(!text.trim() && !req.file && !fileUrl){
     const conversation =
       await findOrCreateDirectConversation(senderId,receiverId,senderId);
 
-let attachment =
-  req.file
-    ? await uploadToCloudinary(req.file)
-    : null;
+let attachments = uploadedFiles.length
+  ? await Promise.all(uploadedFiles.map(uploadToCloudinary))
+  : [];
+let attachment = attachments[0] || null;
 
 if(!attachment && fileUrl){
   const type =
@@ -363,6 +364,7 @@ if(!attachment && fileUrl){
     originalName:fileName || "Chat asset",
     size:0
   };
+  attachments = [attachment];
 }
 
     const message = await Message.create({
@@ -375,7 +377,7 @@ fileUrl:attachment?.url || "",
 fileType:attachment?.mimeType || "",
 fileName:attachment?.originalName || "",
 fileSize:attachment?.size || 0,
-attachments:attachment ? [attachment] : [],
+attachments,
 messageType:attachment ? attachment.type : "text",
       replyTo:isValidId(replyTo) ? replyTo : null,
       metadata:{
@@ -598,6 +600,25 @@ router.post("/react", authMiddleware, async (req,res)=>{
     console.error("REACT MESSAGE ERROR:",error);
     res.status(500).json({ message:"Server error" });
   }
+});
+
+/* =========================
+   REMOVE REACTION
+   DELETE /api/messages/react/:messageId
+========================= */
+router.delete("/react/:messageId", authMiddleware, async (req,res)=>{
+  try{
+    const userId=req.user.id,{messageId}=req.params;
+    if(!isValidId(messageId))return res.status(400).json({message:"Invalid message ID"});
+    const message=await Message.findById(messageId);
+    if(!message)return res.status(404).json({message:"Message not found"});
+    if(!message.isParticipant(userId))return res.status(403).json({message:"Not allowed"});
+    message.reactions=message.reactions.filter(item=>String(item.user)!==String(userId));
+    await message.save();
+    const updated=await Message.findById(message._id).populate("sender","name profileImage").populate("receiver","name profileImage");
+    const io=getIo(req);io?.to(String(message.sender)).emit("reactionUpdate",updated);io?.to(String(message.receiver)).emit("reactionUpdate",updated);
+    res.json(updated);
+  }catch(error){console.error("REMOVE MESSAGE REACTION ERROR:",error);res.status(500).json({message:"Server error"});}
 });
 
 /* =========================
