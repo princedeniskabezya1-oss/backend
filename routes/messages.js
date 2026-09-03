@@ -236,6 +236,7 @@ router.get("/:userId", authMiddleware, async (req,res)=>{
     })
       .populate("sender","name companyName schoolName role profileImage")
       .populate("receiver","name companyName schoolName role profileImage")
+      .populate("reactions.user","name profileImage")
       .populate({
         path:"replyTo",
         select:"text sender",
@@ -402,6 +403,7 @@ messageType:attachment ? attachment.type : "text",
     const populated = await Message.findById(message._id)
       .populate("sender","name companyName schoolName role profileImage")
       .populate("receiver","name companyName schoolName role profileImage")
+      .populate("reactions.user","name profileImage")
       .populate({
         path:"replyTo",
         select:"text sender",
@@ -588,7 +590,8 @@ router.post("/react", authMiddleware, async (req,res)=>{
 
     const updated = await Message.findById(message._id)
       .populate("sender","name profileImage")
-      .populate("receiver","name profileImage");
+      .populate("receiver","name profileImage")
+      .populate("reactions.user","name profileImage");
 
     const io = getIo(req);
     io?.to(String(message.sender)).emit("reactionUpdate", updated);
@@ -615,7 +618,8 @@ router.delete("/react/:messageId", authMiddleware, async (req,res)=>{
     if(!message.isParticipant(userId))return res.status(403).json({message:"Not allowed"});
     message.reactions=message.reactions.filter(item=>String(item.user)!==String(userId));
     await message.save();
-    const updated=await Message.findById(message._id).populate("sender","name profileImage").populate("receiver","name profileImage");
+    const updated=await Message.findById(message._id).populate("sender","name profileImage").populate("receiver","name profileImage")
+      .populate("reactions.user","name profileImage");
     const io=getIo(req);io?.to(String(message.sender)).emit("reactionUpdate",updated);io?.to(String(message.receiver)).emit("reactionUpdate",updated);
     res.json(updated);
   }catch(error){console.error("REMOVE MESSAGE REACTION ERROR:",error);res.status(500).json({message:"Server error"});}
