@@ -11,6 +11,7 @@ const ChatSafetyViolation = require("../models/ChatSafetyViolation");
 
 function id(value){ return value?._id || value?.id || value || null; }
 function clean(value,max=1000){ return String(value ?? "").trim().slice(0,max); }
+function withArticle(value){const word=clean(value,80);return `${/^[aeiou]/i.test(word)?"an":"a"} ${word}`;}
 
 async function notify(user,text,link,adminId){
   if(!id(user)) return;
@@ -52,7 +53,7 @@ async function syncVentureInterest(review,admin){
   if(review.status === "approved"){
     const venture=await Venture.findById(interest.ventureId).select("ownerId title").lean();
     if(venture?.ownerId){
-      await notify(venture.ownerId,`AIFT approved a ${interest.type} request for “${venture.title}”. You can now review it inside AIFT.`,`/venture.html?id=${interest.ventureId}`,admin);
+      await notify(venture.ownerId,`AIFT approved ${withArticle(interest.type)} request for “${venture.title}”. You can now review it inside AIFT.`,`/venture.html?id=${interest.ventureId}`,admin);
     }
   }
   return { synced:true, resourceStatus:interest.status };
