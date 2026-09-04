@@ -72,7 +72,7 @@ async function syncCareerOpportunity(review,admin){
   opportunity.updatedBy=id(admin);
   await opportunity.save();
   const owner=opportunity.employerId || opportunity.schoolId;
-  await notify(owner,`AIFT Review ${review.caseNumber}: opportunity “${opportunity.title}” is ${review.status.replaceAll("_"," ")}.`,opportunity.employerId ? "/employer.html" : "/school.html",admin);
+  await notify(owner,`AIFT Review ${review.caseNumber}: opportunity “${opportunity.title}” is ${review.status.replaceAll("_"," ")}.`,opportunity.employerId ? `/employer.html?tab=career&opportunityId=${opportunity._id}` : `/school.html?section=career&opportunityId=${opportunity._id}`,admin);
   return { synced:true, resourceStatus:opportunity.status };
 }
 
@@ -86,7 +86,7 @@ async function syncScholarshipPublish(review,admin){
   else return { synced:false, reason:"No scholarship publication state change required" };
   scholarship.updatedBy=id(admin);
   await scholarship.save();
-  await notify(scholarship.schoolId,`AIFT Review ${review.caseNumber}: scholarship “${scholarship.title}” is ${review.status.replaceAll("_"," ")}.`,`/school.html`,admin);
+  await notify(scholarship.schoolId,`AIFT Review ${review.caseNumber}: scholarship “${scholarship.title}” is ${review.status.replaceAll("_"," ")}.`,`/school.html?section=career&scholarshipId=${scholarship._id}`,admin);
   return { synced:true, resourceStatus:scholarship.status };
 }
 
@@ -101,7 +101,7 @@ async function syncCareerEvent(review,admin){
   event.updatedBy=id(admin);
   await event.save();
   const owner=event.companyId || event.schoolId;
-  await notify(owner,`AIFT Review ${review.caseNumber}: career event “${event.title}” is ${review.status.replaceAll("_"," ")}.`,event.companyId ? "/employer.html" : "/school.html",admin);
+  await notify(owner,`AIFT Review ${review.caseNumber}: career event “${event.title}” is ${review.status.replaceAll("_"," ")}.`,event.companyId ? `/employer.html?tab=career&eventId=${event._id}` : `/school.html?section=career&eventId=${event._id}`,admin);
   return { synced:true, resourceStatus:event.status };
 }
 
@@ -120,8 +120,8 @@ async function syncScholarshipApplication(review,admin){
     application.history.push({status:next,changedBy:id(admin),changedByRole:"admin",note:historyNote(review),changedAt:new Date()});
     await application.save();
   }
-  await notify(application.submittedByFamilyId || application.studentId,`AIFT Review ${review.caseNumber}: scholarship application is ${review.status.replaceAll("_"," ")}.`,`/student.html`,admin);
-  if(review.status === "approved") await notify(application.schoolId,`AIFT approved scholarship application ${review.caseNumber} for school review.`,`/school.html`,admin);
+  await notify(application.submittedByFamilyId || application.studentId,`AIFT Review ${review.caseNumber}: scholarship application is ${review.status.replaceAll("_"," ")}.`,application.submittedByFamilyId?`/family.html?section=scholarships&applicationId=${application._id}`:`/student.html?section=career&focus=scholarships&applicationId=${application._id}`,admin);
+  if(review.status === "approved") await notify(application.schoolId,`AIFT approved scholarship application ${review.caseNumber} for school review.`,`/school.html?section=career&applicationId=${application._id}`,admin);
   return { synced:true, resourceStatus:application.status };
 }
 
@@ -141,8 +141,8 @@ async function syncInternshipApplication(review,admin){
     application.updatedBy=id(admin);
     await application.save();
   }
-  await notify(application.studentId,`AIFT Review ${review.caseNumber}: your career application is ${review.status.replaceAll("_"," ")}.`,`/student.html`,admin);
-  if(review.status === "approved") await notify(application.companyId || application.schoolId,`AIFT approved career application ${review.caseNumber} for your review.`,application.companyId ? "/employer.html" : "/school.html",admin);
+  await notify(application.studentId,`AIFT Review ${review.caseNumber}: your career application is ${review.status.replaceAll("_"," ")}.`,`/my-applications.html?applicationId=${application._id}`,admin);
+  if(review.status === "approved") await notify(application.companyId || application.schoolId,`AIFT approved career application ${review.caseNumber} for your review.`,application.companyId ? `/employer.html?tab=applications&applicationId=${application._id}` : `/school.html?section=career&applicationId=${application._id}`,admin);
   return { synced:true, resourceStatus:application.status };
 }
 
@@ -179,7 +179,7 @@ async function syncPartnership(review,admin){
     await notify(
       requester,
       `AIFT Review ${review.caseNumber}: company partnership proposal is ${review.status.replaceAll("_"," ")}.`,
-      "/employer.html",
+      "/employer.html?tab=partnerships",
       admin
     );
 
@@ -187,7 +187,7 @@ async function syncPartnership(review,admin){
       await notify(
         recipient,
         `AIFT approved company partnership proposal ${review.caseNumber}. You can now privately negotiate the agreement, request a meeting and review the proposal.`,
-        "/employer.html",
+        "/employer.html?tab=partnerships",
         admin
       );
     }
@@ -202,7 +202,7 @@ async function syncPartnership(review,admin){
   await notify(
     requester,
     `AIFT Review ${review.caseNumber}: partnership proposal is ${review.status.replaceAll("_"," ")}.`,
-    requester === school ? "/school.html" : "/employer.html",
+    requester === school ? "/school.html?section=partnerships" : "/employer.html?tab=partnerships",
     admin
   );
 
@@ -210,7 +210,7 @@ async function syncPartnership(review,admin){
     await notify(
       recipient,
       `AIFT approved partnership proposal ${review.caseNumber} for your review.`,
-      recipient === school ? "/school.html" : "/employer.html",
+      recipient === school ? "/school.html?section=partnerships" : "/employer.html?tab=partnerships",
       admin
     );
   }

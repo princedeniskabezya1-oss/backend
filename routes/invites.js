@@ -85,7 +85,10 @@ router.post("/", auth, async (req, res) => {
       type: "job_invite",
       sender: actor._id,
       text: `${actor.name} invited you to apply for ${job.title}`,
-      link: `/job.html?id=${job._id}`
+      link: `/job-details.html?id=${job._id}`,
+      entityType: "job",
+      entityId: job._id,
+      metadata: { jobId: String(job._id), inviteId: String(invite._id) }
     });
 
     req.app.get("io").to(String(candidate._id)).emit("job_invite_created", invite);

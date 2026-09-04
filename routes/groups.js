@@ -943,7 +943,7 @@ router.delete("/:id/members/:userId", auth, async (req, res) => {
     await createNotification({
       user:req.params.userId,sender:req.user._id,type:"group_update",
       text:`removed you from ${group.name||group.title||"a group"}`,
-      link:"/groups.html",image:group.logo||group.coverImage||"",
+      link:`/group.html?id=${group._id}`,image:group.logo||group.coverImage||"",
       entityType:"group",entityId:group._id,
       metadata:{groupId:String(group._id),event:"member_removed"}
     },{io:req.app.get("io")}).catch(()=>null);

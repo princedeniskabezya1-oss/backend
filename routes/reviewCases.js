@@ -26,6 +26,17 @@ function uid(user){ return user?._id || user?.id; }
 function clean(value,max=500){ return String(value || "").trim().slice(0,max); }
 function validId(value){ return mongoose.Types.ObjectId.isValid(String(value?._id || value || "")); }
 function sameId(left,right){ return Boolean(left&&right&&String(left?._id||left)===String(right?._id||right)); }
+function reviewDestination(review){
+ const resourceId=String(review?.resourceId||"");const metadata=review?.metadata&&typeof review.metadata==="object"?review.metadata:{};const resourceType=String(review?.resourceType||"").toLowerCase();
+ if(resourceType==="venture")return resourceId?`/venture.html?id=${resourceId}`:"/student.html?section=career&focus=ventures";
+ if(resourceType==="ventureinterest")return metadata.ventureId?`/venture.html?id=${metadata.ventureId}`:"/family.html?section=investments";
+ if(resourceType==="schoolopportunity")return resourceId?`/job-details.html?id=${resourceId}`:"/student.html?section=career";
+ if(resourceType==="scholarshipapplication")return `/student.html?section=career&focus=scholarships${resourceId?`&applicationId=${resourceId}`:""}`;
+ if(resourceType==="internshipapplication")return `/my-applications.html${resourceId?`?applicationId=${resourceId}`:""}`;
+ if(resourceType==="schoolcompanypartnership")return "/school.html?section=partnerships";
+ if(resourceType==="chatsafetyviolation")return "/messages.html";
+ return "/student.html?section=career";
+}
 async function caseNumber(){for(let i=0;i<10;i+=1){const value=`AIFT-${new Date().getFullYear()}-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;if(!(await ReviewCase.exists({caseNumber:value})))return value;}throw new Error("Could not create case number");}
 async function createOrReuseReviewCase({type,requesterId,targetUserId=null,resourceType="",resourceId=null,title,summary="",metadata={},priority="normal",note="Submitted for AIFT review"}){
  const safeType=clean(type,60),safeTitle=clean(title,220);if(!allowedTypes.has(safeType)||!safeTitle||!validId(requesterId))throw new Error("Valid review type, requester and title are required");
@@ -93,6 +104,6 @@ router.patch("/:id/admin",auth,async(req,res)=>{try{
  if(status&&status!==review.status){const next=transitions[review.status]||new Set();if(!next.has(status))return res.status(409).json({message:`Invalid review transition: ${review.status.replaceAll("_"," ")} cannot move directly to ${status.replaceAll("_"," ")}. Complete the required stage first.`,currentStatus:review.status,allowedNext:[...next]});review.status=status;review.history.push({status,note:clean(req.body?.note,1000),actorId:uid(req.user)});if(["rejected","completed","cancelled"].includes(status))review.resolvedAt=new Date();else review.resolvedAt=null;review.reviewedAt=new Date();}
  if(req.body?.priority&&["low","normal","high","urgent"].includes(req.body.priority))review.priority=req.body.priority;if(Object.prototype.hasOwnProperty.call(req.body||{},"assignedTo"))review.assignedTo=req.body.assignedTo||null;if(Object.prototype.hasOwnProperty.call(req.body||{},"decisionNotes"))review.decisionNotes=clean(req.body.decisionNotes,3000);await review.save();
  let resourceSync={synced:false,reason:"No decision status supplied"};if(status){try{const {syncReviewDecision}=require("../services/aiftReviewDecisionSync");resourceSync=await syncReviewDecision(review,req.user);}catch(syncError){console.error("REVIEW RESOURCE SYNC ERROR:",syncError);review.history.push({status:review.status,note:`Resource synchronization failed: ${clean(syncError.message,700)}`,actorId:uid(req.user)});await review.save();return res.status(500).json({message:"Review decision was saved, but the linked resource could not be synchronized. Please retry the decision.",review,resourceSync:{synced:false,reason:syncError.message}});}}
- const readableStatus=review.status==="negotiation"?"under negotiation":review.status.replaceAll("_"," ");await Notification.create({user:review.requesterId,type:"review_case",sender:uid(req.user),text:`AIFT Review ${review.caseNumber} is now ${readableStatus}.`,link:"/home.html"}).catch(()=>{});return res.json({review,resourceSync,allowedNext:[...(transitions[review.status]||new Set())]});
+ const readableStatus=review.status==="negotiation"?"under negotiation":review.status.replaceAll("_"," ");await Notification.create({user:review.requesterId,type:"review_case",sender:uid(req.user),text:`AIFT Review ${review.caseNumber} is now ${readableStatus}.`,link:reviewDestination(review),entityType:"review",entityId:review._id,metadata:{...(review.metadata||{}),reviewCaseId:String(review._id),reviewType:review.type,resourceType:review.resourceType,resourceId:String(review.resourceId||"")}}).catch(()=>{});return res.json({review,resourceSync,allowedNext:[...(transitions[review.status]||new Set())]});
 }catch(error){console.error("UPDATE REVIEW CASE ERROR:",error);return res.status(500).json({message:"Could not update review case"});}});
 router.createOrReuseReviewCase=createOrReuseReviewCase;router.getLatestReviewCase=getLatestReviewCase;router.allowedReviewStatuses=allowedStatuses;router.reviewTransitions=transitions;module.exports=router;

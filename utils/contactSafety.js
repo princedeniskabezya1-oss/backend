@@ -47,7 +47,7 @@ async function enforceContactSafety({ user,text,conversationId=null,receiverId=n
   let reviewCase=null;
   if(warningNumber>=3){
     reviewCase=await createChatSafetyReview(userId,violation);
-    await Notification.create({ user:userId,type:"review_case",text:"Your messaging access has been restricted and sent for AIFT review after repeated attempts to share contact information.",link:"/home.html" }).catch(()=>{});
+    await Notification.create({ user:userId,type:"review_case",text:"Your messaging access has been restricted and sent for AIFT review after repeated attempts to share contact information.",link:"/messages.html",entityType:"review",entityId:review._id,metadata:{reviewCaseId:String(review._id),reviewType:"chat_safety"} }).catch(()=>{});
   }
 
   return { allowed:false,violation,reviewCase,warningNumber,action,statusCode:warningNumber>=3?403:422,

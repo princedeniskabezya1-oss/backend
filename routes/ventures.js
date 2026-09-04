@@ -4889,7 +4889,10 @@ router.patch(
           text:status === "accepted"
             ? `Your AIFT investor introduction for ${venture.title} was accepted. The case is now matched.`
             : `The venture owner declined your AIFT investor introduction for ${venture.title}.`,
-          link:"/family.html"
+          link:`/venture.html?id=${venture._id}`,
+          entityType:"venture",
+          entityId:venture._id,
+          metadata:{ventureId:String(venture._id),reviewCaseId:String(investmentReview._id)}
         }).catch(()=>{});
       }
 
