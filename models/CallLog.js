@@ -2,6 +2,14 @@ const mongoose = require("mongoose");
 
 const { Schema } = mongoose;
 
+const participantResultSchema = new Schema({
+  user: { type: Schema.Types.ObjectId, ref: "User", required: true },
+  status: { type: String, enum: ["ringing", "joined", "missed", "declined", "left"], default: "ringing" },
+  answeredAt: Date,
+  leftAt: Date,
+  durationSeconds: { type: Number, default: 0 }
+}, { _id:false });
+
 const callLogSchema = new Schema({
   callId: { type: String, unique: true, sparse: true, index: true },
   caller: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
@@ -18,6 +26,7 @@ const callLogSchema = new Schema({
   durationSeconds: { type: Number, default: 0 },
   missedBy: [{ type: Schema.Types.ObjectId, ref: "User" }],
   declinedBy: [{ type: Schema.Types.ObjectId, ref: "User" }],
+  participantResults: [participantResultSchema],
   seenBy: [{ type: Schema.Types.ObjectId, ref: "User" }],
   hiddenFor: [{ type: Schema.Types.ObjectId, ref: "User" }],
   endedBy: { type: Schema.Types.ObjectId, ref: "User" },
@@ -31,6 +40,9 @@ callLogSchema.pre("save", function(next){
     this.durationSeconds = Math.max(0, Math.floor((this.endedAt - this.answeredAt) / 1000));
   }
   if(!this.participants?.length) this.participants = [this.caller, this.receiver].filter(Boolean);
+  for(const result of this.participantResults || []){
+    if(result.answeredAt && result.leftAt) result.durationSeconds = Math.max(0,Math.floor((result.leftAt-result.answeredAt)/1000));
+  }
   next();
 });
 
