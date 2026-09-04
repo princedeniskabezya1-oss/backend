@@ -1000,7 +1000,10 @@ io.on("connection", socket => {
     conversationId,
     meetingId,
     callId,
-    offer
+    offer,
+    isGroupInvite = false,
+    groupName = "",
+    groupAvatar = ""
   }) => {
     if (!to) return;
 
@@ -1013,6 +1016,9 @@ io.on("connection", socket => {
       meetingId,
       callId,
       offer,
+      isGroupInvite,
+      groupName,
+      groupAvatar,
       startedAt: new Date()
     });
   });
