@@ -1,4 +1,5 @@
 const Notification = require("../models/Notification");
+const NotificationPreference = require("../models/NotificationPreference");
 
 function clean(value,max=2000){return String(value||"").trim().slice(0,max);}
 function id(value){return value?._id||value||null;}
@@ -7,6 +8,8 @@ async function createNotification(payload,{io=null,upsert=false}={}){
   const user=id(payload.user);
   const sender=id(payload.sender);
   if(!user||String(user)===String(sender))return null;
+  const preferences=await NotificationPreference.findOne({user}).select("notificationFeed.mutedTypes").lean().catch(()=>null);
+  if((preferences?.notificationFeed?.mutedTypes||[]).includes(String(payload.type)))return null;
   const data={...payload,user,sender,text:clean(payload.text),title:clean(payload.title,180),link:clean(payload.link,1000)};
   let notification;
   if(upsert&&data.groupKey){

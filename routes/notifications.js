@@ -4,6 +4,8 @@ const Notification = require("../models/Notification");
 const FamilyStudentLinkRequest = require("../models/FamilyStudentLinkRequest");
 const FamilyChild = require("../models/FamilyChild");
 const Group = require("../models/Group");
+const NotificationPreference = require("../models/NotificationPreference");
+const NotificationReport = require("../models/NotificationReport");
 const auth = require("../middleware/auth");
 
 const router = express.Router();
@@ -27,7 +29,12 @@ function baseQuery(req){
 router.get("/",auth,async(req,res)=>{
   try{
     const limit=Math.min(Math.max(Number(req.query.limit)||100,1),MAX_LIMIT);
-    const notifications=await Notification.find(baseQuery(req)).populate("sender","name profileImage companyName schoolName logo role").sort({_id:-1}).limit(limit).lean();
+    const preferences=await NotificationPreference.findOne({user:userId(req)}).select("notificationFeed").lean();
+    const query=baseQuery(req),mutedTypes=preferences?.notificationFeed?.mutedTypes||[];
+    if(mutedTypes.length&&!req.query.type)query.type={$nin:mutedTypes};
+    const notifications=await Notification.find(query).populate("sender","name profileImage companyName schoolName logo role").sort({_id:-1}).limit(limit).lean();
+    const weights=preferences?.notificationFeed?.typeWeights||{};
+    notifications.forEach(item=>{item.relevanceWeight=Number(weights[item.type]||0);});
     return res.json(notifications);
   }catch(error){console.error("GET NOTIFICATIONS ERROR:",error);return res.status(500).json({message:"Failed to load notifications"});}
 });
@@ -62,6 +69,42 @@ router.patch("/:id/unread",auth,async(req,res)=>{
 router.delete("/:id",auth,async(req,res)=>{
   try{const now=new Date();const notification=await Notification.findOneAndUpdate({_id:req.params.id,user:userId(req)},{$set:{dismissed:true,dismissedAt:now,read:true,readAt:now}},{new:true});if(!notification)return res.status(404).json({message:"Notification not found"});emit(req,"notificationRemoved",{id:notification._id});return res.json({success:true});}
   catch(error){return res.status(500).json({message:"Failed to remove notification"});}
+});
+
+router.post("/:id/feedback",auth,async(req,res)=>{
+  try{
+    const notification=await Notification.findOne({_id:req.params.id,user:userId(req),dismissed:{$ne:true}}).lean();
+    if(!notification)return res.status(404).json({message:"Notification not found"});
+    const direction=String(req.body.direction||"");
+    if(!["more","less"].includes(direction))return res.status(400).json({message:"Choose show more or show less"});
+    const path=`notificationFeed.typeWeights.${notification.type}`;
+    const amount=direction==="more"?1:-1;
+    const preferences=await NotificationPreference.findOneAndUpdate({user:userId(req)},{$set:{user:userId(req),"notificationFeed.feedbackUpdatedAt":new Date()},$inc:{[path]:amount}},{upsert:true,new:true,setDefaultsOnInsert:true});
+    emit(req,"notificationPreferenceUpdated",{type:notification.type,direction});
+    return res.json({success:true,direction,type:notification.type,weight:Number(preferences.notificationFeed?.typeWeights?.get?.(notification.type)||0)});
+  }catch(error){console.error("NOTIFICATION FEEDBACK ERROR:",error);return res.status(500).json({message:"Could not save notification preference"});}
+});
+
+router.post("/:id/mute-type",auth,async(req,res)=>{
+  try{
+    const notification=await Notification.findOne({_id:req.params.id,user:userId(req),dismissed:{$ne:true}}).lean();
+    if(!notification)return res.status(404).json({message:"Notification not found"});
+    await NotificationPreference.findOneAndUpdate({user:userId(req)},{$set:{user:userId(req),"notificationFeed.feedbackUpdatedAt":new Date()},$addToSet:{"notificationFeed.mutedTypes":notification.type}},{upsert:true,new:true,setDefaultsOnInsert:true});
+    await Notification.updateMany({user:userId(req),type:notification.type,dismissed:{$ne:true}},{$set:{dismissed:true,dismissedAt:new Date(),read:true,readAt:new Date()}});
+    emit(req,"notificationPreferenceUpdated",{type:notification.type,muted:true});
+    return res.json({success:true,type:notification.type});
+  }catch(error){console.error("MUTE NOTIFICATION TYPE ERROR:",error);return res.status(500).json({message:"Could not turn off this notification type"});}
+});
+
+router.post("/:id/report",auth,async(req,res)=>{
+  try{
+    const notification=await Notification.findOne({_id:req.params.id,user:userId(req)}).lean();
+    if(!notification)return res.status(404).json({message:"Notification not found"});
+    const allowed=["not_relevant","misleading","spam","offensive","technical_issue","other"];
+    const reason=allowed.includes(String(req.body.reason))?String(req.body.reason):"technical_issue";
+    const report=await NotificationReport.findOneAndUpdate({reporter:userId(req),notification:notification._id},{$set:{notificationType:notification.type,reason,details:String(req.body.details||"").trim().slice(0,1000),status:"open",metadata:{link:notification.link||""}}},{upsert:true,new:true,setDefaultsOnInsert:true});
+    return res.status(201).json({success:true,reportId:report._id});
+  }catch(error){console.error("REPORT NOTIFICATION ERROR:",error);return res.status(500).json({message:"Could not submit this report"});}
 });
 
 router.post("/:id/action",auth,async(req,res)=>{

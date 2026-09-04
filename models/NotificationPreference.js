@@ -46,6 +46,12 @@ const notificationPreferenceSchema = new Schema(
       announcements: { type: Boolean, default: true }
     },
 
+    notificationFeed: {
+      mutedTypes: [{ type: String, trim: true }],
+      typeWeights: { type: Map, of: Number, default: {} },
+      feedbackUpdatedAt: Date
+    },
+
     quietHours: {
       enabled: { type: Boolean, default: false },
       start: { type: String, default: "22:00" },

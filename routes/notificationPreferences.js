@@ -35,6 +35,10 @@ const DEFAULT_PREFS = {
     attendance:true,
     announcements:true
   },
+  notificationFeed:{
+    mutedTypes:[],
+    typeWeights:{}
+  },
   quietHours:{
     enabled:false,
     start:"22:00",
@@ -75,6 +79,7 @@ router.patch("/me", authMiddleware, async (req,res)=>{
       "meetings",
       "jobs",
       "school",
+      "notificationFeed",
       "quietHours",
       "mutedConversations",
       "blockedUsers"
