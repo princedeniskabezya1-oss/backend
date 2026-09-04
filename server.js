@@ -619,6 +619,24 @@ const {
   "./services/analyticsRealtimeService"
 );
 
+app.get("/api/rtc-config", (_req, res) => {
+  const iceServers = [
+    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] }
+  ];
+  const turnUrls = String(process.env.TURN_URLS || process.env.TURN_URL || "")
+    .split(",")
+    .map(value => value.trim())
+    .filter(Boolean);
+  if (turnUrls.length && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
+    iceServers.push({
+      urls: turnUrls,
+      username: process.env.TURN_USERNAME,
+      credential: process.env.TURN_CREDENTIAL
+    });
+  }
+  res.set("Cache-Control", "public, max-age=300").json({ iceServers });
+});
+
 const server = http.createServer(app);
 
 const io = new Server(server, {
@@ -652,6 +670,39 @@ const io = new Server(server, {
 
 const onlineUsers = new Map();
 const activeGroupCalls = new Map();
+const pendingCallInvites = new Map();
+const pendingCallSignals = new Map();
+const CALL_INVITE_TTL_MS = 45000;
+
+function pendingCallKey(callId, userId) {
+  return `${String(callId || "")}:${String(userId || "")}`;
+}
+
+function storePendingCallInvite(callId, userId, payload) {
+  if (!callId || !userId) return;
+  const key = pendingCallKey(callId, userId);
+  pendingCallInvites.set(key, { payload, expiresAt: Date.now() + CALL_INVITE_TTL_MS });
+  setTimeout(() => {
+    if ((pendingCallInvites.get(key)?.expiresAt || 0) <= Date.now()) {
+      pendingCallInvites.delete(key);
+      pendingCallSignals.delete(key);
+    }
+  }, CALL_INVITE_TTL_MS + 1000).unref?.();
+}
+
+function bufferPendingCallSignal(callId, userId, event, payload) {
+  if (!callId || !userId || !pendingCallInvites.has(pendingCallKey(callId, userId))) return;
+  const key = pendingCallKey(callId, userId);
+  const queue = pendingCallSignals.get(key) || [];
+  queue.push({ event, payload });
+  pendingCallSignals.set(key, queue.slice(-100));
+}
+
+function clearPendingCall(callId, userId) {
+  const key = pendingCallKey(callId, userId);
+  pendingCallInvites.delete(key);
+  pendingCallSignals.delete(key);
+}
 
 io.on("connection", socket => {
   console.log("User connected:", socket.id);
@@ -1008,7 +1059,7 @@ io.on("connection", socket => {
   }) => {
     if (!to) return;
 
-    io.to(String(to)).emit("incomingCall", {
+    const incomingPayload = {
       from: from || socket.userId,
       callerName: callerName || "AIFT User",
       callerAvatar: callerAvatar || "",
@@ -1021,7 +1072,25 @@ io.on("connection", socket => {
       groupName,
       groupAvatar,
       startedAt: new Date()
-    });
+    };
+
+    storePendingCallInvite(callId, to, incomingPayload);
+    io.to(String(to)).emit("incomingCall", incomingPayload);
+  });
+
+  socket.on("resumeIncomingCall", ({ callId } = {}) => {
+    if (!callId || !socket.userId) return;
+    const key = pendingCallKey(callId, socket.userId);
+    const invite = pendingCallInvites.get(key);
+    if (!invite || invite.expiresAt <= Date.now()) {
+      clearPendingCall(callId, socket.userId);
+      socket.emit("pendingCallUnavailable", { callId });
+      return;
+    }
+    socket.emit("incomingCall", { ...invite.payload, resumed: true });
+    for (const signal of pendingCallSignals.get(key) || []) {
+      socket.emit(signal.event, signal.payload);
+    }
   });
 
   socket.on("joinGroupCall", ({ callId, participant = {} }) => {
@@ -1051,6 +1120,7 @@ io.on("connection", socket => {
       answer,
       acceptedAt: new Date()
     });
+    clearPendingCall(callId, socket.userId);
   });
 
   socket.on("declineCall", ({ to, meetingId, callId, reason }) => {
@@ -1063,6 +1133,7 @@ io.on("connection", socket => {
       reason: reason || "declined",
       declinedAt: new Date()
     });
+    clearPendingCall(callId, socket.userId);
   });
 
   socket.on("endCall", ({ to, meetingId, callId }) => {
@@ -1074,6 +1145,7 @@ io.on("connection", socket => {
       callId,
       endedAt: new Date()
     });
+    clearPendingCall(callId, to);
   });
 
   socket.on(
@@ -1185,12 +1257,14 @@ io.on("connection", socket => {
   socket.on("webrtcOffer", ({ to, offer, meetingId, callId }) => {
     if (!to || !offer) return;
 
-    io.to(String(to)).emit("webrtcOffer", {
+    const payload = {
       from: socket.userId,
       offer,
       meetingId,
       callId
-    });
+    };
+    bufferPendingCallSignal(callId, to, "webrtcOffer", payload);
+    io.to(String(to)).emit("webrtcOffer", payload);
   });
 
   socket.on("webrtcAnswer", ({ to, answer, meetingId, callId }) => {
@@ -1207,12 +1281,14 @@ io.on("connection", socket => {
   socket.on("webrtcIceCandidate", ({ to, candidate, meetingId, callId }) => {
     if (!to || !candidate) return;
 
-    io.to(String(to)).emit("webrtcIceCandidate", {
+    const payload = {
       from: socket.userId,
       candidate,
       meetingId,
       callId
-    });
+    };
+    bufferPendingCallSignal(callId, to, "webrtcIceCandidate", payload);
+    io.to(String(to)).emit("webrtcIceCandidate", payload);
   });
 
   socket.on("disconnect", () => {
