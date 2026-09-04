@@ -83,7 +83,9 @@ router.post("/request", auth, async (req,res) => {
     await Notification.create({
       user:student._id, type:"family_link_request", sender:userId(req.user),
       text:`An AIFT ${roleOf(req.user).replaceAll("_"," ")} account requested to connect as your ${relationshipType.replaceAll("_"," ")} for Family access. Review the request before sharing Family access.`,
-      link:`/student.html?section=notifications&familyLinkRequest=${request._id}`
+      link:`/student.html?section=notifications&familyLinkRequest=${request._id}`,
+      entityType:"family_link_request",entityId:request._id,actionState:"pending",
+      metadata:{requestId:String(request._id),actions:["accept","decline"]}
     });
 
     return res.status(201).json({ message:"Connection request sent to the student", request });

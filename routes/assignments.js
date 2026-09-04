@@ -4,6 +4,7 @@ const router = express.Router();
 const auth = require("../middleware/auth");
 const Assignment = require("../models/Assignment");
 const Class = require("../models/Class");
+const { createManyNotifications } = require("../services/notificationService");
 
 function canManageSchool(user, schoolId) {
   if (!user) return false;
@@ -127,6 +128,9 @@ router.post("/", auth, async (req, res) => {
         io.to(String(populated.teacherId._id)).emit("assignment:new", populated);
       }
     }
+
+    const recipients=[...(classDoc?.studentIds||[]),populated.teacherId?._id].map(String).filter((id,index,array)=>id&&id!==String(req.user._id)&&array.indexOf(id)===index);
+    await createManyNotifications(recipients.map(user=>({user,sender:req.user._id,type:"assignment",priority:"high",text:`New assignment: ${assignment.title}`,link:`/student.html?section=assignments`,entityType:"assignment",entityId:assignment._id,metadata:{assignmentId:String(assignment._id),classId:String(assignment.classId||""),dueDate:assignment.dueDate||null}})),{io});
 
     res.status(201).json(populated);
   } catch (err) {

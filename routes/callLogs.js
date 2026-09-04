@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const CallLog = require("../models/CallLog");
 const Conversation = require("../models/Conversation");
 const authMiddleware = require("../middleware/auth");
+const { createManyNotifications } = require("../services/notificationService");
 const router = express.Router();
 
 function isValidId(id){ return mongoose.Types.ObjectId.isValid(id); }
@@ -93,12 +94,16 @@ router.patch("/:key/end",authMiddleware,async(req,res)=>{
     if(call.endedAt)return res.json(await populate(CallLog.findById(call._id)));
     const requested=String(req.body.status||"ended"),allowed=["ended","missed","declined","cancelled","failed"],now=new Date();
     call.status=allowed.includes(requested)?requested:"ended";call.endedAt=now;call.endedBy=req.user.id;
+    const newlyMissed=[];
     for(const result of call.participantResults||[]){
       if(idOf(result.user)===idOf(call.caller)){if(result.status==="joined"){result.status="left";result.leftAt=now;}continue;}
-      if(result.status==="ringing"){result.status="missed";result.leftAt=now;call.missedBy.addToSet(result.user);}
+      if(result.status==="ringing"){result.status="missed";result.leftAt=now;call.missedBy.addToSet(result.user);newlyMissed.push(idOf(result.user));}
       else if(result.status==="joined"){result.status="left";result.leftAt=now;}
     }
-    await call.save();call=await populate(CallLog.findById(call._id));emitCall(req,"callLogUpdated",call);res.json(call);
+    await call.save();call=await populate(CallLog.findById(call._id));emitCall(req,"callLogUpdated",call);
+    const callerName=call.caller?.companyName||call.caller?.schoolName||call.caller?.name||"Someone";
+    await createManyNotifications(newlyMissed.map(user=>({user,sender:idOf(call.caller),type:"missed_call",priority:"high",text:`Missed ${call.callType==="video"?"video":"audio"} call from ${callerName}`,link:`/messages.html?conversation=${idOf(call.conversationId)}`,entityType:"call",entityId:call._id,groupKey:`missed-call:${call.callId}:${user}`,metadata:{callId:call.callId,conversationId:idOf(call.conversationId),callType:call.callType}})),{io:req.app.get("io"),upsert:true});
+    res.json(call);
   }catch(error){console.error("END CALL ERROR:",error);res.status(500).json({message:"Unable to end call"});}
 });
 

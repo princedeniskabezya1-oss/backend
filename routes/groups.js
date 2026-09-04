@@ -7,6 +7,7 @@ const Post = require("../models/Post");
 const User = require("../models/User");
 const multer = require("multer");
 const cloudinary = require("../config/cloudinary");
+const { createManyNotifications, createNotification } = require("../services/notificationService");
 
 const USER_SELECT =
   "name companyName schoolName profileImage avatar headline profession role location aiftVerified";
@@ -743,6 +744,21 @@ router.post("/:id/invite", auth, async (req, res) => {
       });
     }
 
+    const io=req.app.get("io");
+    await createManyNotifications(invitedUsers.map(user=>({
+      user,
+      sender:req.user._id,
+      type:"group_invite",
+      text:`invited you to join ${group.name||group.title||"a group"}`,
+      link:`/group.html?id=${group._id}`,
+      image:group.logo||group.coverImage||"",
+      entityType:"group",
+      entityId:group._id,
+      actionState:"pending",
+      groupKey:`group-invite:${group._id}:${user}`,
+      metadata:{groupId:String(group._id),groupName:group.name||group.title||"Group",actions:["accept","decline"]}
+    })),{io,upsert:true});
+
     res.json({
       invited: true,
       groupId: group._id,
@@ -923,6 +939,14 @@ router.delete("/:id/members/:userId", auth, async (req, res) => {
 
     group.membersCount = group.members.length;
     await group.save();
+
+    await createNotification({
+      user:req.params.userId,sender:req.user._id,type:"group_update",
+      text:`removed you from ${group.name||group.title||"a group"}`,
+      link:"/groups.html",image:group.logo||group.coverImage||"",
+      entityType:"group",entityId:group._id,
+      metadata:{groupId:String(group._id),event:"member_removed"}
+    },{io:req.app.get("io")}).catch(()=>null);
 
     res.json({
       removed: true,

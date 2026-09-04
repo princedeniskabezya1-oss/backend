@@ -5,6 +5,7 @@ const auth = require("../middleware/auth");
 const Submission = require("../models/Submission");
 const Assignment = require("../models/Assignment");
 const Class = require("../models/Class");
+const { createManyNotifications, createNotification } = require("../services/notificationService");
 
 function normalizeRole(value) {
   const role =
@@ -1219,6 +1220,9 @@ existing.submissionHistory.push({
       );
     }
 
+    const reviewerRecipients=[assignment.teacherId,assignment.schoolId].map(String).filter((id,index,array)=>id&&id!==String(req.user._id)&&array.indexOf(id)===index);
+    await createManyNotifications(reviewerRecipients.map(user=>({user,sender:req.user._id,type:"submission",text:`${populated.studentId?.name||"A student"} submitted ${populated.assignmentId?.title||"an assignment"}`,link:`/teacher.html?section=submissions`,entityType:"submission",entityId:submission._id,metadata:{submissionId:String(submission._id),assignmentId:String(submission.assignmentId),classId:String(submission.classId||"")}})),{io});
+
     return res
       .status(responseStatus)
       .json(populated);
@@ -1653,6 +1657,8 @@ passed,
         );
       }
     }
+
+    await createNotification({user:submission.studentId,sender:req.user._id,type:"submission_reviewed",priority:"high",text:`Your submission for ${populated.assignmentId?.title||"an assignment"} was ${requestedStatus}`,link:`/student.html?section=assignments`,entityType:"submission",entityId:submission._id,metadata:{submissionId:String(submission._id),assignmentId:String(submission.assignmentId),status:requestedStatus,grade:submission.grade||null}},{io}).catch(error=>console.warn("SUBMISSION NOTIFICATION ERROR:",error.message));
 
     return res.json(
       populated

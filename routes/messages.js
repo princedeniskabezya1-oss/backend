@@ -11,6 +11,7 @@ const Story = require("../models/Story");
 const authMiddleware = require("../middleware/auth");
 const cloudinary = require("../config/cloudinary");
 const { enforceContactSafety, hasMessagingRestriction } = require("../utils/contactSafety");
+const { createManyNotifications } = require("../services/notificationService");
 
 const router = express.Router();
 
@@ -378,6 +379,19 @@ router.post("/", authMiddleware, upload.fields([{name:"file",maxCount:1},{name:"
       .populate({path:"replyTo",select:"text sender",populate:{path:"sender",select:"name companyName schoolName role"}});
 
     conversation.participantIds.forEach(userId=>io?.to(String(userId)).emit("newMessage",populated));
+    const senderName=populated.sender?.companyName||populated.sender?.schoolName||populated.sender?.name||"Someone";
+    const preview=text.trim()||`${attachment?.type||"file"} attachment`;
+    await createManyNotifications(recipientIds.map(user=>({
+      user,
+      sender:senderId,
+      type:"message",
+      text:isGroup?`${senderName} sent a message in ${conversation.title||"your group"}`:`${senderName}: ${preview.slice(0,120)}`,
+      link:`/messages.html?conversation=${conversation._id}`,
+      entityType:"conversation",
+      entityId:conversation._id,
+      groupKey:`message:${conversation._id}:${user}`,
+      metadata:{conversationId:String(conversation._id),messageId:String(message._id),isGroup,preview:preview.slice(0,180)}
+    })),{io,upsert:true});
     onlineRecipients.forEach(id=>io?.to(String(senderId)).emit("messageDelivered",{messageId:message._id,by:id,deliveredAt:new Date()}));
     res.status(201).json(populated);
   }catch(error){

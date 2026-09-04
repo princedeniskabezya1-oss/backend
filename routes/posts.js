@@ -17,6 +17,7 @@ const Post = require("../models/Post");
 const User = require("../models/User");
 const Group = require("../models/Group");
 const Notification = require("../models/Notification");
+const { createNotification } = require("../services/notificationService");
 
 const AnalyticsEvent = require(
   "../models/AnalyticsEvent"
@@ -1405,6 +1406,12 @@ router.patch(
         payload
       );
 
+      if(liked&&String(populated.author?._id||populated.author)!==String(actorId)){
+        await createNotification({user:populated.author?._id||populated.author,sender:actorId,type:"like",text:"liked your post",link:`/feed.html?post=${populated._id}`,entityType:"post",entityId:populated._id,groupKey:`post-like:${populated._id}:${actorId}`,metadata:{postId:String(populated._id)}},{io:getIo(req),upsert:true}).catch(error=>console.warn("POST LIKE NOTIFICATION ERROR:",error.message));
+      }else if(!liked){
+        await Notification.deleteMany({user:populated.author?._id||populated.author,sender:actorId,type:"like","metadata.postId":String(populated._id)}).catch(()=>null);
+      }
+
       return res.json({
         liked,
         likesCount:
@@ -1637,6 +1644,10 @@ router.post(
         }
       );
 
+      if(String(populated.author?._id||populated.author)!==String(req.user._id||req.user.id)){
+        await createNotification({user:populated.author?._id||populated.author,sender:req.user._id||req.user.id,type:"comment",text:`commented on your post: ${text.slice(0,100)}`,link:`/feed.html?post=${populated._id}`,entityType:"post",entityId:populated._id,metadata:{postId:String(populated._id),commentId:String(newComment._id)}},{io:getIo(req)}).catch(error=>console.warn("POST COMMENT NOTIFICATION ERROR:",error.message));
+      }
+
       return res.json(
         newComment
       );
@@ -1821,6 +1832,9 @@ router.post("/:postId/comments/:commentId/reply", auth, async (req, res) => {
       commentId: comment._id,
       reply: newReply
     });
+
+    const replyRecipients=[post.author,comment.user].map(id=>String(id?._id||id)).filter((id,index,array)=>id&&id!==String(req.user.id)&&array.indexOf(id)===index);
+    await Promise.all(replyRecipients.map(user=>createNotification({user,sender:req.user.id,type:"comment_reply",text:`replied to a comment: ${text.slice(0,100)}`,link:`/feed.html?post=${post._id}`,entityType:"post",entityId:post._id,metadata:{postId:String(post._id),commentId:String(comment._id),replyId:String(newReply._id)}},{io:getIo(req)}).catch(()=>null)));
 
     res.json(newReply);
   } catch (err) {
