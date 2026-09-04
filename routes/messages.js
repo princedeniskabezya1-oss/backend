@@ -307,128 +307,82 @@ router.get("/:userId", authMiddleware, async (req,res)=>{
 
 router.post("/", authMiddleware, upload.fields([{name:"file",maxCount:1},{name:"files",maxCount:10}]), async (req,res)=>{
   try{
-    const senderId = req.user.id;
-const {
-  receiverId,
-  text = "",
-  replyTo,
-  clientMessageId,
-  fileUrl = "",
-  fileType = "",
-  fileName = ""
-} = req.body;
+    const senderId=req.user.id;
+    const {receiverId,conversationId,text="",replyTo,clientMessageId,fileUrl="",fileType="",fileName=""}=req.body;
+    const uploadedFiles=[...(req.files?.file||[]),...(req.files?.files||[])];
 
-    if(!receiverId || !isValidId(receiverId)){
-      return res.status(400).json({ message:"Valid receiverId is required" });
+    if(!text.trim()&&!uploadedFiles.length&&!fileUrl){
+      return res.status(400).json({message:"Message text, file, GIF, or sticker is required"});
     }
-
-const uploadedFiles=[...(req.files?.file||[]),...(req.files?.files||[])];
-if(!text.trim() && !uploadedFiles.length && !fileUrl){
-  return res.status(400).json({ message:"Message text, file, GIF, or sticker is required" });
-}
-
     if(await hasMessagingRestriction(senderId)){
-      return res.status(403).json({ code:"AIFT_MESSAGING_RESTRICTED", message:"Messaging is restricted pending AIFT review." });
+      return res.status(403).json({code:"AIFT_MESSAGING_RESTRICTED",message:"Messaging is restricted pending AIFT review."});
     }
 
-    const safety = await enforceContactSafety({ user:req.user, text, receiverId });
-    if(!safety.allowed){
-      return res.status(safety.statusCode).json({ code:"AIFT_CONTACT_SHARING_BLOCKED", message:safety.message, warningNumber:safety.warningNumber, action:safety.action });
+    let conversation;
+    if(isValidId(conversationId)){
+      conversation=await Conversation.findById(conversationId);
+      if(!conversation)return res.status(404).json({message:"Conversation not found"});
+      if(!conversation.hasParticipant(senderId))return res.status(403).json({message:"You are not a member of this conversation"});
+      if(conversation.isLocked||conversation.allowMembersToSend===false){
+        const member=conversation.getParticipant(senderId);
+        if(!member||!["owner","admin"].includes(member.role))return res.status(403).json({message:"Only group admins can send messages"});
+      }
+    }else{
+      if(!receiverId||!isValidId(receiverId))return res.status(400).json({message:"Valid receiverId or conversationId is required"});
+      conversation=await findOrCreateDirectConversation(senderId,receiverId,senderId);
     }
 
-    const conversation =
-      await findOrCreateDirectConversation(senderId,receiverId,senderId);
+    const isGroup=conversation.type!=="direct";
+    const recipientIds=conversation.participantIds.map(String).filter(id=>id!==String(senderId));
+    if(!isGroup){
+      const safety=await enforceContactSafety({user:req.user,text,receiverId});
+      if(!safety.allowed)return res.status(safety.statusCode).json({code:"AIFT_CONTACT_SHARING_BLOCKED",message:safety.message,warningNumber:safety.warningNumber,action:safety.action});
+    }
 
-let attachments = uploadedFiles.length
-  ? await Promise.all(uploadedFiles.map(uploadToCloudinary))
-  : [];
-let attachment = attachments[0] || null;
+    let attachments=uploadedFiles.length?await Promise.all(uploadedFiles.map(uploadToCloudinary)):[];
+    let attachment=attachments[0]||null;
+    if(!attachment&&fileUrl){
+      const type=fileType.includes("gif")||fileType.includes("image")?"image":fileType.includes("video")?"video":fileType.includes("audio")?"audio":"file";
+      attachment={url:fileUrl,secureUrl:fileUrl,publicId:"",type,mimeType:fileType||"image/webp",originalName:fileName||"Chat asset",size:0};
+      attachments=[attachment];
+    }
 
-if(!attachment && fileUrl){
-  const type =
-    fileType.includes("gif")
-      ? "image"
-      : fileType.includes("image")
-        ? "image"
-        : fileType.includes("video")
-          ? "video"
-          : fileType.includes("audio")
-            ? "audio"
-            : "file";
-
-  attachment = {
-    url:fileUrl,
-    secureUrl:fileUrl,
-    publicId:"",
-    type,
-    mimeType:fileType || "image/webp",
-    originalName:fileName || "Chat asset",
-    size:0
-  };
-  attachments = [attachment];
-}
-
-    const message = await Message.create({
+    const message=await Message.create({
       conversationId:conversation._id,
       sender:senderId,
-      receiver:receiverId,
-      participants:[senderId,receiverId],
+      receiver:isGroup?senderId:receiverId,
+      participants:conversation.participantIds,
       text:text.trim(),
-fileUrl:attachment?.url || "",
-fileType:attachment?.mimeType || "",
-fileName:attachment?.originalName || "",
-fileSize:attachment?.size || 0,
-attachments,
-messageType:attachment ? attachment.type : "text",
-      replyTo:isValidId(replyTo) ? replyTo : null,
-      metadata:{
-        clientMessageId,
-        ipAddress:req.ip,
-        userAgent:req.headers["user-agent"]
-      }
+      fileUrl:attachment?.url||"",
+      fileType:attachment?.mimeType||"",
+      fileName:attachment?.originalName||"",
+      fileSize:attachment?.size||0,
+      attachments,
+      messageType:attachment?attachment.type:"text",
+      replyTo:isValidId(replyTo)?replyTo:null,
+      metadata:{clientMessageId,ipAddress:req.ip,userAgent:req.headers["user-agent"]}
     });
 
-    const io = getIo(req);
-    const receiverRoom = io?.sockets?.adapter?.rooms?.get(String(receiverId));
-
-    if(receiverRoom?.size){
-      message.markDeliveredTo(receiverId);
-      await message.save();
-    }
+    const io=getIo(req),onlineRecipients=recipientIds.filter(id=>io?.sockets?.adapter?.rooms?.get(id)?.size);
+    onlineRecipients.forEach(id=>message.markDeliveredTo(id));
+    if(onlineRecipients.length)await message.save();
 
     conversation.setLastMessage(message);
     conversation.incrementUnreadForOthers(senderId);
     await conversation.save();
 
-    const populated = await Message.findById(message._id)
-      .populate("sender","name companyName schoolName role profileImage")
-      .populate("receiver","name companyName schoolName role profileImage")
+    const populated=await Message.findById(message._id)
+      .populate("sender","name companyName schoolName role profileImage logo")
+      .populate("receiver","name companyName schoolName role profileImage logo")
       .populate("reactions.user","name profileImage")
-      .populate({
-        path:"replyTo",
-        select:"text sender",
-        populate:{
-          path:"sender",
-          select:"name companyName schoolName role"
-        }
-      });
+      .populate({path:"replyTo",select:"text sender",populate:{path:"sender",select:"name companyName schoolName role"}});
 
-    io?.to(String(receiverId)).emit("newMessage", populated);
-    io?.to(String(senderId)).emit("newMessage", populated);
-
-    if(message.status === "delivered"){
-      io?.to(String(senderId)).emit("messageDelivered", {
-        messageId:message._id,
-        by:receiverId,
-        deliveredAt:message.deliveredAt
-      });
-    }
-
+    conversation.participantIds.forEach(userId=>io?.to(String(userId)).emit("newMessage",populated));
+    onlineRecipients.forEach(id=>io?.to(String(senderId)).emit("messageDelivered",{messageId:message._id,by:id,deliveredAt:new Date()}));
     res.status(201).json(populated);
-
   }catch(error){
     console.error("SEND MESSAGE ERROR:",error);
-    res.status(500).json({ message:"Server error" });
+    res.status(500).json({message:"Server error"});
   }
 });
 
