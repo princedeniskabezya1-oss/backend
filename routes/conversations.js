@@ -26,6 +26,25 @@ function getUserImage(user = {}){
   return user.profileImage || user.logo || user.avatar || "";
 }
 
+async function createGroupSystemMessage(req,conversation,text){
+  const participantIds=(conversation.participantIds||[]).map(String);
+  const message=await Message.create({
+    conversationId:conversation._id,
+    sender:req.user.id,
+    receiver:req.user.id,
+    participants:participantIds,
+    messageType:"system",
+    text:String(text||"").trim(),
+    status:"sent"
+  });
+  conversation.lastMessage={text:message.text,sender:req.user.id,messageType:"system",createdAt:message.createdAt};
+  conversation.lastMessageDate=message.createdAt;
+  await conversation.save();
+  const populated=await Message.findById(message._id).populate("sender","name companyName schoolName role profileImage logo");
+  participantIds.forEach(userId=>getIo(req)?.to(userId).emit("newMessage",populated));
+  return populated;
+}
+
 function participantUserId(participant){
   return (
     participant?.user?._id ||
@@ -302,6 +321,8 @@ router.post("/", authMiddleware, async (req,res)=>{
       }
     });
 
+    await createGroupSystemMessage(req,conversation,`${getUserName(req.user)} created this group`);
+
     const populated = await Conversation.findById(conversation._id)
       .populate("participants.user","name companyName schoolName role profileImage logo headline profession");
 
@@ -532,11 +553,13 @@ router.post("/:id/participants", authMiddleware, async (req,res)=>{
       ? req.body.users.filter(isValidId)
       : [];
 
-    users.forEach(userId=>{
-      conversation.addParticipant(userId,"member");
-    });
-
+    const addedUsers=await User.find({_id:{$in:users}}).select("name companyName schoolName").lean();
+    users.forEach(userId=>{ conversation.addParticipant(userId,"member"); });
     await conversation.save();
+    if(addedUsers.length){
+      const names=addedUsers.map(getUserName).join(", ");
+      await createGroupSystemMessage(req,conversation,`${getUserName(req.user)} added ${names}`);
+    }
 
     const populated = await Conversation.findById(conversation._id)
       .populate("participants.user","name companyName schoolName role profileImage logo headline profession");
@@ -577,8 +600,10 @@ router.delete("/:id/participants/:userId", authMiddleware, async (req,res)=>{
       return res.status(403).json({ message:"Only owner or admin can remove participants" });
     }
 
+    const removedUser=await User.findById(req.params.userId).select("name companyName schoolName").lean();
     conversation.removeParticipant(req.params.userId);
     await conversation.save();
+    await createGroupSystemMessage(req,conversation,`${getUserName(req.user)} removed ${getUserName(removedUser||{})}`);
 
     getIo(req)?.to(String(req.params.userId)).emit("conversationRemoved",{
       conversationId:conversation._id
