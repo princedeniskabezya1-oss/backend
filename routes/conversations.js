@@ -618,6 +618,26 @@ router.delete("/:id/participants/:userId", authMiddleware, async (req,res)=>{
 });
 
 /* =========================
+   LEAVE GROUP
+========================= */
+router.post("/:id/leave",authMiddleware,async(req,res)=>{
+  try{
+    const conversation=await Conversation.findById(req.params.id);
+    if(!conversation)return res.status(404).json({message:"Conversation not found"});
+    if(conversation.type==="direct")return res.status(400).json({message:"A direct conversation cannot be left"});
+    const me=getParticipant(conversation,req.user.id);
+    if(!me||me.isActive===false)return res.status(400).json({message:"You are not an active member"});
+    const activeOwners=conversation.participants.filter(p=>p.isActive!==false&&p.role==="owner");
+    if(me.role==="owner"&&activeOwners.length===1)return res.status(400).json({message:"Assign another group owner before leaving"});
+    conversation.removeParticipant(req.user.id);await conversation.save();
+    await createGroupSystemMessage(req,conversation,`${getUserName(req.user)} left the group`);
+    conversation.participantIds.forEach(userId=>getIo(req)?.to(String(userId)).emit("conversationUpdated",{conversationId:conversation._id}));
+    getIo(req)?.to(String(req.user.id)).emit("conversationRemoved",{conversationId:conversation._id});
+    res.json({success:true});
+  }catch(error){console.error("LEAVE GROUP ERROR:",error);res.status(500).json({message:"Unable to leave group"});}
+});
+
+/* =========================
    UPDATE CONVERSATION
 ========================= */
 
