@@ -1254,6 +1254,16 @@ io.on("connection", socket => {
     });
   });
 
+  socket.on("callMediaStatus", ({ to, callId, cameraEnabled }) => {
+    if (!to || !callId || !socket.userId) return;
+    io.to(String(to)).emit("callMediaStatus", {
+      from: socket.userId,
+      callId,
+      cameraEnabled: cameraEnabled === true,
+      updatedAt: new Date()
+    });
+  });
+
   socket.on("webrtcOffer", ({ to, offer, meetingId, callId }) => {
     if (!to || !offer) return;
 
