@@ -6,6 +6,8 @@ const FamilyChild = require("../models/FamilyChild");
 const Group = require("../models/Group");
 const NotificationPreference = require("../models/NotificationPreference");
 const NotificationReport = require("../models/NotificationReport");
+const Conversation = require("../models/Conversation");
+const Job = require("../models/Job");
 const auth = require("../middleware/auth");
 
 const router = express.Router();
@@ -14,6 +16,8 @@ const userId = req => req.user?._id || req.user?.id;
 const validId = value => mongoose.Types.ObjectId.isValid(value);
 const emit = (req,event,payload) => req.app.get("io")?.to(String(userId(req))).emit(event,payload);
 const escapeRegExp = value => String(value).replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
+const NETWORK_TYPES=["follow","group_invite","family_link_request","family_link_accepted","family_link_declined","family_link_revoked"];
+const JOB_TYPES=["job_invite","job_update","opportunity"];
 
 function baseQuery(req){
   const query={user:userId(req),dismissed:{$ne:true}};
@@ -45,6 +49,48 @@ async function unreadCount(req,res){
 }
 router.get("/unread",auth,unreadCount);
 router.get("/unread-count",auth,unreadCount);
+
+router.get("/navigation-counts",auth,async(req,res)=>{
+  try{
+    const owner=userId(req),now=new Date();
+    let preferences=await NotificationPreference.findOne({user:owner}).select("navigationViews").lean();
+    if(!preferences?.navigationViews?.jobsViewedAt){
+      preferences=await NotificationPreference.findOneAndUpdate(
+        {user:owner},
+        {$set:{"navigationViews.jobsViewedAt":now},$setOnInsert:{user:owner}},
+        {upsert:true,new:true,setDefaultsOnInsert:true}
+      ).select("navigationViews").lean();
+    }
+    const jobsViewedAt=preferences?.navigationViews?.jobsViewedAt||now;
+    const [alerts,network,jobAlerts,newJobs,conversations]=await Promise.all([
+      Notification.countDocuments({user:owner,read:false,dismissed:{$ne:true}}),
+      Notification.countDocuments({user:owner,read:false,dismissed:{$ne:true},type:{$in:NETWORK_TYPES}}),
+      Notification.countDocuments({user:owner,read:false,dismissed:{$ne:true},type:{$in:JOB_TYPES}}),
+      Job.countDocuments({status:"active",createdAt:{$gt:jobsViewedAt},employerId:{$ne:owner}}),
+      Conversation.find({participants:{$elemMatch:{user:owner,isActive:true}}}).select("participants.user participants.isActive participants.unreadCount").lean()
+    ]);
+    const messages=conversations.reduce((total,conversation)=>{
+      const participant=(conversation.participants||[]).find(item=>String(item.user)===String(owner)&&item.isActive!==false);
+      return total+Math.max(0,Number(participant?.unreadCount||0));
+    },0);
+    return res.json({messages,jobs:Math.max(jobAlerts,newJobs),connections:network,notifications:alerts});
+  }catch(error){console.error("NAVIGATION COUNTS ERROR:",error);return res.status(500).json({message:"Failed to load navigation counts"});}
+});
+
+router.patch("/navigation-view/:category",auth,async(req,res)=>{
+  try{
+    const category=String(req.params.category||"").toLowerCase(),owner=userId(req),now=new Date();
+    if(!["jobs","network"].includes(category))return res.status(400).json({message:"Invalid navigation category"});
+    const types=category==="jobs"?JOB_TYPES:NETWORK_TYPES;
+    const field=category==="jobs"?"navigationViews.jobsViewedAt":"navigationViews.networkViewedAt";
+    const [result]=await Promise.all([
+      Notification.updateMany({user:owner,read:false,dismissed:{$ne:true},type:{$in:types}},{$set:{read:true,readAt:now,seen:true,seenAt:now}}),
+      NotificationPreference.findOneAndUpdate({user:owner},{$set:{user:owner,[field]:now}},{upsert:true,new:true,setDefaultsOnInsert:true})
+    ]);
+    emit(req,"navigationCountsUpdated",{category});
+    return res.json({success:true,count:result.modifiedCount||0});
+  }catch(error){console.error("NAVIGATION VIEW ERROR:",error);return res.status(500).json({message:"Failed to update navigation count"});}
+});
 
 router.patch("/read-all",auth,async(req,res)=>{
   try{const now=new Date();const result=await Notification.updateMany({user:userId(req),read:false,dismissed:{$ne:true}},{$set:{read:true,readAt:now,seen:true,seenAt:now}});emit(req,"notificationsRead",{all:true,count:result.modifiedCount||0});return res.json({success:true,count:result.modifiedCount||0});}

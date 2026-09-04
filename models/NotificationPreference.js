@@ -52,6 +52,11 @@ const notificationPreferenceSchema = new Schema(
       feedbackUpdatedAt: Date
     },
 
+    navigationViews: {
+      jobsViewedAt: { type: Date, default: null },
+      networkViewedAt: { type: Date, default: null }
+    },
+
     quietHours: {
       enabled: { type: Boolean, default: false },
       start: { type: String, default: "22:00" },
