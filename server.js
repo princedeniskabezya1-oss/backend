@@ -651,6 +651,7 @@ const io = new Server(server, {
 });
 
 const onlineUsers = new Map();
+const activeGroupCalls = new Map();
 
 io.on("connection", socket => {
   console.log("User connected:", socket.id);
@@ -1021,6 +1022,23 @@ io.on("connection", socket => {
       groupAvatar,
       startedAt: new Date()
     });
+  });
+
+  socket.on("joinGroupCall", ({ callId, participant = {} }) => {
+    if (!callId || !socket.userId) return;
+    const key=String(callId),room=`group-call:${key}`,members=activeGroupCalls.get(key)||new Map();
+    const existing=[...members.values()].filter(item=>String(item.userId)!==String(socket.userId));
+    members.set(String(socket.userId),{userId:String(socket.userId),name:participant.name||"AIFT User",avatar:participant.avatar||""});
+    activeGroupCalls.set(key,members);socket.join(room);
+    socket.emit("groupCallRoster",{callId:key,participants:existing});
+    socket.to(room).emit("groupCallParticipantJoined",{callId:key,participant:members.get(String(socket.userId))});
+  });
+
+  socket.on("leaveGroupCall", ({ callId }) => {
+    if (!callId || !socket.userId) return;
+    const key=String(callId),room=`group-call:${key}`,members=activeGroupCalls.get(key);
+    members?.delete(String(socket.userId));if(members&&!members.size)activeGroupCalls.delete(key);
+    socket.leave(room);socket.to(room).emit("groupCallParticipantLeft",{callId:key,userId:String(socket.userId)});
   });
 
   socket.on("acceptCall", ({ to, meetingId, callId, answer }) => {
