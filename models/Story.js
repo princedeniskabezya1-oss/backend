@@ -52,7 +52,9 @@ const StoryMediaTransformSchema = new mongoose.Schema(
     x: { type: Number, min: -5000, max: 5000, default: 0 },
     y: { type: Number, min: -5000, max: 5000, default: 0 },
     scale: { type: Number, min: 1, max: 5, default: 1 },
-    rotation: { type: Number, min: -180, max: 180, default: 0 }
+    rotation: { type: Number, min: -180, max: 180, default: 0 },
+    trimStart: { type: Number, min: 0, max: 120, default: 0 },
+    trimEnd: { type: Number, min: 0, max: 120, default: 0 }
   },
   { _id: false }
 );
@@ -66,7 +68,7 @@ const StorySchema = new mongoose.Schema(
     mediaPublicId: { type: String, trim: true, default: "" },
     mediaMimeType: { type: String, trim: true, default: "" },
     mediaTransform: { type: StoryMediaTransformSchema, default: undefined },
-    playbackDuration: { type: Number, min: 1, max: 45, default: 6 },
+    playbackDuration: { type: Number, min: 1, max: 120, default: 6 },
     background: { type: String, trim: true, maxlength: 80, default: "" },
     elements: { type: [StoryElementSchema], default: [] },
     taggedUsers: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
