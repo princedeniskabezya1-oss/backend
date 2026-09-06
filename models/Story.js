@@ -54,7 +54,8 @@ const StoryMediaTransformSchema = new mongoose.Schema(
     scale: { type: Number, min: 1, max: 5, default: 1 },
     rotation: { type: Number, min: -180, max: 180, default: 0 },
     trimStart: { type: Number, min: 0, max: 120, default: 0 },
-    trimEnd: { type: Number, min: 0, max: 120, default: 0 }
+    trimEnd: { type: Number, min: 0, max: 120, default: 0 },
+    muted: { type: Boolean, default: false }
   },
   { _id: false }
 );
