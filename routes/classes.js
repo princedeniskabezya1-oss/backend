@@ -1568,6 +1568,145 @@ router.get(
 );
 
 /* ============================================
+   LEARNING DISCOVERY
+   GET /api/classes/discover
+
+   Returns only active, published classes that
+   are intentionally visible in Learning.
+============================================ */
+
+router.get("/discover", auth, async (req, res) => {
+  try {
+    const now = new Date();
+    const viewerId = normalizeObjectId(req.user?._id);
+    const search = String(req.query.search || "")
+      .trim()
+      .slice(0, 100);
+    const limit = Math.min(
+      Math.max(Number(req.query.limit) || 36, 1),
+      60
+    );
+
+    const query = {
+      status: "active",
+      published: true,
+      $and: [
+        {
+          $or: [
+            { "publishingSettings.visibility": "public" },
+            { "publishingSettings.visibility": { $exists: false } }
+          ]
+        },
+        {
+          $or: [
+            { "publishingSettings.scheduledPublishAt": null },
+            { "publishingSettings.scheduledPublishAt": { $lte: now } }
+          ]
+        },
+        {
+          $or: [
+            { "publishingSettings.scheduledArchiveAt": null },
+            { "publishingSettings.scheduledArchiveAt": { $gt: now } }
+          ]
+        }
+      ]
+    };
+
+    if (search) {
+      const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const pattern = new RegExp(escapedSearch, "i");
+
+      query.$or = [
+        { title: pattern },
+        { subtitle: pattern },
+        { subject: pattern },
+        { category: pattern },
+        { description: pattern },
+        { level: pattern },
+        { language: pattern }
+      ];
+    }
+
+    const classes = await Class.find(query)
+      .select([
+        "schoolId",
+        "teacherId",
+        "title",
+        "subtitle",
+        "subject",
+        "category",
+        "description",
+        "level",
+        "language",
+        "coverImage",
+        "bannerImage",
+        "estimatedDurationMinutes",
+        "schedule",
+        "studentIds",
+        "appearanceSettings.thumbnailImage",
+        "appearanceSettings.showInstructor",
+        "enrollmentSettings.accessType",
+        "enrollmentSettings.maximumStudents",
+        "enrollmentSettings.enrollmentOpensAt",
+        "enrollmentSettings.enrollmentClosesAt",
+        "learningSettings.certificatesEnabled",
+        "createdAt",
+        "updatedAt"
+      ].join(" "))
+      .populate(
+        "schoolId",
+        "name schoolName profileImage schoolLogo logo"
+      )
+      .populate(
+        "teacherId",
+        "name profileImage avatar subject department role"
+      )
+      .sort({ updatedAt: -1, createdAt: -1 })
+      .limit(limit)
+      .lean();
+
+    const safeClasses = classes.map(item => {
+      const studentIds = Array.isArray(item.studentIds)
+        ? item.studentIds.map(normalizeObjectId).filter(Boolean)
+        : [];
+      const enrollment = item.enrollmentSettings || {};
+      const maximumStudents = Number(enrollment.maximumStudents || 0);
+      const opensAt = enrollment.enrollmentOpensAt
+        ? new Date(enrollment.enrollmentOpensAt)
+        : null;
+      const closesAt = enrollment.enrollmentClosesAt
+        ? new Date(enrollment.enrollmentClosesAt)
+        : null;
+
+      return {
+        ...item,
+        studentIds: undefined,
+        studentCount: studentIds.length,
+        isEnrolled: viewerId
+          ? studentIds.includes(viewerId)
+          : false,
+        enrollmentOpen:
+          enrollment.accessType === "public" &&
+          (!opensAt || opensAt <= now) &&
+          (!closesAt || closesAt > now) &&
+          (!maximumStudents || studentIds.length < maximumStudents)
+      };
+    });
+
+    return res.json({
+      classes: safeClasses,
+      count: safeClasses.length
+    });
+  } catch (err) {
+    console.error("GET /api/classes/discover error:", err);
+
+    return res.status(500).json({
+      message: "AIFT could not load learning opportunities."
+    });
+  }
+});
+
+/* ============================================
    GET CLASS BY ID
    GET /api/classes/:id
 ============================================ */
