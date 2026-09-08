@@ -4661,6 +4661,151 @@ router.get("/network", auth, async (req, res) => {
 });
 
 /* ============================================
+   LEARNING TEACHER DISCOVERY
+   GET /api/users/teachers/discover
+============================================ */
+router.get("/teachers/discover", auth, async (req, res) => {
+  try {
+    const keyword = String(req.query.keyword || "").trim().slice(0, 100);
+    const query = {
+      role: "teacher",
+      status: { $nin: ["suspended", "deactivated"] },
+      isPublic: { $ne: false },
+      allowProfileIndexing: { $ne: false }
+    };
+
+    if (keyword) {
+      const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const pattern = new RegExp(escaped, "i");
+      query.$or = [
+        { name: pattern },
+        { headline: pattern },
+        { bio: pattern },
+        { teacherBio: pattern },
+        { subject: pattern },
+        { department: pattern },
+        { profession: pattern },
+        { skills: pattern }
+      ];
+    }
+
+    const teachers = await User.find(query)
+      .select("_id name headline bio teacherBio role profileImage avatar skills languages certifications profession yearsOfExperience aiftVerified aiftCertified subject department location")
+      .sort({ aiftVerified: -1, aiftCertified: -1, createdAt: -1 })
+      .limit(100)
+      .lean();
+
+    return res.json({ teachers, count: teachers.length });
+  } catch (error) {
+    console.error("LEARNING TEACHER DISCOVERY ERROR:", error);
+    return res.status(500).json({ message: "AIFT could not load teachers." });
+  }
+});
+
+/* ============================================
+   LEARNING TRAINING REQUEST
+   POST /api/users/:id/training-request
+============================================ */
+router.post("/:id/training-request", auth, async (req, res) => {
+  try {
+    const teacherId = String(req.params.id || "");
+    const requesterId = String(req.user?._id || req.user?.id || "");
+    const topic = String(req.body?.topic || "").trim().replace(/\s+/g, " ");
+    const message = String(req.body?.message || "").trim();
+
+    if (!validObjectId(teacherId)) {
+      return res.status(400).json({ message: "Choose a valid teacher." });
+    }
+    if (teacherId === requesterId) {
+      return res.status(400).json({ message: "You cannot request training from your own account." });
+    }
+    if (topic.length < 3 || topic.length > 120) {
+      return res.status(400).json({ message: "Training topic must be between 3 and 120 characters." });
+    }
+    if (message.length > 600) {
+      return res.status(400).json({ message: "Learning goal must be 600 characters or fewer." });
+    }
+
+    const [teacher, requester] = await Promise.all([
+      User.findOne({
+        _id: teacherId,
+        role: "teacher",
+        status: { $nin: ["suspended", "deactivated"] }
+      }).select("_id name role"),
+      User.findById(requesterId).select("_id name role profileImage")
+    ]);
+
+    if (!teacher) {
+      return res.status(404).json({ message: "This teacher is not available for training requests." });
+    }
+    if (!requester) {
+      return res.status(401).json({ message: "Your account could not be verified." });
+    }
+
+    const recent = await Notification.findOne({
+      user: teacher._id,
+      type: "training_request",
+      sender: requester._id,
+      "metadata.topic": topic,
+      createdAt: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) }
+    }).select("_id").lean();
+
+    if (recent) {
+      return res.status(409).json({ message: "You already sent this teacher the same request today." });
+    }
+
+    const profilePage = requester.role === "school"
+      ? "school-public-profile.html"
+      : requester.role === "employer"
+        ? "employer-public-profile.html"
+        : requester.role === "student"
+          ? "student-public-profile.html"
+          : "agent-public-profile.html";
+
+    const notification = await Notification.create({
+      user: teacher._id,
+      type: "training_request",
+      sender: requester._id,
+      title: "New training request",
+      text: `${requester.name || "An AIFT member"} requested training in ${topic}.`,
+      link: `/${profilePage}?id=${requester._id}`,
+      entityType: "training_request",
+      entityId: requester._id,
+      priority: "normal",
+      actionState: "pending",
+      groupKey: `training-request:${teacher._id}:${requester._id}:${Date.now()}`,
+      metadata: {
+        teacherId: String(teacher._id),
+        requesterId: String(requester._id),
+        topic,
+        message
+      }
+    });
+
+    const populated = await Notification.findById(notification._id)
+      .populate("sender", "name profileImage headline role")
+      .lean();
+    const io = req.app.get("io");
+    io?.to(String(teacher._id)).emit("newNotification", populated || notification);
+    io?.to(String(teacher._id)).emit("navigationCountsUpdated", { category: "notifications" });
+
+    return res.status(201).json({
+      message: "Training request sent.",
+      request: {
+        id: notification._id,
+        teacherId: teacher._id,
+        topic,
+        status: "pending",
+        createdAt: notification.createdAt
+      }
+    });
+  } catch (error) {
+    console.error("LEARNING TRAINING REQUEST ERROR:", error);
+    return res.status(500).json({ message: "AIFT could not send the training request." });
+  }
+});
+
+/* ============================================
    JOB SEEKER DISCOVERY
 ============================================ */
 router.get("/jobseekers/discover", auth, async (req, res) => {
