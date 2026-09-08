@@ -461,6 +461,31 @@ const classNotificationSettingsSchema =
     }
   );
 
+const classPricingSettingsSchema = new mongoose.Schema(
+  {
+    accessType: {
+      type: String,
+      enum: ["free", "paid"],
+      default: "free",
+      index: true
+    },
+    amount: {
+      type: Number,
+      min: 0,
+      max: 100000000,
+      default: 0
+    },
+    currency: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      maxlength: 3,
+      default: "PHP"
+    }
+  },
+  { _id: false }
+);
+
 const classSchema = new mongoose.Schema(
   {
     schoolId: {
@@ -619,6 +644,11 @@ publishingSettings: {
 
 notificationSettings: {
   type: classNotificationSettingsSchema,
+  default: () => ({})
+},
+
+pricingSettings: {
+  type: classPricingSettingsSchema,
   default: () => ({})
 },
 

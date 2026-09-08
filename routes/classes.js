@@ -17,6 +17,7 @@ const auth = require("../middleware/auth");
 const Class = require("../models/Class");
 const User = require("../models/User");
 const Notification = require("../models/Notification");
+const Certificate = require("../models/Certificate");
 
 /* ============================================
    CLASS ACCESS HELPERS
@@ -50,6 +51,11 @@ function normalizeObjectId(value) {
   }
 
   return String(value);
+}
+
+function isLearningLearnerRole(value) {
+  return ["student", "talent", "employer", "agent", "family", "teacher"]
+    .includes(normalizeRole(value));
 }
 
 function getUserSchoolIds(user) {
@@ -141,6 +147,10 @@ function canManageSchool(
 
 function learningCoursePayload(body = {}) {
   const duration = Number(body.estimatedDurationMinutes || 0);
+  const price = Number(body.price || body.amount || 0);
+  const accessType = String(body.pricingAccessType || "free").toLowerCase() === "paid"
+    ? "paid"
+    : "free";
 
   return {
     title: String(body.title || "").trim(),
@@ -167,6 +177,14 @@ function learningCoursePayload(body = {}) {
     },
     learningSettings: {
       certificatesEnabled: Boolean(body.certificatesEnabled)
+    },
+    pricingSettings: {
+      accessType,
+      amount:
+        accessType === "paid" && Number.isFinite(price) && price > 0
+          ? Math.min(price, 100000000)
+          : 0,
+      currency: String(body.currency || "PHP").trim().toUpperCase().slice(0, 3) || "PHP"
     }
   };
 }
@@ -1994,6 +2012,298 @@ router.patch("/admin/learning/:id", auth, async (req, res) => {
 });
 
 /* ============================================
+   PERSONAL LEARNING DASHBOARD
+============================================ */
+
+router.get("/learning/dashboard", auth, async (req, res) => {
+  try {
+    const viewerId = req.user._id;
+    const role = normalizeRole(req.user.role);
+    const notificationTypes = [
+      "class_update",
+      "assignment",
+      "assignment_updated",
+      "submission_reviewed",
+      "training_request",
+      "announcement"
+    ];
+
+    if (role === "teacher") {
+      const [courses, trainingRequests, updates] = await Promise.all([
+        Class.find({
+          teacherId: viewerId,
+          status: { $ne: "archived" }
+        })
+          .select("title subject category coverImage schedule studentIds published publicationRequestStatus publicationReviewNote updatedAt createdAt")
+          .populate("schoolId", "name schoolName profileImage schoolLogo")
+          .sort({ updatedAt: -1 })
+          .lean(),
+        Notification.find({
+          user: viewerId,
+          type: "training_request",
+          dismissed: { $ne: true }
+        })
+          .select("title text link actionState metadata read createdAt sender")
+          .populate("sender", "name profileImage avatar headline role")
+          .sort({ createdAt: -1 })
+          .limit(12)
+          .lean(),
+        Notification.find({
+          user: viewerId,
+          type: { $in: notificationTypes },
+          dismissed: { $ne: true }
+        })
+          .select("title text link type actionState read createdAt")
+          .sort({ createdAt: -1 })
+          .limit(8)
+          .lean()
+      ]);
+
+      const learnerIds = new Set();
+      courses.forEach(course => {
+        (course.studentIds || []).forEach(studentId => {
+          const value = normalizeObjectId(studentId);
+          if (value) learnerIds.add(value);
+        });
+      });
+
+      return res.json({
+        mode: "teacher",
+        viewer: {
+          id: String(viewerId),
+          name: req.user.name,
+          role
+        },
+        metrics: {
+          activeLearners: learnerIds.size,
+          totalCourses: courses.length,
+          publishedCourses: courses.filter(course => course.published === true).length,
+          pendingCourses: courses.filter(course => course.publicationRequestStatus === "pending").length,
+          trainingRequests: trainingRequests.filter(item => (item.actionState || "pending") === "pending").length
+        },
+        courses: courses.map(course => ({
+          ...course,
+          studentCount: Array.isArray(course.studentIds) ? course.studentIds.length : 0,
+          studentIds: undefined
+        })),
+        trainingRequests,
+        updates
+      });
+    }
+
+    const courses = await Class.find({
+      studentIds: viewerId,
+      status: { $ne: "archived" }
+    })
+      .select("title subtitle subject category level language coverImage bannerImage estimatedDurationMinutes schedule published pricingSettings learningSettings updatedAt createdAt teacherId schoolId")
+      .populate("schoolId", "name schoolName profileImage schoolLogo")
+      .populate("teacherId", "name profileImage avatar subject department")
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    const classIds = courses.map(course => course._id);
+    const weekStart = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const [lessons, progress, certificateCount, updates] = await Promise.all([
+      classIds.length
+        ? ClassLesson.find({
+            classId: { $in: classIds },
+            $or: [
+              { published: true },
+              { status: { $in: ["published", "active"] } }
+            ]
+          })
+            .select("classId moduleId title order estimatedDurationMinutes duration createdAt")
+            .sort({ order: 1, createdAt: 1 })
+            .lean()
+        : [],
+      classIds.length
+        ? LessonProgress.find({
+            classId: { $in: classIds },
+            studentId: viewerId
+          })
+            .select("classId lessonId status progressPercent lastOpenedAt completedAt updatedAt")
+            .sort({ updatedAt: -1 })
+            .lean()
+        : [],
+      Certificate.countDocuments({ studentId: viewerId }),
+      Notification.find({
+        user: viewerId,
+        type: { $in: notificationTypes },
+        dismissed: { $ne: true }
+      })
+        .select("title text link type actionState read createdAt")
+        .sort({ createdAt: -1 })
+        .limit(8)
+        .lean()
+    ]);
+
+    const progressByLesson = new Map(
+      progress.map(item => [normalizeObjectId(item.lessonId), item])
+    );
+    const courseSummaries = courses.map(course => {
+      const courseId = normalizeObjectId(course._id);
+      const courseLessons = lessons.filter(lesson => normalizeObjectId(lesson.classId) === courseId);
+      const completedLessons = courseLessons.filter(lesson => {
+        const item = progressByLesson.get(normalizeObjectId(lesson._id));
+        return item?.status === "completed" || Number(item?.progressPercent || 0) >= 100;
+      });
+      const latest = progress
+        .filter(item => normalizeObjectId(item.classId) === courseId)
+        .sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0))[0] || null;
+      const nextLesson = courseLessons.find(lesson => {
+        const item = progressByLesson.get(normalizeObjectId(lesson._id));
+        return !(item?.status === "completed" || Number(item?.progressPercent || 0) >= 100);
+      }) || courseLessons[0] || null;
+      const percentage = courseLessons.length
+        ? Math.round((completedLessons.length / courseLessons.length) * 100)
+        : 0;
+
+      return {
+        ...course,
+        progress: percentage,
+        completedLessons: completedLessons.length,
+        totalLessons: courseLessons.length,
+        nextLesson: nextLesson
+          ? { id: nextLesson._id, title: nextLesson.title || "Next lesson" }
+          : null,
+        lastActivityAt: latest?.updatedAt || latest?.lastOpenedAt || course.updatedAt
+      };
+    }).sort((a, b) => new Date(b.lastActivityAt || 0) - new Date(a.lastActivityAt || 0));
+
+    const completedTotal = progress.filter(item =>
+      item.status === "completed" || Number(item.progressPercent || 0) >= 100
+    ).length;
+    const completedThisWeek = progress.filter(item =>
+      (item.status === "completed" || Number(item.progressPercent || 0) >= 100) &&
+      new Date(item.completedAt || item.updatedAt || 0) >= weekStart
+    ).length;
+    const averageProgress = courseSummaries.length
+      ? Math.round(courseSummaries.reduce((sum, course) => sum + course.progress, 0) / courseSummaries.length)
+      : 0;
+
+    let level = "Beginner";
+    let nextLevelAt = 5;
+    if (certificateCount > 0) {
+      level = "Certified";
+      nextLevelAt = null;
+    } else if (completedTotal >= 30) {
+      level = "Advanced";
+      nextLevelAt = null;
+    } else if (completedTotal >= 15) {
+      level = "Skilled";
+      nextLevelAt = 30;
+    } else if (completedTotal >= 5) {
+      level = "Developing";
+      nextLevelAt = 15;
+    }
+
+    return res.json({
+      mode: "learner",
+      viewer: {
+        id: String(viewerId),
+        name: req.user.name,
+        role
+      },
+      metrics: {
+        enrolledCourses: courseSummaries.length,
+        averageProgress,
+        completedLessons: completedTotal,
+        completedThisWeek,
+        certificates: certificateCount
+      },
+      level: {
+        name: level,
+        completedLessons: completedTotal,
+        nextLevelAt,
+        remaining: nextLevelAt ? Math.max(nextLevelAt - completedTotal, 0) : 0
+      },
+      continueCourse: courseSummaries.find(course => course.progress < 100) || courseSummaries[0] || null,
+      courses: courseSummaries,
+      updates
+    });
+  } catch (err) {
+    console.error("GET LEARNING DASHBOARD ERROR:", err);
+    return res.status(500).json({
+      message: "AIFT could not load your Learning dashboard."
+    });
+  }
+});
+
+/* ============================================
+   SELF-ENROLLMENT FOR PUBLISHED COURSES
+============================================ */
+
+router.post("/:id/enroll", auth, async (req, res) => {
+  try {
+    if (!isLearningLearnerRole(req.user?.role)) {
+      return res.status(403).json({
+        message: "This account cannot enroll in Learning courses."
+      });
+    }
+
+    const course = await Class.findById(req.params.id);
+    if (!course || course.status === "archived" || course.published !== true) {
+      return res.status(404).json({ message: "This course is not available." });
+    }
+
+    if (course.publishingSettings?.visibility !== "public") {
+      return res.status(403).json({ message: "This course is not open for public enrollment." });
+    }
+
+    const learnerId = normalizeObjectId(req.user._id);
+    const enrolled = (course.studentIds || []).map(normalizeObjectId).includes(learnerId);
+    if (enrolled) {
+      return res.json({ message: "You are already enrolled.", enrolled: true, courseId: course._id });
+    }
+
+    if (course.pricingSettings?.accessType === "paid") {
+      return res.status(402).json({
+        message: "Paid enrollment will be available after secure course payments are enabled.",
+        code: "PAID_ENROLLMENT_REQUIRED"
+      });
+    }
+
+    const enrollment = course.enrollmentSettings || {};
+    const now = new Date();
+    if (enrollment.accessType !== "public") {
+      return res.status(403).json({ message: "This course requires an invitation." });
+    }
+    if (enrollment.enrollmentOpensAt && new Date(enrollment.enrollmentOpensAt) > now) {
+      return res.status(403).json({ message: "Enrollment has not opened yet." });
+    }
+    if (enrollment.enrollmentClosesAt && new Date(enrollment.enrollmentClosesAt) <= now) {
+      return res.status(403).json({ message: "Enrollment is closed." });
+    }
+    if (Number(enrollment.maximumStudents || 0) > 0 && course.studentIds.length >= Number(enrollment.maximumStudents)) {
+      return res.status(409).json({ message: "This course is currently full." });
+    }
+
+    course.studentIds.addToSet(req.user._id);
+    await course.save();
+
+    if (course.teacherId) {
+      await notifyLearningUser(req, course.teacherId, {
+        title: "New course enrollment",
+        text: `${req.user.name || "An AIFT member"} enrolled in “${course.title}”.`,
+        classId: course._id,
+        link: `/class-builder.html?id=${course._id}`,
+        groupKey: `course-enrollment:${course._id}:${learnerId}`,
+        metadata: { courseId: String(course._id), learnerId }
+      }).catch(error => console.warn("COURSE ENROLLMENT NOTIFICATION ERROR:", error.message));
+    }
+
+    return res.status(201).json({
+      message: "You are enrolled. Your progress will now be saved.",
+      enrolled: true,
+      courseId: course._id
+    });
+  } catch (err) {
+    console.error("POST COURSE ENROLLMENT ERROR:", err);
+    return res.status(500).json({ message: "AIFT could not complete enrollment." });
+  }
+});
+
+/* ============================================
    LEARNING DISCOVERY
    GET /api/classes/discover
 
@@ -2076,6 +2386,9 @@ router.get("/discover", auth, async (req, res) => {
         "enrollmentSettings.enrollmentOpensAt",
         "enrollmentSettings.enrollmentClosesAt",
         "learningSettings.certificatesEnabled",
+        "pricingSettings.accessType",
+        "pricingSettings.amount",
+        "pricingSettings.currency",
         "createdAt",
         "updatedAt"
       ].join(" "))
@@ -2096,6 +2409,8 @@ router.get("/discover", auth, async (req, res) => {
         ? item.studentIds.map(normalizeObjectId).filter(Boolean)
         : [];
       const enrollment = item.enrollmentSettings || {};
+      const pricing = item.pricingSettings || {};
+      const requiresPayment = pricing.accessType === "paid";
       const maximumStudents = Number(enrollment.maximumStudents || 0);
       const opensAt = enrollment.enrollmentOpensAt
         ? new Date(enrollment.enrollmentOpensAt)
@@ -2111,8 +2426,12 @@ router.get("/discover", auth, async (req, res) => {
         isEnrolled: viewerId
           ? studentIds.includes(viewerId)
           : false,
+        requiresPayment:
+          requiresPayment &&
+          !studentIds.includes(viewerId),
         enrollmentOpen:
           enrollment.accessType === "public" &&
+          !requiresPayment &&
           (!opensAt || opensAt <= now) &&
           (!closesAt || closesAt > now) &&
           (!maximumStudents || studentIds.length < maximumStudents)
@@ -3452,63 +3771,16 @@ const enrolledStudentIds =
     : [];
 
 
-/* =========================================================
-   STUDENT ACCESS
+const isEnrolled = enrolledStudentIds.includes(viewerId);
+const canViewInstructorClass = Boolean(canViewClassBuilder(req.user, classDoc));
+const learnerView = isEnrolled && !canViewInstructorClass;
 
-   Students do NOT need Class Builder permission.
-
-   They only need to be enrolled in this specific class.
-========================================================= */
-
-if(
-  role === "student"
-){
-
-  const isEnrolled =
-    enrolledStudentIds.includes(
-      viewerId
-    );
-
-
-  if(!isEnrolled){
-
-    return res.status(403).json({
-      message:
-        "You are not enrolled in this class."
-    });
-
-  }
-
-}
-
-
-/* =========================================================
-   SCHOOL / TEACHER / ADMIN ACCESS
-
-   Instructor-type accounts must still be authorized
-   to manage/view this specific class.
-========================================================= */
-
-else{
-
-  const canViewInstructorClass =
-    Boolean(
-      canViewClassBuilder(
-        req.user,
-        classDoc
-      )
-    );
-
-
-  if(!canViewInstructorClass){
-
-    return res.status(403).json({
-      message:
-        "You are not allowed to open this class."
-    });
-
-  }
-
+if (!learnerView && !canViewInstructorClass) {
+  return res.status(403).json({
+    message: isLearningLearnerRole(role)
+      ? "You are not enrolled in this class."
+      : "You are not allowed to open this class."
+  });
 }
 
     const [rawModules, rawLessons, rawQuizzes, rawAssignments] = await Promise.all([
@@ -3518,7 +3790,7 @@ else{
       Assignment.find({ classId }).sort({ dueDate:1, createdAt:1 }).lean()
     ]);
 
-    const studentSafe = role === "student";
+    const studentSafe = learnerView;
 
     const lessons = rawLessons.filter(lesson =>
       studentSafe
@@ -3562,7 +3834,7 @@ else{
 
     let lessonProgress = [];
 
-    if (role === "student") {
+    if (learnerView) {
       lessonProgress = await LessonProgress.find({
         classId,
         studentId:req.user._id
@@ -3581,9 +3853,9 @@ else{
       viewer:{ _id:req.user._id, role },
       permissions:{
         canView:true,
-        canTrackProgress:role === "student",
+        canTrackProgress:learnerView,
         canManage:Boolean(canManageAssignedClass(req.user, classDoc)),
-        viewMode:role === "student" ? "learner" : "instructor"
+        viewMode:learnerView ? "learner" : "instructor"
       }
     });
   } catch (err) {
@@ -3599,9 +3871,9 @@ router.patch("/:id/learning/lessons/:lessonId/progress", auth, async (req, res) 
   try {
     const role = normalizeRole(req.user?.role);
 
-    if (role !== "student") {
+    if (!isLearningLearnerRole(role)) {
       return res.status(403).json({
-        message:"Only students can save personal Lesson progress."
+        message:"This account cannot save personal Lesson progress."
       });
     }
 
