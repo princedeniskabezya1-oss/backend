@@ -36,6 +36,7 @@ const notificationSchema = new mongoose.Schema({
       "submission_reviewed",
       "attendance",
       "class_update",
+      "training_request",
       "announcement",
       "meeting",
       "task",
