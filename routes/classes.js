@@ -1494,6 +1494,90 @@ function learningExternalUrl(value, label) {
   }
 }
 
+function learningCurriculumPayload(body = {}, course = {}) {
+  let input = null;
+  const raw = String(body.curriculum || "").trim();
+
+  if (raw) {
+    try {
+      input = JSON.parse(raw);
+    } catch {
+      const error = new Error("The course curriculum is not valid.");
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  if (!Array.isArray(input)) {
+    input = [{
+      title: body.moduleTitle || "Getting started",
+      lessons: [{
+        title: body.lessonTitle || course.title || "Course material",
+        content: body.lessonContent || course.description || "",
+        videoUrl: body.videoUrl || "",
+        resourceUrl: body.resourceUrl || "",
+        durationMinutes: course.estimatedDurationMinutes || 0
+      }]
+    }];
+  }
+
+  if (!input.length || input.length > 8) {
+    const error = new Error("Add between 1 and 8 course modules.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  let lessonCount = 0;
+  const modules = input.map((module, moduleIndex) => {
+    const title = String(module?.title || "").trim().slice(0, 160);
+    const lessons = Array.isArray(module?.lessons) ? module.lessons : [];
+    if (!title || !lessons.length) {
+      const error = new Error("Every module needs a title and at least one Lesson.");
+      error.statusCode = 400;
+      throw error;
+    }
+
+    lessonCount += lessons.length;
+    return {
+      title,
+      order: moduleIndex,
+      lessons: lessons.map((lesson, lessonIndex) => {
+        const lessonTitle = String(lesson?.title || "").trim().slice(0, 160);
+        const content = String(lesson?.content || "").trim();
+        if (!lessonTitle) {
+          const error = new Error("Every Lesson needs a title.");
+          error.statusCode = 400;
+          throw error;
+        }
+        if (content.length > 12000) {
+          const error = new Error("Each Lesson can contain up to 12,000 characters.");
+          error.statusCode = 400;
+          throw error;
+        }
+        const duration = Number(lesson?.durationMinutes || 0);
+        return {
+          title: lessonTitle,
+          content,
+          videoUrl: learningExternalUrl(lesson?.videoUrl, "Lesson video link"),
+          resourceUrl: learningExternalUrl(lesson?.resourceUrl, "Lesson resource link"),
+          durationMinutes: Number.isFinite(duration) && duration >= 0
+            ? Math.min(duration, 100000)
+            : 0,
+          order: lessonIndex
+        };
+      })
+    };
+  });
+
+  if (lessonCount > 40) {
+    const error = new Error("A course submission can contain up to 40 Lessons.");
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return modules;
+}
+
 /* ============================================
    GET CLASSES
    GET /api/classes
@@ -1767,9 +1851,6 @@ router.post("/publication-requests", auth, upload.fields([
     const schoolId = getUserSchoolId(req.user);
     const payload = learningCoursePayload(req.body);
     const requestMessage = String(req.body?.requestMessage || "").trim();
-    const moduleTitle = String(req.body?.moduleTitle || "Getting started").trim().slice(0, 160) || "Getting started";
-    const lessonTitle = String(req.body?.lessonTitle || "").trim().slice(0, 160);
-    const lessonContent = String(req.body?.lessonContent || "").trim();
     const submissionType = ["existing_class", "pdf", "proposal"].includes(
       String(req.body?.submissionType || "proposal").trim().toLowerCase()
     )
@@ -1825,17 +1906,10 @@ router.post("/publication-requests", auth, upload.fields([
       });
     }
 
-    if (lessonContent.length > 12000) {
-      return res.status(400).json({ message: "Lesson content must be 12,000 characters or fewer." });
-    }
-
-    if (submissionType === "proposal" && !lessonTitle) {
-      return res.status(400).json({ message: "Add a title for the first Lesson." });
-    }
-
     const coverImageUrl = learningExternalUrl(req.body?.coverImageUrl, "Course cover link");
-    const lessonVideoUrl = learningExternalUrl(req.body?.videoUrl, "Lesson video link");
-    const resourceUrl = learningExternalUrl(req.body?.resourceUrl, "Lesson resource link");
+    const curriculum = submissionType === "existing_class"
+      ? []
+      : learningCurriculumPayload(req.body, payload);
 
     let course;
 
@@ -1913,63 +1987,78 @@ router.post("/publication-requests", auth, upload.fields([
       });
       createdCourseId = course._id;
 
-      const module = await ClassModule.create({
-        schoolId,
-        classId: course._id,
-        title: moduleTitle,
-        description: payload.description || "",
-        order: 0,
-        status: "published",
-        isLocked: false
-      });
-
-      const resources = [];
-      if (uploadedDocument) {
-        resources.push({
-            title: uploadedDocument.originalName || payload.title,
-            description: "Course PDF",
-            url: uploadedDocument.url,
-            secureUrl: uploadedDocument.url,
-            type: "pdf",
-            source: "upload",
-            originalName: uploadedDocument.originalName,
-            mimeType: uploadedDocument.mimeType,
-            size: uploadedDocument.size,
-            publicId: uploadedDocument.publicId,
-            resourceType: "raw",
-            uploadedBy: req.user._id
+      let absoluteLessonIndex = 0;
+      for (const moduleInput of curriculum) {
+        const module = await ClassModule.create({
+          schoolId,
+          classId: course._id,
+          title: moduleInput.title,
+          description: moduleInput.lessons.length === 1
+            ? "1 Lesson"
+            : `${moduleInput.lessons.length} Lessons`,
+          order: moduleInput.order,
+          status: "published",
+          isLocked: false
         });
-      }
 
-      if (resourceUrl) {
-        resources.push({
-          title: "Lesson resource",
-          description: "External learning resource",
-          url: resourceUrl,
-          secureUrl: resourceUrl,
-          type: "link",
-          source: "link",
-          uploadedBy: req.user._id
-        });
-      }
+        for (const lessonInput of moduleInput.lessons) {
+          const isFirstLesson = absoluteLessonIndex === 0;
+          const resources = [];
 
-      await ClassLesson.create({
-        schoolId,
-        classId: course._id,
-        moduleId: module._id,
-        title: lessonTitle || payload.title,
-        summary: payload.description || (uploadedDocument ? "PDF course material" : "First course Lesson"),
-        content: lessonContent || (uploadedDocument
-          ? "Open the attached PDF to begin this course."
-          : payload.description || "Welcome to this course."),
-        videoUrl: uploadedVideo?.url || lessonVideoUrl || "",
-        coverUrl: courseCover || "",
-        resources,
-        order: 0,
-        durationMinutes: payload.estimatedDurationMinutes || 0,
-        status: "published",
-        previewEnabled: true
-      });
+          if (isFirstLesson && uploadedDocument) {
+            resources.push({
+              title: uploadedDocument.originalName || payload.title,
+              description: "Course PDF",
+              url: uploadedDocument.url,
+              secureUrl: uploadedDocument.url,
+              type: "pdf",
+              source: "upload",
+              originalName: uploadedDocument.originalName,
+              mimeType: uploadedDocument.mimeType,
+              size: uploadedDocument.size,
+              publicId: uploadedDocument.publicId,
+              resourceType: "raw",
+              uploadedBy: req.user._id
+            });
+          }
+
+          if (lessonInput.resourceUrl) {
+            resources.push({
+              title: "Lesson resource",
+              description: "External learning resource",
+              url: lessonInput.resourceUrl,
+              secureUrl: lessonInput.resourceUrl,
+              type: "link",
+              source: "link",
+              uploadedBy: req.user._id
+            });
+          }
+
+          const content = lessonInput.content || (isFirstLesson && uploadedDocument
+            ? "Open the attached PDF to begin this course."
+            : "");
+
+          await ClassLesson.create({
+            schoolId,
+            classId: course._id,
+            moduleId: module._id,
+            title: lessonInput.title,
+            summary: content.slice(0, 500) || payload.description || "",
+            content,
+            videoUrl: isFirstLesson && uploadedVideo
+              ? uploadedVideo.url
+              : lessonInput.videoUrl || "",
+            coverUrl: courseCover || "",
+            resources,
+            order: lessonInput.order,
+            durationMinutes: lessonInput.durationMinutes,
+            status: "published",
+            previewEnabled: absoluteLessonIndex === 0
+          });
+
+          absoluteLessonIndex += 1;
+        }
+      }
     }
 
     const admins = await User.find({
