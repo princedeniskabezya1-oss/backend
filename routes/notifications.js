@@ -170,6 +170,26 @@ router.post("/:id/action",auth,async(req,res)=>{
       const group=await Group.findOne({_id:notification.metadata?.groupId,isActive:true});
       if(!group)return res.status(409).json({message:"This group is no longer available"});
       if(action==="accept"&&!group.members.some(id=>String(id)===String(userId(req)))){group.members.push(userId(req));group.membersCount=group.members.length;await group.save();}
+    }else if(notification.type==="training_request"){
+      const requesterId=notification.metadata?.requesterId||notification.sender;
+      if(!requesterId)return res.status(409).json({message:"This training request is no longer available"});
+      const teacherName=String(req.user?.name||"Your AIFT teacher").trim();
+      const topic=String(notification.metadata?.topic||"your requested training").trim();
+      const responseNotification=await Notification.create({
+        user:requesterId,
+        sender:userId(req),
+        type:"training_request",
+        title:action==="accept"?"Training request accepted":"Training request declined",
+        text:action==="accept"?`${teacherName} accepted your training request for ${topic}. You can now message the teacher to agree on the next step.`:`${teacherName} could not accept your training request for ${topic} at this time.`,
+        link:action==="accept"?`/messages.html?user=${userId(req)}`:`/public-profile.html?id=${userId(req)}`,
+        entityType:"training_request_response",
+        entityId:notification._id,
+        priority:"normal",
+        actionState:"completed",
+        groupKey:`training-request-response:${notification._id}`,
+        metadata:{requestId:String(notification._id),teacherId:String(userId(req)),requesterId:String(requesterId),topic,response:action}
+      });
+      req.app.get("io")?.to(String(requesterId)).emit("newNotification",responseNotification);
     }else{return res.status(400).json({message:"This notification has no direct action"});}
     notification.actionState=action==="accept"?"accepted":"declined";notification.read=true;notification.readAt=new Date();notification.seen=true;notification.seenAt=new Date();await notification.save();
     emit(req,"notificationUpdated",{id:notification._id,read:true,actionState:notification.actionState});
