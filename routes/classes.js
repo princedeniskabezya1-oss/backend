@@ -1495,8 +1495,8 @@ function learningExternalUrl(value, label) {
 }
 
 function learningCurriculumPayload(body = {}, course = {}) {
-  let input = null;
-  const raw = String(body.curriculum || "").trim();
+  let input = Array.isArray(body.curriculum) ? body.curriculum : null;
+  const raw = input ? "" : String(body.curriculum || "").trim();
 
   if (raw) {
     try {
@@ -2157,9 +2157,35 @@ router.get("/admin/learning", auth, async (req, res) => {
         .lean()
     ]);
 
+    const courseIds = courses.map(course => course._id);
+    const [moduleCounts, lessonCounts] = courseIds.length
+      ? await Promise.all([
+          ClassModule.aggregate([
+            { $match: { classId: { $in: courseIds }, status: { $ne: "archived" } } },
+            { $group: { _id: "$classId", count: { $sum: 1 } } }
+          ]),
+          ClassLesson.aggregate([
+            { $match: { classId: { $in: courseIds }, status: { $ne: "archived" } } },
+            { $group: { _id: "$classId", count: { $sum: 1 } } }
+          ])
+        ])
+      : [[], []];
+
+    const moduleCountByCourse = new Map(
+      moduleCounts.map(item => [String(item._id), Number(item.count || 0)])
+    );
+    const lessonCountByCourse = new Map(
+      lessonCounts.map(item => [String(item._id), Number(item.count || 0)])
+    );
+    const enrichedCourses = courses.map(course => ({
+      ...course,
+      moduleCount: moduleCountByCourse.get(String(course._id)) || 0,
+      lessonCount: lessonCountByCourse.get(String(course._id)) || 0
+    }));
+
     return res.json({
-      courses,
-      requests: courses.filter(item => item.publicationSource === "teacher_request"),
+      courses: enrichedCourses,
+      requests: enrichedCourses.filter(item => item.publicationSource === "teacher_request"),
       teachers,
       schools
     });
@@ -2172,6 +2198,8 @@ router.get("/admin/learning", auth, async (req, res) => {
 });
 
 router.post("/admin/learning", auth, async (req, res) => {
+  let createdCourseId = null;
+  let assignedTeacherId = null;
   try {
     if (normalizeRole(req.user?.role) !== "admin") {
       return res.status(403).json({ message: "Admin access only." });
@@ -2180,6 +2208,8 @@ router.post("/admin/learning", auth, async (req, res) => {
     const schoolId = normalizeObjectId(req.body?.schoolId);
     const teacherId = normalizeObjectId(req.body?.teacherId);
     const payload = learningCoursePayload(req.body);
+    const curriculum = learningCurriculumPayload(req.body, payload);
+    const coverImage = learningExternalUrl(req.body?.coverImage, "Course cover link");
 
     if (!payload.title || !payload.subject) {
       return res.status(400).json({
@@ -2220,10 +2250,12 @@ router.post("/admin/learning", auth, async (req, res) => {
           message: "The selected teacher is linked to another school."
         });
       }
+      assignedTeacherId = teacherId;
     }
 
     const course = await Class.create({
       ...payload,
+      coverImage: coverImage || null,
       schoolId,
       teacherId: teacherId || null,
       published: true,
@@ -2233,6 +2265,51 @@ router.post("/admin/learning", auth, async (req, res) => {
       publicationReviewedAt: new Date(),
       publicationReviewedBy: req.user._id
     });
+    createdCourseId = course._id;
+
+    for (const moduleInput of curriculum) {
+      const module = await ClassModule.create({
+        schoolId,
+        classId: course._id,
+        title: moduleInput.title,
+        description: moduleInput.lessons.length === 1
+          ? "1 Lesson"
+          : `${moduleInput.lessons.length} Lessons`,
+        order: moduleInput.order,
+        status: "published",
+        isLocked: false
+      });
+
+      for (const lessonInput of moduleInput.lessons) {
+        const resources = lessonInput.resourceUrl
+          ? [{
+              title: "Lesson resource",
+              description: "External learning resource",
+              url: lessonInput.resourceUrl,
+              secureUrl: lessonInput.resourceUrl,
+              type: "link",
+              source: "link",
+              uploadedBy: req.user._id
+            }]
+          : [];
+
+        await ClassLesson.create({
+          schoolId,
+          classId: course._id,
+          moduleId: module._id,
+          title: lessonInput.title,
+          summary: lessonInput.content.slice(0, 500) || payload.description || "",
+          content: lessonInput.content,
+          videoUrl: lessonInput.videoUrl || "",
+          coverUrl: coverImage || "",
+          resources,
+          order: lessonInput.order,
+          durationMinutes: lessonInput.durationMinutes,
+          status: "published",
+          previewEnabled: moduleInput.order === 0 && lessonInput.order === 0
+        });
+      }
+    }
 
     if (teacherId) {
       await User.findByIdAndUpdate(teacherId, {
@@ -2261,9 +2338,19 @@ router.post("/admin/learning", auth, async (req, res) => {
       course: populated
     });
   } catch (err) {
+    if (createdCourseId) {
+      await Promise.all([
+        ClassLesson.deleteMany({ classId: createdCourseId }).catch(() => null),
+        ClassModule.deleteMany({ classId: createdCourseId }).catch(() => null),
+        Class.findByIdAndDelete(createdCourseId).catch(() => null),
+        assignedTeacherId
+          ? User.findByIdAndUpdate(assignedTeacherId, { $pull: { assignedClasses: createdCourseId } }).catch(() => null)
+          : Promise.resolve(null)
+      ]);
+    }
     console.error("POST ADMIN LEARNING COURSE ERROR:", err);
-    return res.status(500).json({
-      message: "AIFT could not publish this course."
+    return res.status(err.statusCode || 500).json({
+      message: err.statusCode ? err.message : "AIFT could not publish this course."
     });
   }
 });
@@ -2291,6 +2378,18 @@ router.patch("/admin/learning/:id", auth, async (req, res) => {
     const course = await Class.findById(req.params.id);
     if (!course) {
       return res.status(404).json({ message: "Course not found." });
+    }
+
+    if (["approve", "publish"].includes(action)) {
+      const lessonCount = await ClassLesson.countDocuments({
+        classId: course._id,
+        status: { $ne: "archived" }
+      });
+      if (!lessonCount) {
+        return res.status(400).json({
+          message: "Add at least one Lesson before publishing this course."
+        });
+      }
     }
 
     if (action === "approve") {
