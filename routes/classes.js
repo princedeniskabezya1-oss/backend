@@ -16,6 +16,7 @@ const cloudinary = require("../config/cloudinary");
 const auth = require("../middleware/auth");
 const Class = require("../models/Class");
 const User = require("../models/User");
+const Notification = require("../models/Notification");
 
 /* ============================================
    CLASS ACCESS HELPERS
@@ -136,6 +137,65 @@ function canManageSchool(
     .includes(
       normalizedSchoolId
     );
+}
+
+function learningCoursePayload(body = {}) {
+  const duration = Number(body.estimatedDurationMinutes || 0);
+
+  return {
+    title: String(body.title || "").trim(),
+    subtitle: String(body.subtitle || "").trim() || null,
+    subject: String(body.subject || "").trim() || null,
+    category: String(body.category || body.subject || "").trim() || null,
+    description: String(body.description || "").trim() || null,
+    level: String(body.level || "").trim() || null,
+    language: String(body.language || "").trim() || null,
+    schedule: String(body.schedule || "").trim() || null,
+    coverImage: String(body.coverImage || "").trim() || null,
+    estimatedDurationMinutes:
+      Number.isFinite(duration) && duration >= 0
+        ? Math.min(duration, 1000000)
+        : 0,
+    learningOutcomes: normalizeArray(body.learningOutcomes),
+    enrollmentSettings: {
+      accessType: "public",
+      autoApprove: Boolean(body.autoApprove),
+      maximumStudents: Math.max(0, Number(body.maximumStudents || 0) || 0)
+    },
+    publishingSettings: {
+      visibility: "public"
+    },
+    learningSettings: {
+      certificatesEnabled: Boolean(body.certificatesEnabled)
+    }
+  };
+}
+
+async function notifyLearningUser(req, userId, payload = {}) {
+  if (!userId) return null;
+
+  const notification = await Notification.create({
+    user: userId,
+    type: "class_update",
+    sender: req.user?._id,
+    title: payload.title,
+    text: payload.text,
+    link: payload.link || "/learning-courses.html",
+    entityType: "class",
+    entityId: payload.classId,
+    priority: payload.priority || "normal",
+    actionState: payload.actionState,
+    groupKey: payload.groupKey,
+    metadata: payload.metadata
+  });
+
+  const io = req.app.get("io");
+  io?.to(String(userId)).emit("newNotification", notification);
+  io?.to(String(userId)).emit("navigationCountsUpdated", {
+    category: "notifications"
+  });
+
+  return notification;
 }
 
 
@@ -1566,6 +1626,372 @@ router.get(
 
   }
 );
+
+/* ============================================
+   TEACHER COURSE PUBLICATION REQUESTS
+============================================ */
+
+router.get("/publication-requests/mine", auth, async (req, res) => {
+  try {
+    if (normalizeRole(req.user?.role) !== "teacher") {
+      return res.status(403).json({
+        message: "Teacher access only."
+      });
+    }
+
+    const requests = await Class.find({
+      teacherId: req.user._id,
+      publicationSource: "teacher_request"
+    })
+      .select("title subject category level language coverImage estimatedDurationMinutes publicationRequestStatus publicationRequestMessage publicationReviewNote publicationRequestedAt publicationReviewedAt published createdAt updatedAt")
+      .sort({ publicationRequestedAt: -1, createdAt: -1 })
+      .lean();
+
+    return res.json({ requests, count: requests.length });
+  } catch (err) {
+    console.error("GET TEACHER COURSE REQUESTS ERROR:", err);
+    return res.status(500).json({
+      message: "AIFT could not load your course submissions."
+    });
+  }
+});
+
+router.post("/publication-requests", auth, async (req, res) => {
+  try {
+    if (normalizeRole(req.user?.role) !== "teacher") {
+      return res.status(403).json({
+        message: "Only teacher accounts can submit courses for review."
+      });
+    }
+
+    const schoolId = getUserSchoolId(req.user);
+    const payload = learningCoursePayload(req.body);
+    const requestMessage = String(req.body?.requestMessage || "").trim();
+
+    if (!schoolId) {
+      return res.status(400).json({
+        message: "Your teacher account must be linked to a school before submitting a course."
+      });
+    }
+
+    if (!payload.title) {
+      return res.status(400).json({ message: "Course title is required." });
+    }
+
+    if (!payload.subject) {
+      return res.status(400).json({ message: "Course subject is required." });
+    }
+
+    if (requestMessage.length > 1000) {
+      return res.status(400).json({
+        message: "Submission note must be 1,000 characters or fewer."
+      });
+    }
+
+    const duplicate = await Class.findOne({
+      teacherId: req.user._id,
+      publicationRequestStatus: "pending",
+      title: { $regex: `^${payload.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" }
+    }).select("_id").lean();
+
+    if (duplicate) {
+      return res.status(409).json({
+        message: "You already have a pending submission with this title."
+      });
+    }
+
+    const course = await Class.create({
+      ...payload,
+      schoolId,
+      teacherId: req.user._id,
+      published: false,
+      status: "active",
+      publicationSource: "teacher_request",
+      publicationRequestStatus: "pending",
+      publicationRequestMessage: requestMessage || null,
+      publicationRequestedAt: new Date()
+    });
+
+    const admins = await User.find({
+      role: "admin",
+      status: { $nin: ["suspended", "deactivated"] }
+    }).select("_id").lean();
+
+    await Promise.all(admins.map(admin =>
+      notifyLearningUser(req, admin._id, {
+        title: "New course publication request",
+        text: `${req.user.name || "A teacher"} submitted “${course.title}” for Learning review.`,
+        link: "/admin.html#learning",
+        classId: course._id,
+        priority: "high",
+        actionState: "pending",
+        groupKey: `course-publication-request:${course._id}`,
+        metadata: {
+          courseId: String(course._id),
+          teacherId: String(req.user._id),
+          status: "pending"
+        }
+      }).catch(error => {
+        console.warn("COURSE REQUEST ADMIN NOTIFICATION ERROR:", error.message);
+      })
+    ));
+
+    return res.status(201).json({
+      message: "Course submitted for Admin review.",
+      request: course
+    });
+  } catch (err) {
+    console.error("POST TEACHER COURSE REQUEST ERROR:", err);
+    return res.status(500).json({
+      message: "AIFT could not submit this course for review."
+    });
+  }
+});
+
+/* ============================================
+   ADMIN LEARNING MANAGEMENT
+============================================ */
+
+router.get("/admin/learning", auth, async (req, res) => {
+  try {
+    if (normalizeRole(req.user?.role) !== "admin") {
+      return res.status(403).json({ message: "Admin access only." });
+    }
+
+    const [courses, teachers, schools] = await Promise.all([
+      Class.find({
+        $or: [
+          { published: true },
+          { publicationSource: { $in: ["teacher_request", "admin"] } },
+          { publicationRequestStatus: { $in: ["pending", "approved", "rejected"] } }
+        ]
+      })
+        .populate("schoolId", "name schoolName profileImage schoolLogo status")
+        .populate("teacherId", "name email profileImage subject department status aiftVerified")
+        .populate("publicationReviewedBy", "name email")
+        .sort({ publicationRequestedAt: -1, updatedAt: -1 })
+        .limit(500)
+        .lean(),
+      User.find({
+        role: "teacher",
+        status: { $nin: ["deactivated"] }
+      })
+        .select("name email profileImage avatar subject department schoolId linkedSchoolId status aiftVerified assignedClasses")
+        .populate("schoolId", "name schoolName")
+        .populate("linkedSchoolId", "name schoolName")
+        .sort({ createdAt: -1 })
+        .lean(),
+      User.find({
+        role: "school",
+        status: { $nin: ["deactivated"] }
+      })
+        .select("name schoolName email profileImage schoolLogo status aiftVerified")
+        .sort({ schoolName: 1, name: 1 })
+        .lean()
+    ]);
+
+    return res.json({
+      courses,
+      requests: courses.filter(item => item.publicationSource === "teacher_request"),
+      teachers,
+      schools
+    });
+  } catch (err) {
+    console.error("GET ADMIN LEARNING ERROR:", err);
+    return res.status(500).json({
+      message: "AIFT could not load Learning management."
+    });
+  }
+});
+
+router.post("/admin/learning", auth, async (req, res) => {
+  try {
+    if (normalizeRole(req.user?.role) !== "admin") {
+      return res.status(403).json({ message: "Admin access only." });
+    }
+
+    const schoolId = normalizeObjectId(req.body?.schoolId);
+    const teacherId = normalizeObjectId(req.body?.teacherId);
+    const payload = learningCoursePayload(req.body);
+
+    if (!payload.title || !payload.subject) {
+      return res.status(400).json({
+        message: "Course title and subject are required."
+      });
+    }
+
+    const school = await User.findOne({
+      _id: schoolId,
+      role: "school",
+      status: { $nin: ["suspended", "deactivated"] }
+    }).select("_id").lean();
+
+    if (!school) {
+      return res.status(400).json({
+        message: "Choose an active school for this course."
+      });
+    }
+
+    let teacher = null;
+    if (teacherId) {
+      teacher = await User.findOne({
+        _id: teacherId,
+        role: "teacher",
+        status: { $nin: ["suspended", "deactivated"] }
+      }).select("_id schoolId linkedSchoolId").lean();
+
+      if (!teacher) {
+        return res.status(400).json({ message: "Choose an active teacher." });
+      }
+
+      const teacherSchoolId = normalizeObjectId(
+        teacher.schoolId || teacher.linkedSchoolId
+      );
+
+      if (teacherSchoolId && teacherSchoolId !== schoolId) {
+        return res.status(400).json({
+          message: "The selected teacher is linked to another school."
+        });
+      }
+    }
+
+    const course = await Class.create({
+      ...payload,
+      schoolId,
+      teacherId: teacherId || null,
+      published: true,
+      status: "active",
+      publicationSource: "admin",
+      publicationRequestStatus: "approved",
+      publicationReviewedAt: new Date(),
+      publicationReviewedBy: req.user._id
+    });
+
+    if (teacherId) {
+      await User.findByIdAndUpdate(teacherId, {
+        $addToSet: { assignedClasses: course._id }
+      });
+
+      await notifyLearningUser(req, teacherId, {
+        title: "Course published on AIFT Learning",
+        text: `“${course.title}” is now available to learners.`,
+        classId: course._id,
+        actionState: "completed",
+        groupKey: `course-published:${course._id}`,
+        metadata: { courseId: String(course._id), status: "approved" }
+      }).catch(error => {
+        console.warn("ADMIN COURSE TEACHER NOTIFICATION ERROR:", error.message);
+      });
+    }
+
+    const populated = await Class.findById(course._id)
+      .populate("schoolId", "name schoolName profileImage schoolLogo")
+      .populate("teacherId", "name email profileImage subject department")
+      .lean();
+
+    return res.status(201).json({
+      message: "Course published on AIFT Learning.",
+      course: populated
+    });
+  } catch (err) {
+    console.error("POST ADMIN LEARNING COURSE ERROR:", err);
+    return res.status(500).json({
+      message: "AIFT could not publish this course."
+    });
+  }
+});
+
+router.patch("/admin/learning/:id", auth, async (req, res) => {
+  try {
+    if (normalizeRole(req.user?.role) !== "admin") {
+      return res.status(403).json({ message: "Admin access only." });
+    }
+
+    const action = String(req.body?.action || "").trim().toLowerCase();
+    const reviewNote = String(req.body?.reviewNote || "").trim();
+    const allowed = ["approve", "reject", "publish", "unpublish", "archive"];
+
+    if (!allowed.includes(action)) {
+      return res.status(400).json({ message: "Choose a valid Learning action." });
+    }
+
+    if (reviewNote.length > 1000) {
+      return res.status(400).json({
+        message: "Admin review note must be 1,000 characters or fewer."
+      });
+    }
+
+    const course = await Class.findById(req.params.id);
+    if (!course) {
+      return res.status(404).json({ message: "Course not found." });
+    }
+
+    if (action === "approve") {
+      course.publicationRequestStatus = "approved";
+      course.published = true;
+      course.status = "active";
+      course.publishingSettings.visibility = "public";
+      course.enrollmentSettings.accessType = "public";
+    } else if (action === "reject") {
+      course.publicationRequestStatus = "rejected";
+      course.published = false;
+    } else if (action === "publish") {
+      course.published = true;
+      course.status = "active";
+      course.publishingSettings.visibility = "public";
+    } else if (action === "unpublish") {
+      course.published = false;
+    } else if (action === "archive") {
+      course.published = false;
+      course.status = "archived";
+    }
+
+    if (["approve", "reject"].includes(action)) {
+      course.publicationReviewedAt = new Date();
+      course.publicationReviewedBy = req.user._id;
+      course.publicationReviewNote = reviewNote || null;
+    }
+
+    await course.save();
+
+    if (course.teacherId && ["approve", "reject"].includes(action)) {
+      const approved = action === "approve";
+      await notifyLearningUser(req, course.teacherId, {
+        title: approved ? "Course approved" : "Course needs changes",
+        text: approved
+          ? `“${course.title}” is now published on AIFT Learning.`
+          : `“${course.title}” was not published${reviewNote ? `: ${reviewNote}` : "."}`,
+        classId: course._id,
+        priority: approved ? "normal" : "high",
+        actionState: approved ? "completed" : "declined",
+        groupKey: `course-publication-review:${course._id}:${action}`,
+        metadata: {
+          courseId: String(course._id),
+          status: course.publicationRequestStatus,
+          reviewNote
+        }
+      }).catch(error => {
+        console.warn("COURSE REVIEW TEACHER NOTIFICATION ERROR:", error.message);
+      });
+    }
+
+    const populated = await Class.findById(course._id)
+      .populate("schoolId", "name schoolName profileImage schoolLogo")
+      .populate("teacherId", "name email profileImage subject department")
+      .populate("publicationReviewedBy", "name email")
+      .lean();
+
+    return res.json({
+      message: `Course ${action} action completed.`,
+      course: populated
+    });
+  } catch (err) {
+    console.error("PATCH ADMIN LEARNING COURSE ERROR:", err);
+    return res.status(500).json({
+      message: "AIFT could not update this course."
+    });
+  }
+});
 
 /* ============================================
    LEARNING DISCOVERY

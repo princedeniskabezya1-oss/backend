@@ -622,10 +622,54 @@ notificationSettings: {
   default: () => ({})
 },
 
-published: {
+    published: {
       type: Boolean,
       default: false,
       index: true
+    },
+
+    publicationSource: {
+      type: String,
+      enum: ["school", "teacher_request", "admin"],
+      default: "school",
+      index: true
+    },
+
+    publicationRequestStatus: {
+      type: String,
+      enum: ["none", "pending", "approved", "rejected"],
+      default: "none",
+      index: true
+    },
+
+    publicationRequestMessage: {
+      type: String,
+      trim: true,
+      maxlength: 1000,
+      default: null
+    },
+
+    publicationRequestedAt: {
+      type: Date,
+      default: null
+    },
+
+    publicationReviewedAt: {
+      type: Date,
+      default: null
+    },
+
+    publicationReviewedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null
+    },
+
+    publicationReviewNote: {
+      type: String,
+      trim: true,
+      maxlength: 1000,
+      default: null
     },
 
     projectCanvas: {
@@ -663,6 +707,7 @@ published: {
 classSchema.index({ schoolId: 1, title: 1 });
 classSchema.index({ schoolId: 1, status: 1, createdAt: -1 });
 classSchema.index({ schoolId: 1, published: 1, createdAt: -1 });
+classSchema.index({ publicationRequestStatus: 1, publicationRequestedAt: -1 });
 classSchema.index({ "contentBlocks.scope": 1, "contentBlocks.ownerId": 1 });
 
 classSchema.pre("save", function (next) {
