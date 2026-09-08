@@ -1445,6 +1445,55 @@ function uploadLearningPdf(file, teacherId) {
   });
 }
 
+function uploadLearningAsset(file, teacherId, kind) {
+  const resourceType = kind === "video" ? "video" : "image";
+  return new Promise((resolve, reject) => {
+    cloudinary.uploader
+      .upload_stream(
+        {
+          folder: `aift_learning/course-submissions/${teacherId}/${kind}`,
+          resource_type: resourceType,
+          use_filename: true,
+          unique_filename: true
+        },
+        (error, result) => {
+          if (error) return reject(error);
+          resolve({
+            url: result.secure_url,
+            publicId: result.public_id,
+            resourceType,
+            originalName: file.originalname,
+            mimeType: file.mimetype,
+            size: file.size,
+            width: result.width || null,
+            height: result.height || null,
+            duration: result.duration || null
+          });
+        }
+      )
+      .end(file.buffer);
+  });
+}
+
+function learningExternalUrl(value, label) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  if (raw.length > 1500) {
+    const error = new Error(`${label} must be 1,500 characters or fewer.`);
+    error.statusCode = 400;
+    throw error;
+  }
+  try {
+    const url = new URL(raw);
+    if (!['http:', 'https:'].includes(url.protocol)) throw new Error();
+    return url.toString();
+  } catch {
+    const error = new Error(`Enter a valid ${label.toLowerCase()}.`);
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
 /* ============================================
    GET CLASSES
    GET /api/classes
@@ -1699,8 +1748,14 @@ router.get("/publication-requests/mine", auth, async (req, res) => {
   }
 });
 
-router.post("/publication-requests", auth, upload.single("courseFile"), async (req, res) => {
+router.post("/publication-requests", auth, upload.fields([
+  { name: "courseFile", maxCount: 1 },
+  { name: "coverImageFile", maxCount: 1 },
+  { name: "lessonVideoFile", maxCount: 1 }
+]), async (req, res) => {
   let uploadedDocument = null;
+  let uploadedCover = null;
+  let uploadedVideo = null;
   let createdCourseId = null;
   try {
     if (normalizeRole(req.user?.role) !== "teacher") {
@@ -1712,6 +1767,9 @@ router.post("/publication-requests", auth, upload.single("courseFile"), async (r
     const schoolId = getUserSchoolId(req.user);
     const payload = learningCoursePayload(req.body);
     const requestMessage = String(req.body?.requestMessage || "").trim();
+    const moduleTitle = String(req.body?.moduleTitle || "Getting started").trim().slice(0, 160) || "Getting started";
+    const lessonTitle = String(req.body?.lessonTitle || "").trim().slice(0, 160);
+    const lessonContent = String(req.body?.lessonContent || "").trim();
     const submissionType = ["existing_class", "pdf", "proposal"].includes(
       String(req.body?.submissionType || "proposal").trim().toLowerCase()
     )
@@ -1724,16 +1782,33 @@ router.post("/publication-requests", auth, upload.single("courseFile"), async (r
       });
     }
 
+    const courseFile = req.files?.courseFile?.[0] || null;
+    const coverImageFile = req.files?.coverImageFile?.[0] || null;
+    const lessonVideoFile = req.files?.lessonVideoFile?.[0] || null;
+
     if (submissionType === "pdf") {
-      if (!req.file) {
+      if (!courseFile) {
         return res.status(400).json({ message: "Choose a PDF course to upload." });
       }
-      if (String(req.file.mimetype).toLowerCase() !== "application/pdf") {
+      if (String(courseFile.mimetype).toLowerCase() !== "application/pdf") {
         return res.status(400).json({ message: "Course uploads must be PDF files." });
       }
-      if (Number(req.file.size || 0) > 50 * 1024 * 1024) {
+      if (Number(courseFile.size || 0) > 50 * 1024 * 1024) {
         return res.status(413).json({ message: "PDF courses can be up to 50 MB." });
       }
+    }
+
+    if (coverImageFile) {
+      if (!String(coverImageFile.mimetype || "").toLowerCase().startsWith("image/")) {
+        return res.status(400).json({ message: "The course cover must be an image." });
+      }
+      if (Number(coverImageFile.size || 0) > 10 * 1024 * 1024) {
+        return res.status(413).json({ message: "Course cover pictures can be up to 10 MB." });
+      }
+    }
+
+    if (lessonVideoFile && !String(lessonVideoFile.mimetype || "").toLowerCase().startsWith("video/")) {
+      return res.status(400).json({ message: "The Lesson upload must be a video file." });
     }
 
     if (submissionType !== "existing_class" && !payload.title) {
@@ -1749,6 +1824,18 @@ router.post("/publication-requests", auth, upload.single("courseFile"), async (r
         message: "Submission note must be 1,000 characters or fewer."
       });
     }
+
+    if (lessonContent.length > 12000) {
+      return res.status(400).json({ message: "Lesson content must be 12,000 characters or fewer." });
+    }
+
+    if (submissionType === "proposal" && !lessonTitle) {
+      return res.status(400).json({ message: "Add a title for the first Lesson." });
+    }
+
+    const coverImageUrl = learningExternalUrl(req.body?.coverImageUrl, "Course cover link");
+    const lessonVideoUrl = learningExternalUrl(req.body?.videoUrl, "Lesson video link");
+    const resourceUrl = learningExternalUrl(req.body?.resourceUrl, "Lesson resource link");
 
     let course;
 
@@ -1796,11 +1883,22 @@ router.post("/publication-requests", auth, upload.single("courseFile"), async (r
       }
 
       if (submissionType === "pdf") {
-        uploadedDocument = await uploadLearningPdf(req.file, req.user._id);
+        uploadedDocument = await uploadLearningPdf(courseFile, req.user._id);
       }
+
+      if (coverImageFile) {
+        uploadedCover = await uploadLearningAsset(coverImageFile, req.user._id, "covers");
+      }
+
+      if (lessonVideoFile) {
+        uploadedVideo = await uploadLearningAsset(lessonVideoFile, req.user._id, "videos");
+      }
+
+      const courseCover = uploadedCover?.url || coverImageUrl || payload.coverImage || null;
 
       course = await Class.create({
         ...payload,
+        coverImage: courseCover,
         schoolId,
         teacherId: req.user._id,
         published: false,
@@ -1815,14 +1913,19 @@ router.post("/publication-requests", auth, upload.single("courseFile"), async (r
       });
       createdCourseId = course._id;
 
+      const module = await ClassModule.create({
+        schoolId,
+        classId: course._id,
+        title: moduleTitle,
+        description: payload.description || "",
+        order: 0,
+        status: "published",
+        isLocked: false
+      });
+
+      const resources = [];
       if (uploadedDocument) {
-        await ClassLesson.create({
-          schoolId,
-          classId: course._id,
-          title: payload.title,
-          summary: payload.description || "PDF course material",
-          content: "Open the attached PDF to begin this course.",
-          resources: [{
+        resources.push({
             title: uploadedDocument.originalName || payload.title,
             description: "Course PDF",
             url: uploadedDocument.url,
@@ -1835,13 +1938,38 @@ router.post("/publication-requests", auth, upload.single("courseFile"), async (r
             publicId: uploadedDocument.publicId,
             resourceType: "raw",
             uploadedBy: req.user._id
-          }],
-          order: 0,
-          durationMinutes: payload.estimatedDurationMinutes || 0,
-          status: "published",
-          previewEnabled: true
         });
       }
+
+      if (resourceUrl) {
+        resources.push({
+          title: "Lesson resource",
+          description: "External learning resource",
+          url: resourceUrl,
+          secureUrl: resourceUrl,
+          type: "link",
+          source: "link",
+          uploadedBy: req.user._id
+        });
+      }
+
+      await ClassLesson.create({
+        schoolId,
+        classId: course._id,
+        moduleId: module._id,
+        title: lessonTitle || payload.title,
+        summary: payload.description || (uploadedDocument ? "PDF course material" : "First course Lesson"),
+        content: lessonContent || (uploadedDocument
+          ? "Open the attached PDF to begin this course."
+          : payload.description || "Welcome to this course."),
+        videoUrl: uploadedVideo?.url || lessonVideoUrl || "",
+        coverUrl: courseCover || "",
+        resources,
+        order: 0,
+        durationMinutes: payload.estimatedDurationMinutes || 0,
+        status: "published",
+        previewEnabled: true
+      });
     }
 
     const admins = await User.find({
@@ -1876,15 +2004,24 @@ router.post("/publication-requests", auth, upload.single("courseFile"), async (r
     if (createdCourseId) {
       await Promise.all([
         ClassLesson.deleteMany({ classId: createdCourseId }).catch(() => null),
+        ClassModule.deleteMany({ classId: createdCourseId }).catch(() => null),
         Class.findByIdAndDelete(createdCourseId).catch(() => null)
       ]);
     }
     if (uploadedDocument?.publicId) {
       await cloudinary.uploader.destroy(uploadedDocument.publicId, { resource_type: "raw" }).catch(() => null);
     }
+    if (uploadedCover?.publicId) {
+      await cloudinary.uploader.destroy(uploadedCover.publicId, { resource_type: "image" }).catch(() => null);
+    }
+    if (uploadedVideo?.publicId) {
+      await cloudinary.uploader.destroy(uploadedVideo.publicId, { resource_type: "video" }).catch(() => null);
+    }
     console.error("POST TEACHER COURSE REQUEST ERROR:", err);
-    return res.status(500).json({
-      message: "AIFT could not submit this course for review."
+    return res.status(err.statusCode || 500).json({
+      message: err.statusCode
+        ? err.message
+        : "AIFT could not submit this course for review."
     });
   }
 });
