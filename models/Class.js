@@ -486,6 +486,17 @@ const classPricingSettingsSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const publicationDocumentSchema = new mongoose.Schema(
+  {
+    url: { type: String, trim: true, maxlength: 1500, default: "" },
+    publicId: { type: String, trim: true, maxlength: 500, default: "" },
+    originalName: { type: String, trim: true, maxlength: 255, default: "" },
+    mimeType: { type: String, trim: true, maxlength: 150, default: "" },
+    size: { type: Number, min: 0, default: 0 }
+  },
+  { _id: false }
+);
+
 const classSchema = new mongoose.Schema(
   {
     schoolId: {
@@ -663,6 +674,18 @@ pricingSettings: {
       enum: ["school", "teacher_request", "admin"],
       default: "school",
       index: true
+    },
+
+    publicationSubmissionType: {
+      type: String,
+      enum: ["proposal", "existing_class", "pdf"],
+      default: "proposal",
+      index: true
+    },
+
+    publicationDocument: {
+      type: publicationDocumentSchema,
+      default: undefined
     },
 
     publicationRequestStatus: {

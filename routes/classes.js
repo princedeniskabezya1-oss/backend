@@ -1420,6 +1420,31 @@ function uploadClassCover(file) {
   });
 }
 
+function uploadLearningPdf(file, teacherId) {
+  return new Promise((resolve, reject) => {
+    cloudinary.uploader
+      .upload_stream(
+        {
+          folder: `aift_learning/course-submissions/${teacherId}`,
+          resource_type: "raw",
+          use_filename: true,
+          unique_filename: true
+        },
+        (error, result) => {
+          if (error) return reject(error);
+          resolve({
+            url: result.secure_url,
+            publicId: result.public_id,
+            originalName: file.originalname,
+            mimeType: file.mimetype,
+            size: file.size
+          });
+        }
+      )
+      .end(file.buffer);
+  });
+}
+
 /* ============================================
    GET CLASSES
    GET /api/classes
@@ -1661,7 +1686,7 @@ router.get("/publication-requests/mine", auth, async (req, res) => {
       teacherId: req.user._id,
       publicationSource: "teacher_request"
     })
-      .select("title subject category level language coverImage estimatedDurationMinutes publicationRequestStatus publicationRequestMessage publicationReviewNote publicationRequestedAt publicationReviewedAt published createdAt updatedAt")
+      .select("title subject category level language coverImage estimatedDurationMinutes publicationSubmissionType publicationDocument publicationRequestStatus publicationRequestMessage publicationReviewNote publicationRequestedAt publicationReviewedAt published createdAt updatedAt")
       .sort({ publicationRequestedAt: -1, createdAt: -1 })
       .lean();
 
@@ -1674,7 +1699,9 @@ router.get("/publication-requests/mine", auth, async (req, res) => {
   }
 });
 
-router.post("/publication-requests", auth, async (req, res) => {
+router.post("/publication-requests", auth, upload.single("courseFile"), async (req, res) => {
+  let uploadedDocument = null;
+  let createdCourseId = null;
   try {
     if (normalizeRole(req.user?.role) !== "teacher") {
       return res.status(403).json({
@@ -1685,6 +1712,11 @@ router.post("/publication-requests", auth, async (req, res) => {
     const schoolId = getUserSchoolId(req.user);
     const payload = learningCoursePayload(req.body);
     const requestMessage = String(req.body?.requestMessage || "").trim();
+    const submissionType = ["existing_class", "pdf", "proposal"].includes(
+      String(req.body?.submissionType || "proposal").trim().toLowerCase()
+    )
+      ? String(req.body?.submissionType || "proposal").trim().toLowerCase()
+      : "proposal";
 
     if (!schoolId) {
       return res.status(400).json({
@@ -1692,11 +1724,23 @@ router.post("/publication-requests", auth, async (req, res) => {
       });
     }
 
-    if (!payload.title) {
+    if (submissionType === "pdf") {
+      if (!req.file) {
+        return res.status(400).json({ message: "Choose a PDF course to upload." });
+      }
+      if (String(req.file.mimetype).toLowerCase() !== "application/pdf") {
+        return res.status(400).json({ message: "Course uploads must be PDF files." });
+      }
+      if (Number(req.file.size || 0) > 50 * 1024 * 1024) {
+        return res.status(413).json({ message: "PDF courses can be up to 50 MB." });
+      }
+    }
+
+    if (submissionType !== "existing_class" && !payload.title) {
       return res.status(400).json({ message: "Course title is required." });
     }
 
-    if (!payload.subject) {
+    if (submissionType !== "existing_class" && !payload.subject) {
       return res.status(400).json({ message: "Course subject is required." });
     }
 
@@ -1706,29 +1750,99 @@ router.post("/publication-requests", auth, async (req, res) => {
       });
     }
 
-    const duplicate = await Class.findOne({
-      teacherId: req.user._id,
-      publicationRequestStatus: "pending",
-      title: { $regex: `^${payload.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" }
-    }).select("_id").lean();
+    let course;
 
-    if (duplicate) {
-      return res.status(409).json({
-        message: "You already have a pending submission with this title."
+    if (submissionType === "existing_class") {
+      const existingClassId = normalizeObjectId(req.body?.existingClassId);
+      if (!/^[a-f\d]{24}$/i.test(existingClassId)) {
+        return res.status(400).json({ message: "Choose one of your existing classes." });
+      }
+      course = await Class.findOne({
+        _id: existingClassId,
+        teacherId: req.user._id,
+        status: { $ne: "archived" }
       });
-    }
 
-    const course = await Class.create({
-      ...payload,
-      schoolId,
-      teacherId: req.user._id,
-      published: false,
-      status: "active",
-      publicationSource: "teacher_request",
-      publicationRequestStatus: "pending",
-      publicationRequestMessage: requestMessage || null,
-      publicationRequestedAt: new Date()
-    });
+      if (!course) {
+        return res.status(404).json({ message: "Choose one of your existing classes." });
+      }
+      if (course.published) {
+        return res.status(409).json({ message: "This class is already published on AIFT Learning." });
+      }
+      if (course.publicationRequestStatus === "pending") {
+        return res.status(409).json({ message: "This class is already waiting for Admin review." });
+      }
+
+      course.publicationSource = "teacher_request";
+      course.publicationSubmissionType = "existing_class";
+      course.publicationRequestStatus = "pending";
+      course.publicationRequestMessage = requestMessage || null;
+      course.publicationRequestedAt = new Date();
+      course.publicationReviewedAt = null;
+      course.publicationReviewedBy = null;
+      course.publicationReviewNote = null;
+      await course.save();
+    } else {
+      const duplicate = await Class.findOne({
+        teacherId: req.user._id,
+        publicationRequestStatus: "pending",
+        title: { $regex: `^${payload.title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, $options: "i" }
+      }).select("_id").lean();
+
+      if (duplicate) {
+        return res.status(409).json({
+          message: "You already have a pending submission with this title."
+        });
+      }
+
+      if (submissionType === "pdf") {
+        uploadedDocument = await uploadLearningPdf(req.file, req.user._id);
+      }
+
+      course = await Class.create({
+        ...payload,
+        schoolId,
+        teacherId: req.user._id,
+        published: false,
+        status: "active",
+        publicationSource: "teacher_request",
+        publicationSubmissionType: submissionType,
+        publicationDocument: uploadedDocument || undefined,
+        materials: uploadedDocument ? [uploadedDocument.url] : [],
+        publicationRequestStatus: "pending",
+        publicationRequestMessage: requestMessage || null,
+        publicationRequestedAt: new Date()
+      });
+      createdCourseId = course._id;
+
+      if (uploadedDocument) {
+        await ClassLesson.create({
+          schoolId,
+          classId: course._id,
+          title: payload.title,
+          summary: payload.description || "PDF course material",
+          content: "Open the attached PDF to begin this course.",
+          resources: [{
+            title: uploadedDocument.originalName || payload.title,
+            description: "Course PDF",
+            url: uploadedDocument.url,
+            secureUrl: uploadedDocument.url,
+            type: "pdf",
+            source: "upload",
+            originalName: uploadedDocument.originalName,
+            mimeType: uploadedDocument.mimeType,
+            size: uploadedDocument.size,
+            publicId: uploadedDocument.publicId,
+            resourceType: "raw",
+            uploadedBy: req.user._id
+          }],
+          order: 0,
+          durationMinutes: payload.estimatedDurationMinutes || 0,
+          status: "published",
+          previewEnabled: true
+        });
+      }
+    }
 
     const admins = await User.find({
       role: "admin",
@@ -1738,7 +1852,7 @@ router.post("/publication-requests", auth, async (req, res) => {
     await Promise.all(admins.map(admin =>
       notifyLearningUser(req, admin._id, {
         title: "New course publication request",
-        text: `${req.user.name || "A teacher"} submitted “${course.title}” for Learning review.`,
+        text: `${req.user.name || "A teacher"} submitted “${course.title}” (${submissionType.replace("_", " ")}) for Learning review.`,
         link: "/admin.html#learning",
         classId: course._id,
         priority: "high",
@@ -1759,6 +1873,15 @@ router.post("/publication-requests", auth, async (req, res) => {
       request: course
     });
   } catch (err) {
+    if (createdCourseId) {
+      await Promise.all([
+        ClassLesson.deleteMany({ classId: createdCourseId }).catch(() => null),
+        Class.findByIdAndDelete(createdCourseId).catch(() => null)
+      ]);
+    }
+    if (uploadedDocument?.publicId) {
+      await cloudinary.uploader.destroy(uploadedDocument.publicId, { resource_type: "raw" }).catch(() => null);
+    }
     console.error("POST TEACHER COURSE REQUEST ERROR:", err);
     return res.status(500).json({
       message: "AIFT could not submit this course for review."
