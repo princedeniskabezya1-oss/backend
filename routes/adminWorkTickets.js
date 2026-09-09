@@ -5,6 +5,8 @@ const ReviewCase = require("../models/ReviewCase");
 const DealRoom = require("../models/DealRoom");
 const PartnershipWorkspace = require("../models/PartnershipWorkspace");
 const SchoolCompanyPartnership = require("../models/SchoolCompanyPartnership");
+const User = require("../models/User");
+const Notification = require("../models/Notification");
 
 const router = express.Router();
 router.use(auth);
@@ -13,7 +15,48 @@ const OPEN_REVIEW = new Set(["submitted", "under_review", "information_requested
 const ACTIVE_TICKET_STATUSES = ["new", "in_progress", "waiting"];
 
 function isAdmin(user){ return String(user?.role || "").toLowerCase() === "admin"; }
+function normalizedRole(value){
+  const role = String(value || "").trim().toLowerCase();
+  if(role === "company") return "employer";
+  if(role === "instructor" || role === "faculty") return "teacher";
+  return role;
+}
 function id(value){ return String(value?._id || value?.id || value || ""); }
+
+const LEARNING_SERVICE_TYPES = {
+  employer: {
+    recruitment_support: "Recruitment Support",
+    mass_hiring: "Mass Hiring Campaign",
+    workforce_training: "Workforce Training"
+  },
+  school: {
+    staff_training: "Staff Training",
+    student_training: "Student Training Program"
+  }
+};
+
+function learningServiceLabel(role, type){
+  return LEARNING_SERVICE_TYPES[role]?.[type] || "";
+}
+
+function publicTicket(ticket){
+  const source = typeof ticket?.toObject === "function" ? ticket.toObject() : ticket;
+  return {
+    _id: source?._id,
+    title: source?.title,
+    description: source?.description,
+    status: source?.status,
+    waitingOn: source?.waitingOn,
+    priority: source?.priority,
+    metadata: source?.metadata || {},
+    history: Array.isArray(source?.history)
+      ? source.history.map(item => ({ status:item.status, note:item.note, at:item.at }))
+      : [],
+    createdAt: source?.createdAt,
+    updatedAt: source?.updatedAt,
+    resolvedAt: source?.resolvedAt
+  };
+}
 function text(value,max=2000){ return String(value ?? "").trim().slice(0,max); }
 function date(value){
   if(!value) return null;
@@ -429,6 +472,118 @@ async function syncTickets(){
   }
 }
 
+
+router.get("/learning-service/my", async (req, res) => {
+  try{
+    const requesterId = req.user?._id || req.user?.id;
+    const tickets = await AdminWorkTicket.find({
+      sourceType:"learning_service",
+      openedBy:requesterId
+    }).sort({updatedAt:-1}).limit(100).lean();
+
+    return res.json({requests:tickets.map(publicTicket)});
+  }catch(error){
+    console.error("MY LEARNING SERVICE REQUESTS ERROR:", error);
+    return res.status(500).json({message:"Could not load your AIFT requests"});
+  }
+});
+
+router.post("/learning-service", async (req, res) => {
+  try{
+    const requesterId = req.user?._id || req.user?.id;
+    const requesterRole = normalizedRole(req.user?.role);
+    const serviceType = text(req.body?.serviceType, 80).toLowerCase();
+    const serviceLabel = learningServiceLabel(requesterRole, serviceType);
+
+    if(!serviceLabel){
+      return res.status(403).json({message:"This AIFT service is not available for your account type"});
+    }
+
+    const summary = text(req.body?.title, 220);
+    const details = text(req.body?.details, 2400);
+    if(!summary || !details){
+      return res.status(400).json({message:"Add a request summary and enough details for AIFT to review"});
+    }
+
+    const participants = Math.min(Math.max(Number(req.body?.participantCount || 0), 0), 100000);
+    const preferredDate = date(req.body?.preferredDate);
+    const now = new Date();
+    const metadata = {
+      requesterId:id(requesterId),
+      requesterRole,
+      requesterName:text(req.user?.companyName || req.user?.schoolName || req.user?.name || "AIFT member", 180),
+      requesterEmail:text(req.user?.email, 240),
+      serviceType,
+      serviceLabel,
+      summary,
+      audience:text(req.body?.audience, 180),
+      participantCount:participants,
+      location:text(req.body?.location, 220),
+      deliveryMode:text(req.body?.deliveryMode, 80),
+      preferredDate:preferredDate ? preferredDate.toISOString() : "",
+      budget:text(req.body?.budget, 180),
+      lastFeedback:""
+    };
+
+    const ticket = await AdminWorkTicket.create({
+      key:`learning-service:${id(requesterId)}:${now.getTime()}:${Math.random().toString(36).slice(2, 9)}`,
+      category:"learning",
+      sourceType:"learning_service",
+      sourceId:id(requesterId),
+      title:`${serviceLabel}: ${summary}`,
+      description:details,
+      nextAction:"Review the request, contact the requester if clarification is needed, and provide an AIFT decision or plan.",
+      priority:serviceType === "mass_hiring" ? "high" : "normal",
+      status:"new",
+      waitingOn:"aift",
+      openedBy:requesterId,
+      lastUserActivityAt:now,
+      lastSourceActivityAt:now,
+      generated:false,
+      targetUrl:"admin.html",
+      metadata,
+      history:[{status:"new", note:"Request submitted to AIFT for review.", actorId:requesterId, at:now}]
+    });
+
+    const admins = await User.find({role:"admin"}).select("_id").lean();
+    if(admins.length){
+      await Notification.insertMany(admins.map(admin => ({
+        user:admin._id,
+        sender:requesterId,
+        type:"announcement",
+        title:"New Learning service request",
+        text:`${metadata.requesterName} requested ${serviceLabel.toLowerCase()}.`,
+        link:"admin.html",
+        entityType:"learning_service",
+        entityId:ticket._id,
+        priority:serviceType === "mass_hiring" ? "high" : "normal",
+        groupKey:`learning-service:${id(ticket._id)}`,
+        metadata:{ticketId:id(ticket._id), serviceType, requesterRole}
+      })), {ordered:false});
+    }
+
+    await Notification.create({
+      user:requesterId,
+      type:"announcement",
+      title:"AIFT received your request",
+      text:`Your ${serviceLabel.toLowerCase()} request is now waiting for AIFT review.`,
+      link:"groups.html",
+      entityType:"learning_service",
+      entityId:ticket._id,
+      groupKey:`learning-service-received:${id(ticket._id)}`,
+      metadata:{ticketId:id(ticket._id), serviceType, status:"new"}
+    });
+
+    return res.status(201).json({
+      message:"Your request was sent to AIFT",
+      request:publicTicket(ticket)
+    });
+  }catch(error){
+    console.error("CREATE LEARNING SERVICE REQUEST ERROR:", error);
+    return res.status(500).json({message:"AIFT could not submit this request"});
+  }
+});
+
 router.get("/",async(req,res)=>{
   try{
     if(!isAdmin(req.user)) return res.status(403).json({message:"Admin access required"});
@@ -440,6 +595,7 @@ router.get("/",async(req,res)=>{
       if(statuses.length) filter.status = {$in:statuses};
     }
     if(req.query.category) filter.category = req.query.category;
+    if(req.query.sourceType) filter.sourceType = text(req.query.sourceType, 80);
     if(req.query.search){
       const search = text(req.query.search,160);
       filter.$or = [
@@ -482,6 +638,7 @@ router.patch("/:id",async(req,res)=>{
     const allowedStatuses = new Set(["new","in_progress","waiting","resolved","dismissed"]);
     const nextStatus = req.body.status ? String(req.body.status).toLowerCase() : "";
     const note = text(req.body.note,1600);
+    const previousStatus = ticket.status;
 
     if(nextStatus){
       if(!allowedStatuses.has(nextStatus)) return res.status(400).json({message:"Invalid work ticket status"});
@@ -511,7 +668,38 @@ router.patch("/:id",async(req,res)=>{
 
     ticket.lastAdminActivityAt = now;
     if(note && !nextStatus) ticket.history.push({status:ticket.status,note,actorId:req.user._id || req.user.id,at:now});
+
+    if(ticket.sourceType === "learning_service" && note){
+      ticket.metadata = {...(ticket.metadata || {}), lastFeedback:note, lastFeedbackAt:now.toISOString()};
+      ticket.markModified("metadata");
+    }
+
     await ticket.save();
+
+    if(ticket.sourceType === "learning_service" && (note || previousStatus !== ticket.status)){
+      const requesterId = ticket.metadata?.requesterId || ticket.openedBy;
+      if(requesterId){
+        const statusText = ticket.status.replaceAll("_", " ");
+        await Notification.create({
+          user:requesterId,
+          sender:req.user._id || req.user.id,
+          type:"announcement",
+          title:"AIFT updated your request",
+          text:note || `Your AIFT service request is now ${statusText}.`,
+          link:"groups.html",
+          entityType:"learning_service",
+          entityId:ticket._id,
+          priority:ticket.priority === "urgent" ? "high" : "normal",
+          groupKey:`learning-service-update:${id(ticket._id)}:${now.getTime()}`,
+          metadata:{
+            ticketId:id(ticket._id),
+            serviceType:ticket.metadata?.serviceType || "",
+            status:ticket.status,
+            feedback:note
+          }
+        });
+      }
+    }
 
     return res.json({message:"Work ticket updated",ticket});
   }catch(error){
