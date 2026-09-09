@@ -40,13 +40,13 @@ const adminWorkTicketSchema = new Schema(
     },
     category: {
       type: String,
-      enum: ["review", "document", "meeting", "evaluation", "decision", "negotiation", "partnership", "other"],
+      enum: ["review", "document", "meeting", "evaluation", "decision", "negotiation", "partnership", "learning", "other"],
       default: "other",
       index: true
     },
     sourceType: {
       type: String,
-      enum: ["review_case", "deal_room", "partnership_workspace", "system"],
+      enum: ["review_case", "deal_room", "partnership_workspace", "learning_service", "system"],
       default: "system",
       index: true
     },
