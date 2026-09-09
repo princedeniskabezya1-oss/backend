@@ -5614,6 +5614,10 @@ router.patch("/:id", auth, async (req, res) => {
       }
     });
 
+    if (isAdmin && Object.prototype.hasOwnProperty.call(req.body, "aiftVerified")) {
+      targetUser.aiftVerified = req.body.aiftVerified === true;
+    }
+
     if (req.body.password) {
       targetUser.password = await bcrypt.hash(req.body.password, 10);
     }
