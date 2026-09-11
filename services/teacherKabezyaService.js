@@ -2527,7 +2527,30 @@ function normalizeSubmissionInspectionAIResult({
 
     citationReview:
       normalizeCitationReview(
-        raw.citationReview,
+        [
+          ...(
+            Array.isArray(
+              raw.citationReview
+            )
+              ? raw.citationReview
+              : []
+          ),
+          ...webMatches.map(
+            match => ({
+              citation:
+                match.sourceTitle ||
+                "Possible public-web wording match",
+              status:
+                "unverified",
+              explanation:
+                match.submittedText
+                  ? `Similar wording found: "${match.submittedText}"`
+                  : "Similar wording was found in a Google Search result. Review the source and student submission together.",
+              sourceUrl:
+                match.sourceUrl
+            })
+          )
+        ],
         {
           webChecked:
             Boolean(
