@@ -488,6 +488,64 @@ function extractGeminiText(
     .trim();
 }
 
+/* =========================================================
+   EXTRACT VERIFIED GOOGLE SEARCH SOURCES
+
+   A source is returned only when Gemini actually performed
+   grounding and supplied a web result URI. This lets callers
+   distinguish a real public-web check from model knowledge.
+========================================================= */
+
+function extractGoogleSearchSources(
+  response
+){
+
+  const sources = [];
+  const seen = new Set();
+
+  for(
+    const candidate
+    of Array.isArray(response?.candidates)
+      ? response.candidates
+      : []
+  ){
+
+    const metadata =
+      candidate?.groundingMetadata ||
+      candidate?.grounding_metadata ||
+      {};
+
+    for(
+      const chunk
+      of Array.isArray(metadata?.groundingChunks)
+        ? metadata.groundingChunks
+        : Array.isArray(metadata?.grounding_chunks)
+          ? metadata.grounding_chunks
+          : []
+    ){
+
+      const web = chunk?.web || {};
+      const url = String(web?.uri || web?.url || "").trim();
+
+      if(!/^https?:\/\//i.test(url) || seen.has(url)){
+        continue;
+      }
+
+      seen.add(url);
+      sources.push({
+        title:String(web?.title || "Web source").trim(),
+        url
+      });
+
+    }
+
+  }
+
+  return sources.slice(0,20);
+
+}
+
+
 
 /* =========================================================
    GENERATE AI RESPONSE
@@ -497,7 +555,8 @@ async function generateAIResponse({
   systemInstruction = "",
   contextText = "",
   history = [],
-  message = ""
+  message = "",
+  useGoogleSearch = false
 }){
 
   const client =
@@ -604,6 +663,18 @@ config:{
         }
       : {}
   ),
+  ...(
+    useGoogleSearch
+      ? {
+          tools:[
+            {
+              googleSearch:{}
+            }
+          ]
+        }
+      : {}
+  ),
+
 
   maxOutputTokens:
     3000
@@ -695,6 +766,12 @@ config:{
     response?.usageMetadata ||
     {};
 
+  const googleSearchSources =
+    extractGoogleSearchSources(
+      response
+    );
+
+
 
   return {
 
@@ -705,6 +782,17 @@ config:{
     responseTimeMs:
       Date.now() -
       startedAt,
+    googleSearch:{
+      checked:
+        Boolean(
+          useGoogleSearch &&
+          googleSearchSources.length
+        ),
+
+      sources:
+        googleSearchSources
+    },
+
 
     usage:{
 

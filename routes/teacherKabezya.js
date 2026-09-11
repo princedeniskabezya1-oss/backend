@@ -1948,6 +1948,64 @@ router.post(
         analysis.citationReview ||
         [];
 
+      if(
+        analysis.webReview &&
+        typeof analysis.webReview ===
+          "object"
+      ){
+
+        inspection.webReview =
+          analysis.webReview;
+
+
+        const highestWebSimilarity =
+          asArray(
+            analysis.webReview.matches
+          )
+            .reduce(
+              (
+                highest,
+                match
+              ) => Math.max(
+                highest,
+                Number(
+                  match?.similarityPercent ||
+                  0
+                )
+              ),
+              0
+            );
+
+
+        if(
+          highestWebSimilarity >
+            0
+        ){
+
+          inspection.reviewScore =
+            Math.max(
+              Number(
+                inspection.reviewScore ||
+                0
+              ),
+              highestWebSimilarity
+            );
+
+          if(
+            inspection.status ===
+              "clear"
+          ){
+
+            inspection.status =
+              "review";
+
+          }
+
+        }
+
+      }
+
+
 
       /* ===================================================
          AI ANALYSIS

@@ -2154,6 +2154,32 @@ function buildSubmissionInspectionPrompt(
 
           }
         ],
+        webReview:{
+
+          matches:[
+            {
+              sourceTitle:
+                "Title of a Google Search result",
+
+              sourceUrl:
+                "Verified result URL",
+
+              submittedText:
+                "Passage from the student's submission",
+
+              matchedText:
+                "Matching wording found on the public page",
+
+              similarityPercent:
+                0,
+
+              evidenceType:
+                "exact | near_exact | phrase_overlap"
+            }
+          ]
+
+        },
+
 
         strengths:[
           "Academic strengths"
@@ -2189,7 +2215,9 @@ function buildSubmissionInspectionPrompt(
       ),
 
     [
-      "RULE: If webReview.checked is false, explicitly avoid claiming the text was copied from a website or public source."
+      "RULE: Use Google Search to look for distinctive phrases from the submission on the public web.",
+      "Only include a webReview match when the source URL was returned by the search tool and the wording is visibly similar.",
+      "No search result is not proof of originality, and a match is evidence for teacher review rather than proof of misconduct."
     ]
       .join(
         " "
@@ -2283,6 +2311,18 @@ function normalizeSubmissionInspectionAIResult({
 
       citationReview:
         [],
+      webReview:{
+        checked:
+          Boolean(
+            generated?.googleSearch?.checked
+          ),
+        provider:
+          "Google Search grounding",
+        checkedAt:
+          new Date(),
+        matches:[]
+      },
+
 
       strengths:
         [],
@@ -2310,6 +2350,102 @@ function normalizeSubmissionInspectionAIResult({
       "object"
       ? raw.integrityAssessment
       : {};
+
+  const groundedSources =
+    Array.isArray(
+      generated?.googleSearch?.sources
+    )
+      ? generated.googleSearch.sources
+      : [];
+
+
+  const groundedSourceByUrl =
+    new Map(
+      groundedSources
+        .map(
+          source => [
+            safeString(source?.url,3000),
+            source
+          ]
+        )
+        .filter(
+          entry => /^https?:\/\//i.test(entry[0])
+        )
+    );
+
+
+  const webMatches =
+    (
+      Array.isArray(raw?.webReview?.matches)
+        ? raw.webReview.matches
+        : []
+    )
+      .map(
+        match => {
+
+          const sourceUrl =
+            safeString(match?.sourceUrl,3000);
+
+          const verifiedSource =
+            groundedSourceByUrl.get(sourceUrl);
+
+          if(!verifiedSource){
+            return null;
+          }
+
+          const similarityPercent =
+            Math.max(
+              0,
+              Math.min(
+                100,
+                safeNumber(
+                  match?.similarityPercent,
+                  0
+                )
+              )
+            );
+
+          const allowedEvidenceTypes =
+            new Set([
+              "exact",
+              "near_exact",
+              "phrase_overlap"
+            ]);
+
+          const evidenceType =
+            safeString(
+              match?.evidenceType,
+              "phrase_overlap"
+            );
+
+          return {
+            sourceType:"web",
+            sourceTitle:
+              safeString(
+                match?.sourceTitle ||
+                verifiedSource?.title,
+                500
+              ),
+            sourceUrl,
+            submittedText:
+              safeString(match?.submittedText,5000),
+            matchedText:
+              safeString(match?.matchedText,5000),
+            similarity:
+              similarityPercent / 100,
+            similarityPercent,
+            evidenceType:
+              allowedEvidenceTypes.has(evidenceType)
+                ? evidenceType
+                : "phrase_overlap",
+            verified:true
+          };
+
+        }
+      )
+      .filter(Boolean)
+      .slice(0,20);
+
 
 
   const allowedIntegrityLevels =
@@ -2395,11 +2531,24 @@ function normalizeSubmissionInspectionAIResult({
         {
           webChecked:
             Boolean(
-              integrity?.webReview
+              generated?.googleSearch
                 ?.checked
             )
         }
       ),
+    webReview:{
+      checked:
+        Boolean(
+          generated?.googleSearch?.checked
+        ),
+      provider:
+        "Google Search grounding",
+      checkedAt:
+        new Date(),
+      matches:
+        webMatches
+    },
+
 
     strengths:
       normalizeStringArray(
@@ -2551,7 +2700,10 @@ async function analyzeTeacherSubmissionWithAI({
       message:
         buildSubmissionInspectionPrompt(
           teacherPrompt
-        )
+        ),
+
+      useGoogleSearch:
+        true
 
     });
 
