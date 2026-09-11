@@ -3686,7 +3686,10 @@ router.get(
 
         ClassLesson.find({
           classId,
-          status:"published"
+          $or:[
+            { published:true },
+            { status:{ $in:["published","active"] } }
+          ]
         })
           .sort({
             order:1,
@@ -3705,7 +3708,10 @@ router.get(
 
         Assignment.find({
           classId,
-          status:"published"
+          $or:[
+            { published:true },
+            { status:{ $in:["published","active"] } }
+          ]
         })
           .sort({
             dueDate:1,
@@ -3724,7 +3730,10 @@ router.get(
 
         Quiz.find({
           classId,
-          status:"published"
+          $or:[
+            { published:true },
+            { status:{ $in:["published","active"] } }
+          ]
         })
           .sort({
             createdAt:1
