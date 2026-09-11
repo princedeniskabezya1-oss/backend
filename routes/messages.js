@@ -735,6 +735,107 @@ router.patch("/:id/delete-for-everyone", authMiddleware, async (req,res)=>{
    ADMIN DELETED MESSAGES
 ========================= */
 
+router.get("/admin/conversations", adminOnly, async (req,res)=>{
+  try{
+    const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 250);
+    const conversations = await Conversation.find({})
+      .populate("participants.user","name companyName schoolName email role profileImage logo")
+      .populate("lastMessage.sender","name companyName schoolName email role profileImage logo")
+      .sort({ updatedAt:-1 })
+      .limit(limit)
+      .lean();
+
+    res.json({ conversations });
+  }catch(error){
+    console.error("ADMIN CONVERSATIONS ERROR:",error);
+    res.status(500).json({ message:"Unable to load conversations" });
+  }
+});
+
+router.get("/admin/conversations/:conversationId/messages", adminOnly, async (req,res)=>{
+  try{
+    if(!isValidId(req.params.conversationId)){
+      return res.status(400).json({ message:"Invalid conversation ID" });
+    }
+    const conversation = await Conversation.findById(req.params.conversationId)
+      .populate("participants.user","name companyName schoolName email role profileImage logo")
+      .lean();
+    if(!conversation){
+      return res.status(404).json({ message:"Conversation not found" });
+    }
+
+    const limit = Math.min(Math.max(Number(req.query.limit) || 250, 1), 500);
+    const messages = await Message.find({ conversationId:conversation._id })
+      .select("+deletionSnapshot")
+      .populate("sender","name companyName schoolName email role profileImage logo")
+      .populate("receiver","name companyName schoolName email role profileImage logo")
+      .sort({ createdAt:1 })
+      .limit(limit)
+      .lean();
+
+    res.json({
+      conversation,
+      messages:messages.map(message => {
+        const snapshot = message.deletionSnapshot || null;
+        return {
+          ...message,
+          adminOriginalText:message.deletedForEveryone
+            ? String(snapshot?.text || "")
+            : String(message.text || ""),
+          adminOriginalType:message.deletedForEveryone
+            ? String(snapshot?.messageType || message.messageType || "text")
+            : String(message.messageType || "text"),
+          adminOriginalFileName:message.deletedForEveryone
+            ? String(snapshot?.fileName || "")
+            : String(message.fileName || ""),
+          recoverable:message.deletedForEveryone && !!snapshot,
+          deletionSnapshot:undefined
+        };
+      })
+    });
+  }catch(error){
+    console.error("ADMIN CONVERSATION MESSAGES ERROR:",error);
+    res.status(500).json({ message:"Unable to load conversation messages" });
+  }
+});
+
+router.patch("/admin/messages/:id/delete", adminOnly, async (req,res)=>{
+  try{
+    const message = await Message.findById(req.params.id).select("+deletionSnapshot");
+    if(!message){
+      return res.status(404).json({ message:"Message not found" });
+    }
+    if(!message.deletedForEveryone){
+      message.softDeleteForEveryone();
+      await message.save();
+    }
+
+    const conversation = await Conversation.findById(message.conversationId);
+    if(
+      conversation &&
+      String(conversation.lastMessage?.message || "") === String(message._id)
+    ){
+      conversation.lastMessage.text = "Message deleted";
+      conversation.lastMessage.messageType = "text";
+      await conversation.save();
+    }
+
+    const io = getIo(req);
+    [message.sender,message.receiver].forEach(userId => {
+      io?.to(String(userId)).emit("messageDeleted", { messageId:message._id });
+      io?.to(String(userId)).emit("conversationUpdated", {
+        conversationId:String(message.conversationId),
+        lastMessage:"Message deleted"
+      });
+    });
+
+    res.json({ success:true, messageId:String(message._id) });
+  }catch(error){
+    console.error("ADMIN DELETE MESSAGE ERROR:",error);
+    res.status(500).json({ message:"Unable to delete message" });
+  }
+});
+
 router.get("/deleted/admin-list", adminOnly, async (req,res)=>{
   try{
     const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 250);
