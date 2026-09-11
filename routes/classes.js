@@ -3675,16 +3675,22 @@ router.get(
       }
 
       const [
-        rawLessons,
+        lessons,
         lessonProgress,
-        rawAssignments,
+        assignments,
         submissions,
-        rawQuizzes,
+        quizzes,
         quizSubmissions,
         attendance
       ] = await Promise.all([
 
-        ClassLesson.find({ classId })
+        ClassLesson.find({
+          classId,
+          $or:[
+            { published:true },
+            { status:{ $in:["published","active"] } }
+          ]
+        })
           .sort({
             order:1,
             createdAt:1
@@ -3700,7 +3706,13 @@ router.get(
           })
           .lean(),
 
-        Assignment.find({ classId })
+        Assignment.find({
+          classId,
+          $or:[
+            { published:true },
+            { status:{ $in:["published","active"] } }
+          ]
+        })
           .sort({
             dueDate:1,
             createdAt:-1
@@ -3716,7 +3728,13 @@ router.get(
           })
           .lean(),
 
-        Quiz.find({ classId })
+        Quiz.find({
+          classId,
+          $or:[
+            { published:true },
+            { status:{ $in:["published","active"] } }
+          ]
+        })
           .sort({
             createdAt:1
           })
@@ -3742,17 +3760,6 @@ router.get(
           })
           .lean()
       ]);
-
-      // Match the learner-visible content from /learning, including legacy status casing.
-      const lessons=rawLessons.filter(isLearningContentPublished);
-      const visibleLessonIds=new Set(lessons.map(item=>normalizeObjectId(item._id)));
-      const visibleAssessment=item=>{
-        if(isLearningContentArchived(item)||!isLearningContentPublished(item))return false;
-        const lessonId=normalizeObjectId(item.lessonId||item.lesson);
-        return !lessonId||visibleLessonIds.has(lessonId);
-      };
-      const assignments=rawAssignments.filter(visibleAssessment);
-      const quizzes=rawQuizzes.filter(visibleAssessment);
 
       /*
         Generic percentage utility.
@@ -5933,4 +5940,3 @@ router.patch("/:id/builder/quiz/:quizId", auth, async (req, res) => {
 });
 
 module.exports = router;
-
