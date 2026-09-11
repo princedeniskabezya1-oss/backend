@@ -9,6 +9,7 @@ const CallLog = require("../models/CallLog");
 const Story = require("../models/Story");
 
 const authMiddleware = require("../middleware/auth");
+const adminOnly = require("../middleware/adminOnly");
 const cloudinary = require("../config/cloudinary");
 const { enforceContactSafety, hasMessagingRestriction } = require("../utils/contactSafety");
 const { createManyNotifications } = require("../services/notificationService");
@@ -692,6 +693,16 @@ router.patch("/:id/delete-for-everyone", authMiddleware, async (req,res)=>{
     message.softDeleteForEveryone();
     await message.save();
 
+    const conversation = await Conversation.findById(message.conversationId);
+    if(
+      conversation &&
+      String(conversation.lastMessage?.message || "") === String(message._id)
+    ){
+      conversation.lastMessage.text = "Message deleted";
+      conversation.lastMessage.messageType = "text";
+      await conversation.save();
+    }
+
     const io = getIo(req);
     io?.to(String(message.receiver)).emit("messageDeleted", {
       messageId:message._id
@@ -699,6 +710,15 @@ router.patch("/:id/delete-for-everyone", authMiddleware, async (req,res)=>{
     io?.to(String(message.sender)).emit("messageDeleted", {
       messageId:message._id
     });
+    if(conversation){
+      (conversation.participants || []).forEach(participant => {
+        const participantId = String(participant?.user || "");
+        if(participantId) io?.to(participantId).emit("conversationUpdated", {
+          conversationId:String(conversation._id),
+          lastMessage:"Message deleted"
+        });
+      });
+    }
 
     res.json({
       success:true,
@@ -708,6 +728,97 @@ router.patch("/:id/delete-for-everyone", authMiddleware, async (req,res)=>{
   }catch(error){
     console.error("DELETE FOR EVERYONE ERROR:",error);
     res.status(500).json({ message:"Server error" });
+  }
+});
+
+/* =========================
+   ADMIN DELETED MESSAGES
+========================= */
+
+router.get("/admin/deleted", adminOnly, async (req,res)=>{
+  try{
+    const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 250);
+    const messages = await Message.find({ deletedForEveryone:true })
+      .select("+deletionSnapshot")
+      .populate("sender","name companyName schoolName email profileImage")
+      .populate("receiver","name companyName schoolName email profileImage")
+      .sort({ deletedAt:-1 })
+      .limit(limit)
+      .lean();
+
+    res.json({
+      messages:messages.map(message => ({
+        _id:message._id,
+        conversationId:message.conversationId,
+        sender:message.sender,
+        receiver:message.receiver,
+        deletedAt:message.deletedAt,
+        createdAt:message.createdAt,
+        recoverable:!!message.deletionSnapshot,
+        originalText:String(message.deletionSnapshot?.text || ""),
+        originalType:String(message.deletionSnapshot?.messageType || "text"),
+        originalFileName:String(message.deletionSnapshot?.fileName || "")
+      }))
+    });
+  }catch(error){
+    console.error("ADMIN DELETED MESSAGES ERROR:",error);
+    res.status(500).json({ message:"Unable to load deleted messages" });
+  }
+});
+
+router.patch("/admin/deleted/:id/restore", adminOnly, async (req,res)=>{
+  try{
+    const message = await Message.findById(req.params.id).select("+deletionSnapshot");
+    if(!message || !message.deletedForEveryone){
+      return res.status(404).json({ message:"Deleted message not found" });
+    }
+    const snapshot = message.deletionSnapshot;
+    if(!snapshot){
+      return res.status(409).json({
+        message:"This older deletion has no recoverable snapshot"
+      });
+    }
+
+    message.text = String(snapshot.text || "");
+    message.messageType = snapshot.messageType || "text";
+    message.fileUrl = String(snapshot.fileUrl || "");
+    message.fileType = String(snapshot.fileType || "");
+    message.fileName = String(snapshot.fileName || "");
+    message.fileSize = Number(snapshot.fileSize || 0);
+    message.attachments = Array.isArray(snapshot.attachments)
+      ? snapshot.attachments
+      : [];
+    message.deletedForEveryone = false;
+    message.deletedAt = undefined;
+    message.deletionSnapshot = null;
+    await message.save();
+
+    const conversation = await Conversation.findById(message.conversationId);
+    if(
+      conversation &&
+      String(conversation.lastMessage?.message || "") === String(message._id)
+    ){
+      conversation.lastMessage.text = message.text || message.fileName || "Attachment";
+      conversation.lastMessage.messageType = message.messageType || "text";
+      await conversation.save();
+    }
+
+    const restored = await Message.findById(message._id)
+      .populate("sender","name companyName schoolName role profileImage")
+      .populate("receiver","name companyName schoolName role profileImage");
+
+    const io = getIo(req);
+    [message.sender,message.receiver].forEach(userId => {
+      io?.to(String(userId)).emit("messageEdited", restored);
+      io?.to(String(userId)).emit("conversationUpdated", {
+        conversationId:String(message.conversationId)
+      });
+    });
+
+    res.json({ success:true, message:restored });
+  }catch(error){
+    console.error("ADMIN RESTORE MESSAGE ERROR:",error);
+    res.status(500).json({ message:"Unable to restore message" });
   }
 });
 
