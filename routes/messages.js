@@ -735,7 +735,7 @@ router.patch("/:id/delete-for-everyone", authMiddleware, async (req,res)=>{
    ADMIN DELETED MESSAGES
 ========================= */
 
-router.get("/admin/deleted", adminOnly, async (req,res)=>{
+router.get("/deleted/admin-list", adminOnly, async (req,res)=>{
   try{
     const limit = Math.min(Math.max(Number(req.query.limit) || 100, 1), 250);
     const messages = await Message.find({ deletedForEveryone:true })
