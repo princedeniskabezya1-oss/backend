@@ -358,6 +358,12 @@ const messageSchema = new Schema(
       type: Date
     },
 
+    deletionSnapshot: {
+      type: Schema.Types.Mixed,
+      select: false,
+      default: null
+    },
+
     starredBy: [
       {
         type: Schema.Types.ObjectId,
@@ -501,6 +507,19 @@ messageSchema.methods.softDeleteFor = function(userId){
 };
 
 messageSchema.methods.softDeleteForEveryone = function(){
+  if(!this.deletedForEveryone){
+    this.deletionSnapshot = {
+      text:this.text || "",
+      messageType:this.messageType || "text",
+      fileUrl:this.fileUrl || "",
+      fileType:this.fileType || "",
+      fileName:this.fileName || "",
+      fileSize:Number(this.fileSize || 0),
+      attachments:Array.isArray(this.attachments)
+        ? this.attachments.map(item => item.toObject ? item.toObject() : item)
+        : []
+    };
+  }
   this.deletedForEveryone = true;
   this.deletedAt = new Date();
   this.text = "";
