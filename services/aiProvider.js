@@ -711,9 +711,78 @@ config:{
     );
 
 
-    throw normalizeGeminiError(
-      error
-    );
+    /*
+      Public-web grounding is an enhancement to submission
+      review, not a reason to make Kabezya unavailable. If a
+      configured model/account cannot use Google Search, retry
+      the same review once without the tool and clearly return
+      webReview.checked=false through the normal response path.
+    */
+
+    if(
+      useGoogleSearch
+    ){
+
+      try{
+
+        response =
+          await client.models.generateContent({
+
+            model,
+
+            contents,
+
+            config:{
+
+              ...(
+                instructions
+                  ? {
+                      systemInstruction:
+                        instructions
+                    }
+                  : {}
+              ),
+
+              maxOutputTokens:
+                3000
+
+            }
+
+          });
+
+      }catch(
+        fallbackError
+      ){
+
+        console.error(
+          "Gemini fallback generateContent failed:",
+          {
+            status:
+              getProviderStatus(
+                fallbackError
+              ),
+            name:
+              fallbackError?.name ||
+              "",
+            message:
+              fallbackError?.message ||
+              ""
+          }
+        );
+
+        throw normalizeGeminiError(
+          fallbackError
+        );
+
+      }
+
+    }else{
+
+      throw normalizeGeminiError(
+        error
+      );
+
+    }
 
   }
 
