@@ -3679,7 +3679,7 @@ router.get(
         lessonProgress,
         assignments,
         submissions,
-        quizzes,
+        rawQuizzes,
         quizSubmissions,
         attendance
       ] = await Promise.all([
@@ -3760,6 +3760,38 @@ router.get(
           })
           .lean()
       ]);
+
+      /*
+        Match the class player: do not count a Quiz that is
+        attached to a Lesson outside the published curriculum.
+      */
+
+      const visibleLessonIds =
+        new Set(
+          lessons
+            .map(lesson =>
+              normalizeObjectId(
+                lesson._id
+              )
+            )
+            .filter(Boolean)
+        );
+
+      const quizzes =
+        rawQuizzes.filter(quiz => {
+          const lessonId =
+            normalizeObjectId(
+              quiz?.lessonId ||
+              quiz?.lesson
+            );
+
+          return (
+            !lessonId ||
+            visibleLessonIds.has(
+              lessonId
+            )
+          );
+        });
 
       /*
         Generic percentage utility.
