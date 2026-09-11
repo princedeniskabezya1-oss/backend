@@ -373,7 +373,7 @@ app.options(
 
 app.use(
   express.json({
-    limit: "1mb",
+    limit: "6mb",
     strict: true
   })
 );
@@ -381,7 +381,7 @@ app.use(
 app.use(
   express.urlencoded({
     extended: true,
-    limit: "1mb",
+    limit: "6mb",
     parameterLimit: 1000
   })
 );

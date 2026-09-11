@@ -2720,6 +2720,8 @@ async function analyzeTeacherSubmissionWithAI({
           history
         ),
 
+      attachments,
+
       message:
         buildSubmissionInspectionPrompt(
           teacherPrompt
@@ -2969,6 +2971,8 @@ async function generateTeacherKabezyaResponse({
   prompt,
 
   context = {},
+
+  attachments = [],
 
   history = []
 

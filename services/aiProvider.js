@@ -310,7 +310,8 @@ function getGeminiModel(){
 
 function buildGeminiContents({
   history = [],
-  message = ""
+  message = "",
+  attachments = []
 }){
 
   const contents = [];
@@ -385,17 +386,40 @@ function buildGeminiContents({
   }
 
 
+  const currentParts = [
+    {
+      text:
+        currentMessage
+    }
+  ];
+
+  const allowedMimeTypes = new Set([
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "application/pdf",
+    "text/plain",
+    "text/csv"
+  ]);
+
+  let totalBytes = 0;
+
+  for(const attachment of Array.isArray(attachments) ? attachments.slice(0,3) : []){
+    const mimeType=String(attachment?.mimeType||"").trim().toLowerCase();
+    const data=String(attachment?.data||"").replace(/\s+/g,"");
+    if(!allowedMimeTypes.has(mimeType)||!data||!/^[a-z0-9+/]+={0,2}$/i.test(data))continue;
+    const approximateBytes=Math.floor(data.length*3/4);
+    if(approximateBytes>4*1024*1024||totalBytes+approximateBytes>4*1024*1024)continue;
+    totalBytes+=approximateBytes;
+    currentParts.push({inlineData:{mimeType,data}});
+  }
+
   contents.push({
 
     role:
       "user",
 
-    parts:[
-      {
-        text:
-          currentMessage
-      }
-    ]
+    parts:currentParts
 
   });
 
@@ -556,6 +580,7 @@ async function generateAIResponse({
   contextText = "",
   history = [],
   message = "",
+  attachments = [],
   useGoogleSearch = false
 }){
 
@@ -633,7 +658,8 @@ async function generateAIResponse({
   const contents =
     buildGeminiContents({
       history,
-      message
+      message,
+      attachments
     });
 
 
