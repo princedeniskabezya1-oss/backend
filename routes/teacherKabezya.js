@@ -2318,6 +2318,11 @@ router.post(
 
           context,
 
+          attachments:
+            asArray(
+              req.body?.attachments
+            ),
+
           history:
             asArray(
               req.body?.history
