@@ -133,10 +133,12 @@ const SupportTicketSchema =
          OWNER
       ===================================================== */
 
+      isGuest: { type: Boolean, default: false },
+      guestAccessHash: { type: String, select: false },
       userId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "User",
-        required: true,
+        required: function(){ return !this.isGuest; },
         index: true
       },
 
@@ -421,3 +423,4 @@ module.exports =
     "SupportTicket",
     SupportTicketSchema
   );
+

@@ -425,6 +425,68 @@ async function generateTicketNumber(){
 }
 
 
+/* Public Kabezya chat and visitor tickets. Existing account/admin routes retain auth. */
+const { rateLimit } = require('express-rate-limit');
+const { answer } = require('../services/publicKabezya');
+const publicLimit = rateLimit({ windowMs: 60000, limit: 10, standardHeaders: 'draft-8', legacyHeaders: false,
+  message: { success:false, message:'Please wait a minute before trying again.' } });
+const ticketLimit = rateLimit({ windowMs: 3600000, limit: 5, standardHeaders: 'draft-8', legacyHeaders: false,
+  message: { success:false, message:'Too many ticket requests. Please try again later.' } });
+// A process-wide budget also bounds provider usage across visitor addresses.
+const chatBudget = rateLimit({ windowMs: 3600000, limit: 300, keyGenerator: () => 'public-chat',
+  message: { success:false, message:'Chat is busy. You can still create a support ticket.' } });
+router.post('/public/chat', publicLimit, chatBudget, async (req,res) => {
+  const message = typeof req.body?.message === 'string' ? req.body.message.trim() : '';
+  if(!message || message.length > 2000) return res.status(400).json({success:false,message:'Enter a question of up to 2,000 characters.'});
+  const history = (Array.isArray(req.body.history) ? req.body.history : []).slice(-12)
+    .filter(m => ['user','assistant'].includes(m?.role) && typeof m.content === 'string')
+    .map(m => ({role:m.role,content:m.content.slice(0,2000)}));
+  let timer;
+  try {
+    const reply = await Promise.race([answer(message,history),new Promise((_,reject) => {
+      timer=setTimeout(() => reject(new Error('timeout')),30000);
+    })]);
+    return res.json({success:true,reply});
+  } catch(error) {
+    return res.status(error.statusCode === 429 ? 429 : 503).json({success:false,message:'Kabezya cannot reply right now. Please try again or create a ticket.'});
+  } finally { clearTimeout(timer); }
+});
+router.post('/public/tickets', ticketLimit, async (req,res) => {
+  const body=req.body || {};
+  const name=safeString(body.name,120), email=safeString(body.email,180).toLowerCase();
+  const message=safeString(body.message,5000);
+  if(!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || message.length<10 || body.website) {
+    return res.status(400).json({success:false,message:'Please provide your name, a valid email and an issue description of at least 10 characters.'});
+  }
+  try {
+    const accessToken=crypto.randomBytes(32).toString('hex');
+    const ticket=await SupportTicket.create({
+      ticketNumber:await generateTicketNumber(),isGuest:true,userId:null,accountRole:'other',
+      guestAccessHash:crypto.createHash('sha256').update(accessToken).digest('hex'),
+      name,email,subject:message.slice(0,200),additionalInfo:message,
+      page:safeString(body.page,100),category:'other',status:'open',priority:'normal',
+      conversation:body.includeConversation === true ? normalizeConversation(body.conversation).filter(m=>m.role!=='system').slice(-12) : [],
+      metadata:{source:'public-kabezya',contactVerified:false},lastActivityAt:new Date()
+    });
+    return res.status(201).json({success:true,ticket:{id:ticket._id,ticketNumber:ticket.ticketNumber,status:ticket.status},accessToken});
+  } catch(error) {
+    return res.status(500).json({success:false,message:'Your ticket could not be saved. Please try again.'});
+  }
+});
+router.get('/public/tickets/:id', publicLimit, async (req,res) => {
+  const token=String(req.get('Authorization') || '').replace(/^Bearer /,'');
+  if(!isValidObjectId(req.params.id) || !/^[a-f0-9]{64}$/.test(token)) return res.status(404).json({message:'Ticket not found.'});
+  try {
+    const ticket=await SupportTicket.findById(req.params.id).select('+guestAccessHash').lean();
+    const hash=crypto.createHash('sha256').update(token).digest('hex');
+    if(!ticket?.isGuest || !ticket.guestAccessHash || !crypto.timingSafeEqual(Buffer.from(hash),Buffer.from(ticket.guestAccessHash))) return res.status(404).json({message:'Ticket not found.'});
+    res.set('Cache-Control','no-store');
+    return res.json({success:true,ticket:{ticketNumber:ticket.ticketNumber,status:ticket.status,
+      replies:(ticket.replies || []).filter(r=>r.senderType==='support').map(r=>({message:r.message,createdAt:r.createdAt}))}});
+  } catch(error) { return res.status(500).json({message:'Unable to check your ticket. Please try again.'}); }
+});
+
+
 /* =========================================================
    CREATE SUPPORT TICKET
 
@@ -2424,3 +2486,4 @@ router.patch(
 
 module.exports =
   router;
+
