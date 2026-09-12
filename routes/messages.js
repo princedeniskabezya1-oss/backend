@@ -31,19 +31,20 @@ function getIo(req){
   return req.app.get("io") || req.io;
 }
 
-function normalizeFileType(mime = ""){
-  if(mime.startsWith("image")) return "image";
-  if(mime.startsWith("video")) return "video";
-  if(mime.startsWith("audio")) return "audio";
-  if(mime.includes("pdf")) return "document";
-  if(mime.includes("document")) return "document";
+function normalizeFileType(mime = "", name = ""){
+  const value=`${String(mime).toLowerCase()} ${String(name).toLowerCase()}`;
+  if(value.includes("image")||/\.(jpe?g|png|webp|gif|heic|heif|bmp|avif)$/.test(value)) return "image";
+  if(value.includes("video")||/\.(mp4|webm|mov|m4v|avi|mkv|3gp|mpeg|mpg)$/.test(value)) return "video";
+  if(value.includes("audio")||/\.(mp3|m4a|aac|wav|ogg|flac|opus)$/.test(value)) return "audio";
+  if(value.includes("pdf")) return "document";
+  if(value.includes("document")) return "document";
   return "file";
 }
 
 async function uploadToCloudinary(file){
   if(!file) return null;
 
-  const type = normalizeFileType(file.mimetype);
+  const type = normalizeFileType(file.mimetype,file.originalname);
 
   const resourceType =
     type === "video" || type === "audio"
@@ -61,17 +62,14 @@ async function uploadToCloudinary(file){
       (error,result)=>{
         if(error) return reject(error);
 
+        const deliveryUrl=type==="video"?cloudinary.url(result.public_id,{resource_type:"video",secure:true,format:"mp4",transformation:[{video_codec:"auto",quality:"auto"}]}):result.secure_url;
+        const thumbnailUrl=type==="video"?cloudinary.url(result.public_id,{resource_type:"video",secure:true,format:"jpg",transformation:[{start_offset:"0",width:720,crop:"limit",quality:"auto"}]}):"";
         resolve({
-          url:result.secure_url,
-          secureUrl:result.secure_url,
-          publicId:result.public_id,
-          type,
-          mimeType:file.mimetype,
-          originalName:file.originalname,
-          size:file.size,
-          width:result.width,
-          height:result.height,
-          duration:result.duration
+          url:deliveryUrl,secureUrl:deliveryUrl,publicId:result.public_id,type,
+          mimeType:type==="video"?"video/mp4":file.mimetype,
+          originalName:type==="video"?file.originalname.replace(/\.[^.]+$/,"")+".mp4":file.originalname,
+          size:file.size,width:result.width,height:result.height,
+          duration:Number(result.duration||0),thumbnailUrl
         });
       }
     );
