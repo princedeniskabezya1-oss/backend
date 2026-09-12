@@ -468,78 +468,227 @@ async function safeSavePost(post) {
   return post.save({ validateModifiedOnly: true });
 }
 /* ==========================
-   SMART FEED
-   GET /api/posts/feed?skip=0&limit=20
+   PERSONALIZED SMART FEED
+   GET /api/posts/feed?skip=0&limit=20&reels=1
 ========================== */
+const FEED_STOP_WORDS = new Set([
+  "about", "after", "again", "also", "and", "are", "because", "been", "before",
+  "being", "but", "can", "could", "did", "does", "for", "from", "have", "here",
+  "into", "its", "just", "more", "not", "now", "our", "out", "that", "the",
+  "their", "them", "then", "there", "these", "they", "this", "those", "too",
+  "very", "was", "were", "what", "when", "where", "which", "who", "will",
+  "with", "would", "you", "your"
+]);
+
+function feedTokens(value) {
+  return String(value || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[^a-z0-9#\s]/g, " ")
+    .split(/\s+/)
+    .map(token => token.replace(/^#+/, ""))
+    .filter(token => token.length > 2 && token.length < 32 && !FEED_STOP_WORDS.has(token))
+    .slice(0, 80);
+}
+
+function feedHash(value) {
+  let hash = 2166136261;
+  for (const character of String(value || "")) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) / 4294967295;
+}
+
+function postHasVideo(post) {
+  return safeArray(post.media).some(item => item?.type === "video") ||
+    post.mediaType === "video";
+}
+
 router.get("/feed", auth, async (req, res) => {
   try {
-    const currentUser = await getCurrentUser(req);
-    const followingIds = safeArray(currentUser?.following).map(String);
+    const currentUser = await User.findById(req.user.id)
+      .select("role name companyName following skills profession industry industries services tools companyTags preferredRole course subject familyProfile")
+      .lean();
+
+    if (!currentUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
 
     const skip = Math.max(Number(req.query.skip || 0), 0);
     const limit = Math.min(Math.max(Number(req.query.limit || 20), 1), 50);
+    const reelsOnly = String(req.query.reels || "") === "1";
+    const seed = String(req.query.seed || new Date().toISOString().slice(0, 10));
+    const followingIds = new Set(safeArray(currentUser.following).map(String));
+    const candidateLimit = 500;
+    const since = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000);
 
-    const now = new Date();
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
-    const posts = await Post.find({
+    const query = {
       isHiddenByAdmin: { $ne: true },
+      moderationStatus: { $ne: "removed" },
       groupId: null,
-      createdAt: { $gte: sevenDaysAgo }
-    })
+      createdAt: { $gte: since }
+    };
+
+    if (reelsOnly) {
+      query.$or = [
+        { mediaType: "video" },
+        { media: { $elemMatch: { type: "video" } } }
+      ];
+    }
+
+    let posts = await Post.find(query)
+      .sort({ createdAt: -1 })
+      .limit(candidateLimit)
       .populate("author", USER_POPULATE)
       .populate("likes", USER_POPULATE)
       .populate("comments.user", USER_POPULATE)
+      .populate("comments.likes", USER_POPULATE)
       .populate("comments.replies.user", USER_POPULATE)
+      .populate("comments.replies.likes", USER_POPULATE)
       .populate({
         path: "repostOf",
         populate: { path: "author", select: USER_POPULATE }
       })
       .lean();
 
-    const scored = posts.map(post => {
-      const likesCount = safeArray(post.likes).length;
-      const commentsCount = safeArray(post.comments).length;
-      const sharesCount = Number(post.sharesCount || 0);
-      const viewsCount = Number(post.viewsCount || 0);
-      const media = safeArray(post.media);
-      const hasVideo = media.some(m => m.type === "video") || post.mediaType === "video";
+    if (!posts.length) {
+      return res.json({ posts: [], skip, limit, hasMore: false });
+    }
 
-      const ageHours = Math.max((Date.now() - new Date(post.createdAt).getTime()) / 36e5, 1);
-      const recencyScore = Math.max(80 - ageHours, 0);
+    const userId = String(currentUser._id);
+    const topicAffinity = new Map();
+    const authorAffinity = new Map();
+    let videoAffinity = 0;
 
-      const followsScore = followingIds.includes(String(post.author?._id)) ? 35 : 0;
-      const engagementScore = likesCount * 3 + commentsCount * 6 + sharesCount * 8 + viewsCount * 0.3;
-      const mediaScore = media.length ? 8 : 0;
-      const videoScore = hasVideo ? 12 : 0;
-      const verifiedScore = post.author?.isVerified || post.author?.verified || post.author?.adminVerified ? 10 : 0;
-      const promotedScore =
-        post.isPromoted && post.promotedUntil && new Date(post.promotedUntil) > now ? 100 : 0;
+    const addTopic = (token, amount) => {
+      topicAffinity.set(token, (topicAffinity.get(token) || 0) + amount);
+    };
 
-      const priorityScore =
-        Number(post.priorityScore || 0) +
-        promotedScore +
-        recencyScore +
-        followsScore +
-        engagementScore +
-        mediaScore +
-        videoScore +
-        verifiedScore;
+    feedTokens([
+      currentUser.profession,
+      currentUser.industry,
+      currentUser.preferredRole,
+      currentUser.course,
+      currentUser.subject,
+      ...safeArray(currentUser.skills),
+      ...safeArray(currentUser.industries),
+      ...safeArray(currentUser.services),
+      ...safeArray(currentUser.tools),
+      ...safeArray(currentUser.companyTags),
+      ...safeArray(currentUser.familyProfile?.educationPriorities),
+      ...safeArray(currentUser.familyProfile?.investmentInterests)
+    ].filter(Boolean).join(" ")).forEach(token => addTopic(token, 4));
 
-      return { ...post, priorityScore };
+    posts.forEach(post => {
+      const liked = safeArray(post.likes).some(user => String(user?._id || user) === userId);
+      const commented = safeArray(post.comments).some(comment =>
+        String(comment?.user?._id || comment?.user) === userId ||
+        safeArray(comment?.replies).some(reply => String(reply?.user?._id || reply?.user) === userId)
+      );
+      const viewed = safeArray(post.uniqueViewers).some(viewer => String(viewer) === userId);
+      const weight = (liked ? 9 : 0) + (commented ? 13 : 0) + (viewed ? 2 : 0);
+
+      if (!weight) return;
+
+      feedTokens(post.text).forEach(token => addTopic(token, weight));
+      const authorId = String(post.author?._id || post.author || "");
+      authorAffinity.set(authorId, (authorAffinity.get(authorId) || 0) + weight);
+      if (postHasVideo(post)) videoAffinity += weight;
     });
 
-    scored.sort((a, b) => b.priorityScore - a.priorityScore);
+    const recentEvents = await AnalyticsEvent.find({
+      actorId: currentUser._id,
+      occurredAt: { $gte: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000) }
+    })
+      .select("entityId eventType metadata occurredAt")
+      .sort({ occurredAt: -1 })
+      .limit(1200)
+      .lean();
+
+    const eventWeights = {
+      post_impression: 0.25,
+      post_view: 1,
+      post_unique_view: 2,
+      post_like: 9,
+      post_comment: 13,
+      post_reply: 11,
+      post_share: 16,
+      post_save: 18,
+      post_unlike: -10,
+      post_unsave: -12,
+      search_impression: 2,
+      search_click: 5
+    };
+    const candidateById = new Map(posts.map(post => [String(post._id), post]));
+
+    recentEvents.forEach(event => {
+      const weight = Number(eventWeights[event.eventType] || 0);
+      if (!weight) return;
+      const post = candidateById.get(String(event.entityId));
+      if (post) {
+        feedTokens(post.text).forEach(token => addTopic(token, weight));
+        const authorId = String(post.author?._id || post.author || "");
+        authorAffinity.set(authorId, (authorAffinity.get(authorId) || 0) + weight);
+        if (postHasVideo(post)) videoAffinity += weight;
+      }
+      feedTokens(event.metadata?.query || event.metadata?.searchQuery || "").forEach(token =>
+        addTopic(token, Math.max(weight, 3))
+      );
+    });
+
+    const scored = posts.map(post => {
+      const authorId = String(post.author?._id || post.author || "");
+      const ageHours = Math.max((Date.now() - new Date(post.createdAt).getTime()) / 36e5, 0);
+      const recency = 70 * Math.exp(-ageHours / (24 * 8));
+      const likes = Number(post.likesCount || safeArray(post.likes).length);
+      const comments = Number(post.commentsCount || safeArray(post.comments).length);
+      const shares = Number(post.sharesCount || 0);
+      const saves = Number(post.savesCount || 0);
+      const views = Math.max(Number(post.viewsCount || 0), 0);
+      const quality = Math.log1p(likes * 3 + comments * 6 + shares * 9 + saves * 11 + views * 0.2) * 7;
+      const topic = [...new Set(feedTokens(post.text))]
+        .reduce((score, token) => score + Math.min(topicAffinity.get(token) || 0, 30), 0);
+      const following = followingIds.has(authorId) ? 38 : 0;
+      const creator = Math.min(authorAffinity.get(authorId) || 0, 45);
+      const video = postHasVideo(post);
+      const mediaPreference = video && videoAffinity > 0 ? Math.min(Math.log1p(videoAffinity) * 4, 18) : 0;
+      const verified = post.author?.isVerified || post.author?.verified || post.author?.adminVerified ? 5 : 0;
+      const promoted = post.isPromoted && post.promotedUntil && new Date(post.promotedUntil) > new Date() ? 80 : 0;
+      const alreadyViewed = safeArray(post.uniqueViewers).some(viewer => String(viewer) === userId) ? -18 : 0;
+      const exploration = feedHash(seed + ":" + userId + ":" + post._id) * 18;
+
+      return {
+        ...post,
+        priorityScore: Number(post.priorityScore || 0) + recency + quality + topic +
+          following + creator + mediaPreference + verified + promoted + alreadyViewed + exploration
+      };
+    });
+
+    scored.sort((a, b) =>
+      b.priorityScore - a.priorityScore ||
+      new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+
+    // Keep adjacent posts varied so one creator cannot monopolize the feed.
+    const diversified = [];
+    const remaining = [...scored];
+    while (remaining.length) {
+      const recentAuthors = new Set(diversified.slice(-2).map(post => String(post.author?._id || post.author)));
+      let index = remaining.findIndex(post => !recentAuthors.has(String(post.author?._id || post.author)));
+      if (index < 0) index = 0;
+      diversified.push(remaining.splice(index, 1)[0]);
+    }
 
     res.json({
-      posts: scored.slice(skip, skip + limit),
+      posts: diversified.slice(skip, skip + limit),
       skip,
       limit,
-      hasMore: scored.length > skip + limit
+      hasMore: diversified.length > skip + limit
     });
   } catch (err) {
     console.error("SMART FEED ERROR:", err.message);
-    res.status(500).json({ message: "Failed to load smart feed" });
+    res.status(500).json({ message: "Failed to load personalized feed" });
   }
 });
 
