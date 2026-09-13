@@ -691,6 +691,23 @@ router.post(
           .trim();
 
 
+      if (!validEmail(normalizedEmail)) {
+
+        return res
+          .status(400)
+          .json({
+
+            message:
+              "Please enter a valid email address, such as name@gmail.com.",
+
+            code:
+              "INVALID_EMAIL"
+
+          });
+
+      }
+
+
       const user =
         await User.findOne({
 
