@@ -3,7 +3,7 @@ const nodemailer = require("nodemailer");
 const DEFAULT_SENDER = "princedeniskabezya1@gmail.com";
 
 function mailConfigured(){
-  return Boolean(String(process.env.SMTP_APP_PASSWORD || "").trim());
+  return Boolean(String(process.env.SMTP_APP_PASSWORD || "").replace(/\s+/g,""));
 }
 
 function frontendUrl(){
@@ -23,7 +23,7 @@ function transporter({port=465,secure=true}={}){
     socketTimeout:20000,
     auth:{
       user:String(process.env.SMTP_USER || DEFAULT_SENDER).trim(),
-      pass:String(process.env.SMTP_APP_PASSWORD).trim()
+      pass:String(process.env.SMTP_APP_PASSWORD).replace(/\s+/g,"")
     }
   });
 }
