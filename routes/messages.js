@@ -7,6 +7,7 @@ const Conversation = require("../models/Conversation");
 const ConversationSetting = require("../models/ConversationSetting");
 const CallLog = require("../models/CallLog");
 const Story = require("../models/Story");
+const ChatSafetyViolation = require("../models/ChatSafetyViolation");
 
 const authMiddleware = require("../middleware/auth");
 const adminOnly = require("../middleware/adminOnly");
@@ -1169,6 +1170,60 @@ router.patch("/calls/:id/end", authMiddleware, async (req,res)=>{
   }catch(error){
     console.error("END CALL LOG ERROR:",error);
     res.status(500).json({ message:"Server error" });
+  }
+});
+
+
+/* =========================
+   ADMIN CONTACT RESTRICTIONS
+========================= */
+
+router.get("/admin/contact-restrictions", adminOnly, async (req,res)=>{
+  try{
+    const now = new Date();
+    const restrictions = await ChatSafetyViolation.find({
+      reviewed:{ $ne:true },
+      action:{ $in:["messaging_restricted","admin_review"] },
+      $or:[
+        { action:"admin_review" },
+        { restrictedUntil:{ $gt:now } }
+      ]
+    })
+      .populate("userId","name email role profileImage companyName schoolName")
+      .populate("reviewCaseId","caseNumber status")
+      .sort({ createdAt:-1 })
+      .limit(250)
+      .lean();
+
+    res.json({ restrictions, total:restrictions.length });
+  }catch(error){
+    console.error("ADMIN CONTACT RESTRICTIONS ERROR:",error);
+    res.status(500).json({ message:"Unable to load restricted messaging accounts" });
+  }
+});
+
+router.patch("/admin/contact-restrictions/:id/unlock", adminOnly, async (req,res)=>{
+  try{
+    if(!isValidId(req.params.id)){
+      return res.status(400).json({ message:"Invalid restriction ID" });
+    }
+
+    const restriction = await ChatSafetyViolation.findById(req.params.id);
+    if(!restriction){
+      return res.status(404).json({ message:"Messaging restriction not found" });
+    }
+
+    restriction.reviewed = true;
+    restriction.reviewedBy = req.user?._id || req.user?.id;
+    restriction.reviewedAt = new Date();
+    restriction.restrictedUntil = new Date();
+    restriction.reviewNotes = String(req.body?.note || "Messaging access manually restored by an AIFT administrator.").trim().slice(0,1000);
+    await restriction.save();
+
+    res.json({ message:"Messaging access restored", restriction });
+  }catch(error){
+    console.error("ADMIN UNLOCK MESSAGING ERROR:",error);
+    res.status(500).json({ message:"Unable to restore messaging access" });
   }
 });
 
