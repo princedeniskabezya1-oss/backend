@@ -2,6 +2,7 @@ const express = require("express");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
+const dns = require("dns").promises;
 
 const User = require("../models/User");
 const AuthSession = require("../models/AuthSession");
@@ -25,6 +26,12 @@ const PASSWORD_RESET_DURATION_MS = 60 * 60 * 1000;
 function secureToken(){ return crypto.randomBytes(32).toString("hex"); }
 function tokenHash(value){ return crypto.createHash("sha256").update(String(value||"")).digest("hex"); }
 function validEmail(value){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value||"").trim()); }
+async function emailDomainCanReceiveMail(email){
+  const domain=String(email||"").split("@")[1]||"";
+  if(!domain) return false;
+  try{ const records=await dns.resolveMx(domain); return Array.isArray(records)&&records.length>0; }
+  catch{ return false; }
+}
 
 
 /* ============================================
@@ -457,6 +464,7 @@ router.post(
           .trim();
 
       if(!validEmail(normalizedEmail)) return res.status(400).json({message:"Please enter a valid email address"});
+      if(!(await emailDomainCanReceiveMail(normalizedEmail))) return res.status(400).json({message:"This email domain cannot receive messages. Please use a real email address, such as Gmail, Outlook or Yahoo.",code:"EMAIL_DOMAIN_INVALID"});
 
 
       const existingUser =
@@ -609,9 +617,9 @@ router.post(
 
       if(verificationRequired){
         try{ await sendVerificationEmail(user,emailVerificationToken); }
-        catch(mailError){ console.error("VERIFICATION EMAIL ERROR:",mailError); return res.status(503).json({message:"Your account was created, but the verification email could not be sent. Please request another verification email.",code:"VERIFICATION_EMAIL_FAILED",email:user.email}); }
+        catch(mailError){ console.error("VERIFICATION EMAIL ERROR:",mailError); await User.deleteOne({_id:user._id}).catch(()=>{}); if(referredByUser){ referredByUser.totalReferrals=Math.max(0,Number(referredByUser.totalReferrals||0)-1); await referredByUser.save().catch(()=>{}); } return res.status(503).json({message:"We could not verify this email address, so no account was created. Check the address or use Google sign-up.",code:"VERIFICATION_EMAIL_FAILED",email:user.email}); }
       }
-      return res.status(201).json({message:verificationRequired?"Account created. Check your email to verify it before signing in.":"User registered successfully",verificationRequired,email:user.email});
+      return res.status(201).json({message:verificationRequired?"Verification email sent. Your AIFT account will activate after you confirm the link.":"User registered successfully",verificationRequired,email:user.email});
 
 
     } catch (error) {
@@ -653,6 +661,43 @@ router.post("/forgot-password",async(req,res)=>{try{const email=String(req.body?
 router.post("/reset-password",async(req,res)=>{try{const password=String(req.body?.password||"");if(password.length<8)return res.status(400).json({message:"Password must be at least 8 characters."});const hash=tokenHash(req.body?.token);const user=await User.findOne({passwordResetTokenHash:hash,passwordResetTokenExpires:{$gt:new Date()}}).select("+passwordResetTokenHash +passwordResetTokenExpires");if(!user)return res.status(400).json({message:"This password reset link is invalid or has expired."});user.password=await bcrypt.hash(password,10);user.passwordChangedAt=new Date();user.passwordResetTokenHash=null;user.passwordResetTokenExpires=null;await user.save();await AuthSession.updateMany({user:user._id,revokedAt:null},{$set:{revokedAt:new Date(),revokedReason:"password_changed"}});return res.json({message:"Password reset successfully. Sign in with your new password."});}catch(error){console.error("RESET PASSWORD ERROR:",error);return res.status(500).json({message:"Unable to reset password right now."});}});
 
 const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || "137825461456-ihqf0q7c8fien1vf66iueiidcgdd0k2f.apps.googleusercontent.com").trim();
+
+router.post("/google-register", async (req, res) => {
+  let createdSession=null;
+  try{
+    const credential=String(req.body?.credential||"").trim();
+    const requestedRole=String(req.body?.role||"talent").trim().toLowerCase();
+    const allowedRoles=new Set(["talent","student","employer","school","family"]);
+    if(!allowedRoles.has(requestedRole)) return res.status(400).json({message:"Please select a valid AIFT account type."});
+    if(!credential||credential.length>6000) return res.status(400).json({message:"Google sign-up information is missing."});
+    const verificationResponse=await fetch("https://oauth2.googleapis.com/tokeninfo?id_token="+encodeURIComponent(credential),{headers:{Accept:"application/json"}});
+    const googleProfile=await verificationResponse.json().catch(()=>({}));
+    if(!verificationResponse.ok||googleProfile.aud!==GOOGLE_CLIENT_ID||googleProfile.email_verified!=="true"||(Number(googleProfile.exp||0)*1000)<=Date.now()||!validEmail(googleProfile.email)){
+      return res.status(401).json({message:"Google could not verify this email address. Please try again."});
+    }
+    const email=String(googleProfile.email).toLowerCase().trim();
+    if(await User.exists({email})) return res.status(409).json({message:"An AIFT account already uses this Google email. Please sign in instead.",code:"USER_EXISTS"});
+    const password=await bcrypt.hash(secureToken(),12);
+    const user=await User.create({
+      name:String(googleProfile.name||email.split("@")[0]).trim().slice(0,100),
+      email,password,role:requestedRole,emailVerified:true,
+      profileImage:String(googleProfile.picture||"").trim()||null,
+      familyProfile:requestedRole==="family"?{investorEnabled:false,relationshipType:"",preferredLocation:"",educationPriorities:[],investmentInterests:[],investorProfileCompleted:false,onboardingCompleted:false}:undefined
+    });
+    createdSession=await createAuthSession(req,user);
+    const token=jwt.sign({id:user._id.toString(),role:user.role,sid:createdSession.sessionId},process.env.JWT_SECRET,{expiresIn:"7d"});
+    user.lastLoginAt=new Date();await user.save();
+    return res.status(201).json({
+      token,
+      user:{id:user._id,name:user.name,email:user.email,role:user.role,referralCode:user.referralCode||null,commissionEarned:user.commissionEarned||0,profileImage:user.profileImage||null,companyName:user.companyName||null,companyId:user.companyId||null,teamRole:user.teamRole||null},
+      session:{id:createdSession.sessionId,deviceName:createdSession.deviceName,deviceType:createdSession.deviceType,browser:createdSession.browser,operatingSystem:createdSession.operatingSystem,createdAt:createdSession.createdAt,expiresAt:createdSession.expiresAt}
+    });
+  }catch(error){
+    if(createdSession?._id) await AuthSession.findByIdAndUpdate(createdSession._id,{revokedAt:new Date(),revokedReason:"registration_failed"}).catch(()=>{});
+    console.error("GOOGLE REGISTER ERROR:",error);
+    return res.status(500).json({message:"Google sign-up is temporarily unavailable."});
+  }
+});
 
 router.post("/google-login", async (req, res) => {
   let createdSession = null;
