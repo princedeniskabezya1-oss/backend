@@ -662,8 +662,16 @@ async function issuePasswordReset(user,res){
   user.passwordResetTokenHash=tokenHash(token);
   user.passwordResetTokenExpires=new Date(Date.now()+PASSWORD_RESET_DURATION_MS);
   await user.save();
-  await sendPasswordResetEmail(user,token);
-  return res.json({message:"A password reset link has been sent to your email address."});
+  try{
+    await sendPasswordResetEmail(user,token);
+    return res.json({message:"A password reset link has been sent to your email address."});
+  }catch(error){
+    user.passwordResetTokenHash=null;
+    user.passwordResetTokenExpires=null;
+    await user.save().catch(()=>{});
+    console.error("PASSWORD RESET EMAIL ERROR:",error?.code||error?.message||error);
+    return res.status(503).json({message:"Password recovery is temporarily unavailable. Please contact AIFT Support.",code:"EMAIL_SERVICE_UNAVAILABLE"});
+  }
 }
 
 router.post("/forgot-password",async(req,res)=>{try{const email=String(req.body?.email||"").toLowerCase().trim();if(!validEmail(email))return res.status(400).json({message:"Please enter a valid email address.",code:"INVALID_EMAIL"});const escapedEmail=email.replace(/[.*+?^${}()|[\]\\]/g,"\\$&");const user=await User.findOne({email:{$regex:`^\\s*${escapedEmail}\\s*$`,$options:"i"}}).select("+passwordResetTokenHash +passwordResetTokenExpires");if(!user)return res.status(404).json({message:"This email address is not registered with AIFT.",code:"EMAIL_NOT_REGISTERED"});return issuePasswordReset(user,res);}catch(error){console.error("FORGOT PASSWORD ERROR:",error);return res.status(500).json({message:"Unable to send a password reset email right now."});}});
