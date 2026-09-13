@@ -10,10 +10,17 @@ function frontendUrl(){
   return String(process.env.FRONTEND_URL || "https://job-platform-frontend-nine.vercel.app").replace(/\/+$/,"");
 }
 
-function transporter(){
+function transporter({port=465,secure=true}={}){
   if(!mailConfigured()) return null;
   return nodemailer.createTransport({
-    service:"gmail",
+    host:"smtp.gmail.com",
+    port,
+    secure,
+    requireTLS:!secure,
+    family:4,
+    connectionTimeout:12000,
+    greetingTimeout:10000,
+    socketTimeout:20000,
     auth:{
       user:String(process.env.SMTP_USER || DEFAULT_SENDER).trim(),
       pass:String(process.env.SMTP_APP_PASSWORD).trim()
@@ -22,17 +29,24 @@ function transporter(){
 }
 
 async function sendMail({to,subject,title,message,buttonLabel,buttonUrl}){
-  const client=transporter();
-  if(!client) return { sent:false, reason:"Email delivery is not configured" };
+  if(!mailConfigured()) return { sent:false, reason:"Email delivery is not configured" };
   const sender=String(process.env.EMAIL_FROM || process.env.SMTP_USER || DEFAULT_SENDER).trim();
-  await client.sendMail({
+  const mail={
     from:`AIFT Support <${sender}>`,
     to,
     subject,
     text:`${title}\n\n${message}\n\n${buttonUrl}\n\nIf you did not request this, you can ignore this email.`,
     html:`<!doctype html><html><body style="margin:0;background:#f3f6fa;font-family:Arial,sans-serif;color:#172033"><div style="max-width:560px;margin:32px auto;background:#fff;border:1px solid #e3e8ef;border-radius:18px;overflow:hidden"><div style="padding:22px 26px;background:#0a66c2;color:#fff;font-size:22px;font-weight:800">AIFT</div><div style="padding:28px"><h1 style="font-size:23px;margin:0 0 12px">${title}</h1><p style="font-size:15px;line-height:1.65;color:#526071">${message}</p><a href="${buttonUrl}" style="display:inline-block;margin-top:12px;padding:13px 20px;border-radius:10px;background:#0a66c2;color:#fff;text-decoration:none;font-weight:800">${buttonLabel}</a><p style="margin-top:24px;font-size:12px;line-height:1.5;color:#7b8794">This secure link expires soon. If you did not request it, you can ignore this email.</p></div></div></body></html>`
-  });
-  return { sent:true };
+  };
+  let lastError=null;
+  for(const config of [{port:465,secure:true},{port:587,secure:false}]){
+    try{
+      const result=await transporter(config).sendMail(mail);
+      if(Array.isArray(result.accepted)&&result.accepted.length) return {sent:true};
+      lastError=new Error("SMTP did not accept the recipient");
+    }catch(error){ lastError=error; }
+  }
+  throw lastError || new Error("Email delivery failed");
 }
 
 async function sendVerificationEmail(user,token){
