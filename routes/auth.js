@@ -652,6 +652,96 @@ router.post("/forgot-password",async(req,res)=>{try{const email=String(req.body?
 
 router.post("/reset-password",async(req,res)=>{try{const password=String(req.body?.password||"");if(password.length<8)return res.status(400).json({message:"Password must be at least 8 characters."});const hash=tokenHash(req.body?.token);const user=await User.findOne({passwordResetTokenHash:hash,passwordResetTokenExpires:{$gt:new Date()}}).select("+passwordResetTokenHash +passwordResetTokenExpires");if(!user)return res.status(400).json({message:"This password reset link is invalid or has expired."});user.password=await bcrypt.hash(password,10);user.passwordChangedAt=new Date();user.passwordResetTokenHash=null;user.passwordResetTokenExpires=null;await user.save();await AuthSession.updateMany({user:user._id,revokedAt:null},{$set:{revokedAt:new Date(),revokedReason:"password_changed"}});return res.json({message:"Password reset successfully. Sign in with your new password."});}catch(error){console.error("RESET PASSWORD ERROR:",error);return res.status(500).json({message:"Unable to reset password right now."});}});
 
+const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || "137825461456-ihqf0q7c8fien1vf66iueiidcgdd0k2f.apps.googleusercontent.com").trim();
+
+router.post("/google-login", async (req, res) => {
+  let createdSession = null;
+  try {
+    const credential = String(req.body?.credential || "").trim();
+    if (!credential || credential.length > 6000) {
+      return res.status(400).json({ message: "Google sign-in information is missing.", code: "GOOGLE_CREDENTIAL_MISSING" });
+    }
+
+    const verificationResponse = await fetch(
+      "https://oauth2.googleapis.com/tokeninfo?id_token=" + encodeURIComponent(credential),
+      { headers: { Accept: "application/json" } }
+    );
+    const googleProfile = await verificationResponse.json().catch(() => ({}));
+    const tokenExpiresAt = Number(googleProfile.exp || 0) * 1000;
+
+    if (
+      !verificationResponse.ok ||
+      googleProfile.aud !== GOOGLE_CLIENT_ID ||
+      googleProfile.email_verified !== "true" ||
+      tokenExpiresAt <= Date.now() ||
+      !validEmail(googleProfile.email)
+    ) {
+      return res.status(401).json({ message: "Google could not verify this sign-in. Please try again.", code: "GOOGLE_VERIFICATION_FAILED" });
+    }
+
+    const email = String(googleProfile.email).toLowerCase().trim();
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: "This Google email is not registered with AIFT. Create an AIFT account first.", code: "EMAIL_NOT_REGISTERED" });
+    }
+    if (user.status === "suspended") {
+      return res.status(403).json({ message: "Account suspended", code: "ACCOUNT_SUSPENDED" });
+    }
+    if (user.status === "deactivated") {
+      return res.status(403).json({ message: "This account has been deactivated.", code: "ACCOUNT_DEACTIVATED" });
+    }
+    if (user.isBlockedByEmployer === true) {
+      return res.status(403).json({ message: "Your employer has restricted access to this account.", code: "EMPLOYER_RESTRICTED" });
+    }
+
+    if (user.emailVerified === false) {
+      user.emailVerified = true;
+      user.emailVerificationTokenHash = null;
+      user.emailVerificationTokenExpires = null;
+    }
+
+    createdSession = await createAuthSession(req, user);
+    const token = jwt.sign(
+      { id: user._id.toString(), role: user.role, sid: createdSession.sessionId },
+      process.env.JWT_SECRET,
+      { expiresIn: "7d" }
+    );
+    user.lastLoginAt = new Date();
+    await user.save();
+
+    return res.json({
+      token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        referralCode: user.referralCode || null,
+        commissionEarned: user.commissionEarned || 0,
+        profileImage: user.profileImage || googleProfile.picture || null,
+        companyName: user.companyName || null,
+        companyId: user.companyId || null,
+        teamRole: user.teamRole || null
+      },
+      session: {
+        id: createdSession.sessionId,
+        deviceName: createdSession.deviceName,
+        deviceType: createdSession.deviceType,
+        browser: createdSession.browser,
+        operatingSystem: createdSession.operatingSystem,
+        createdAt: createdSession.createdAt,
+        expiresAt: createdSession.expiresAt
+      }
+    });
+  } catch (error) {
+    if (createdSession?._id) {
+      await AuthSession.findByIdAndUpdate(createdSession._id, { revokedAt: new Date(), revokedReason: "login_failed" }).catch(() => {});
+    }
+    console.error("GOOGLE LOGIN ERROR:", error);
+    return res.status(500).json({ message: "Google sign-in is temporarily unavailable." });
+  }
+});
+
 router.post(
   "/login",
   async (req, res) => {
