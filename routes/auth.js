@@ -5,6 +5,7 @@ const crypto = require("crypto");
 
 const User = require("../models/User");
 const AuthSession = require("../models/AuthSession");
+const { mailConfigured, sendVerificationEmail, sendPasswordResetEmail } = require("../services/authEmailService");
 
 const auth = require("../middleware/auth");
 
@@ -18,6 +19,12 @@ const router = express.Router();
 
 const AUTH_SESSION_DURATION_MS =
   7 * 24 * 60 * 60 * 1000;
+
+const EMAIL_VERIFICATION_DURATION_MS = 24 * 60 * 60 * 1000;
+const PASSWORD_RESET_DURATION_MS = 60 * 60 * 1000;
+function secureToken(){ return crypto.randomBytes(32).toString("hex"); }
+function tokenHash(value){ return crypto.createHash("sha256").update(String(value||"")).digest("hex"); }
+function validEmail(value){ return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value||"").trim()); }
 
 
 /* ============================================
@@ -449,6 +456,8 @@ router.post(
           .toLowerCase()
           .trim();
 
+      if(!validEmail(normalizedEmail)) return res.status(400).json({message:"Please enter a valid email address"});
+
 
       const existingUser =
         await User.findOne({
@@ -507,6 +516,9 @@ router.post(
       }
 
 
+      const verificationRequired = mailConfigured();
+      const emailVerificationToken = verificationRequired ? secureToken() : null;
+
       const user =
         await User.create({
 
@@ -521,6 +533,10 @@ router.post(
 
           role:
             requestedRole,
+
+          emailVerified: !verificationRequired,
+          emailVerificationTokenHash: emailVerificationToken ? tokenHash(emailVerificationToken) : null,
+          emailVerificationTokenExpires: emailVerificationToken ? new Date(Date.now()+EMAIL_VERIFICATION_DURATION_MS) : null,
 
 
           familyProfile:
@@ -591,14 +607,11 @@ router.post(
       }
 
 
-      return res
-        .status(201)
-        .json({
-
-          message:
-            "User registered successfully"
-
-        });
+      if(verificationRequired){
+        try{ await sendVerificationEmail(user,emailVerificationToken); }
+        catch(mailError){ console.error("VERIFICATION EMAIL ERROR:",mailError); return res.status(503).json({message:"Your account was created, but the verification email could not be sent. Please request another verification email.",code:"VERIFICATION_EMAIL_FAILED",email:user.email}); }
+      }
+      return res.status(201).json({message:verificationRequired?"Account created. Check your email to verify it before signing in.":"User registered successfully",verificationRequired,email:user.email});
 
 
     } catch (error) {
@@ -630,6 +643,14 @@ router.post(
    Creates a real server-side session and
    embeds the session ID inside the JWT.
 ============================================ */
+
+router.post("/verify-email",async(req,res)=>{try{const hash=tokenHash(req.body?.token);const user=await User.findOne({emailVerificationTokenHash:hash,emailVerificationTokenExpires:{$gt:new Date()}}).select("+emailVerificationTokenHash +emailVerificationTokenExpires");if(!user)return res.status(400).json({message:"This verification link is invalid or has expired."});user.emailVerified=true;user.emailVerificationTokenHash=null;user.emailVerificationTokenExpires=null;await user.save();return res.json({message:"Email verified successfully. You can now sign in."});}catch(error){console.error("VERIFY EMAIL ERROR:",error);return res.status(500).json({message:"Unable to verify email right now."});}});
+
+router.post("/resend-verification",async(req,res)=>{try{const email=String(req.body?.email||"").toLowerCase().trim();const generic={message:"If that account needs verification, a new email has been sent."};if(!validEmail(email)||!mailConfigured())return res.json(generic);const user=await User.findOne({email}).select("+emailVerificationTokenHash +emailVerificationTokenExpires");if(!user||user.emailVerified!==false)return res.json(generic);const token=secureToken();user.emailVerificationTokenHash=tokenHash(token);user.emailVerificationTokenExpires=new Date(Date.now()+EMAIL_VERIFICATION_DURATION_MS);await user.save();await sendVerificationEmail(user,token);return res.json(generic);}catch(error){console.error("RESEND VERIFICATION ERROR:",error);return res.status(500).json({message:"Unable to send verification email right now."});}});
+
+router.post("/forgot-password",async(req,res)=>{try{const email=String(req.body?.email||"").toLowerCase().trim();const generic={message:"If an AIFT account uses that email, a password reset link has been sent."};if(!validEmail(email)||!mailConfigured())return res.json(generic);const user=await User.findOne({email}).select("+passwordResetTokenHash +passwordResetTokenExpires");if(!user)return res.json(generic);const token=secureToken();user.passwordResetTokenHash=tokenHash(token);user.passwordResetTokenExpires=new Date(Date.now()+PASSWORD_RESET_DURATION_MS);await user.save();await sendPasswordResetEmail(user,token);return res.json(generic);}catch(error){console.error("FORGOT PASSWORD ERROR:",error);return res.status(500).json({message:"Unable to send a password reset email right now."});}});
+
+router.post("/reset-password",async(req,res)=>{try{const password=String(req.body?.password||"");if(password.length<8)return res.status(400).json({message:"Password must be at least 8 characters."});const hash=tokenHash(req.body?.token);const user=await User.findOne({passwordResetTokenHash:hash,passwordResetTokenExpires:{$gt:new Date()}}).select("+passwordResetTokenHash +passwordResetTokenExpires");if(!user)return res.status(400).json({message:"This password reset link is invalid or has expired."});user.password=await bcrypt.hash(password,10);user.passwordChangedAt=new Date();user.passwordResetTokenHash=null;user.passwordResetTokenExpires=null;await user.save();await AuthSession.updateMany({user:user._id,revokedAt:null},{$set:{revokedAt:new Date(),revokedReason:"password_changed"}});return res.json({message:"Password reset successfully. Sign in with your new password."});}catch(error){console.error("RESET PASSWORD ERROR:",error);return res.status(500).json({message:"Unable to reset password right now."});}});
 
 router.post(
   "/login",
@@ -808,6 +829,8 @@ if (
           });
 
       }
+
+      if(user.emailVerified === false){ return res.status(403).json({message:"Please verify your email address before signing in.",code:"EMAIL_NOT_VERIFIED",email:user.email}); }
 
 
       /* ========================================

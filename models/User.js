@@ -29,6 +29,36 @@ passwordChangedAt: {
   default: null
 },
 
+emailVerified: {
+  type: Boolean,
+  default: true,
+  index: true
+},
+
+emailVerificationTokenHash: {
+  type: String,
+  default: null,
+  select: false
+},
+
+emailVerificationTokenExpires: {
+  type: Date,
+  default: null,
+  select: false
+},
+
+passwordResetTokenHash: {
+  type: String,
+  default: null,
+  select: false
+},
+
+passwordResetTokenExpires: {
+  type: Date,
+  default: null,
+  select: false
+},
+
     /* ============================================
        ROLE SYSTEM
     ============================================ */
