@@ -226,23 +226,47 @@ router.get("/", adminOnly, async (req, res) => {
 ============================================ */
 router.post("/", adminOnly, async (req, res) => {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password, role, organizationName } = req.body || {};
+    const cleanName = String(name || organizationName || "").trim();
+    const cleanEmail = String(email || "").toLowerCase().trim();
+    const cleanRole = String(role || "").toLowerCase().trim();
+    const managedRoles = new Set(["employer", "school", "agent"]);
 
-    const existing = await User.findOne({ email: String(email).toLowerCase().trim() });
+    if (!managedRoles.has(cleanRole)) {
+      return res.status(400).json({ message: "Admin provisioning is limited to Hiring Organizations, Education Providers, and Talent Partners." });
+    }
+    if (!cleanName || !cleanEmail || !password) {
+      return res.status(400).json({ message: "Name, email, and initial password are required." });
+    }
+    if (!/^\S+@\S+\.\S+$/.test(cleanEmail)) {
+      return res.status(400).json({ message: "Please enter a valid email address." });
+    }
+    if (String(password).length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) {
+      return res.status(400).json({ message: "The initial password must be at least 8 characters and include a letter and a number." });
+    }
+
+    const existing = await User.findOne({ email: cleanEmail });
     if (existing) {
       return res.status(400).json({ message: "User already exists" });
     }
 
     const hashed = await bcrypt.hash(password, 10);
 
-    await User.create({
-      name,
-      email: String(email).toLowerCase().trim(),
+    const user = await User.create({
+      name: cleanName,
+      email: cleanEmail,
       password: hashed,
-      role
+      role: cleanRole,
+      accountOrigin: "admin_provisioned",
+      emailVerified: false,
+      companyName: cleanRole === "employer" ? cleanName : null,
+      schoolName: cleanRole === "school" ? cleanName : null
     });
 
-    res.status(201).json({ message: "User created successfully" });
+    res.status(201).json({
+      message: "Managed account created. The account owner must verify the email address before signing in.",
+      user: { id: user._id, name: user.name, email: user.email, role: user.role, accountOrigin: user.accountOrigin }
+    });
   } catch (err) {
     console.error("CREATE USER ERROR:", err);
     res.status(500).json({ message: "Failed to create user" });
@@ -395,6 +419,9 @@ router.post(
 
               createdBySchool:
                 req.user._id,
+
+              accountOrigin:
+                "school_managed",
 
               course:
                 cleanRole === "student"
