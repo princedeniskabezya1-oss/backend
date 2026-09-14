@@ -683,7 +683,7 @@ router.post("/reset-password",async(req,res)=>{try{const password=String(req.bod
 const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || "137825461456-ihqf0q7c8fien1vf66iueiidcgdd0k2f.apps.googleusercontent.com").trim();
 const GOOGLE_PASSWORD_RESET_DURATION_MS = 10 * 60 * 1000;
 
-router.post("/google-reset-authorize",async(req,res)=>{
+async function authorizeGooglePasswordReset(req,res,requireCurrentUser=false){
   try{
     const credential=String(req.body?.credential||"").trim();
     if(!credential||credential.length>6000) return res.status(400).json({message:"Google verification information is missing.",code:"GOOGLE_CREDENTIAL_MISSING"});
@@ -694,7 +694,12 @@ router.post("/google-reset-authorize",async(req,res)=>{
       return res.status(401).json({message:"Google could not verify this account. Please try again.",code:"GOOGLE_VERIFICATION_FAILED"});
     }
     const email=String(googleProfile.email).toLowerCase().trim();
-    const user=await User.findOne({email}).select("+passwordResetTokenHash +passwordResetTokenExpires");
+    if(requireCurrentUser&&email!==String(req.user.email||"").toLowerCase().trim()){
+      return res.status(403).json({message:"Choose the Google account linked to this AIFT account.",code:"GOOGLE_ACCOUNT_MISMATCH"});
+    }
+    const user=requireCurrentUser
+      ? await User.findById(req.user._id||req.user.id).select("+passwordResetTokenHash +passwordResetTokenExpires")
+      : await User.findOne({email}).select("+passwordResetTokenHash +passwordResetTokenExpires");
     if(!user) return res.status(404).json({message:"This Google email is not registered with AIFT.",code:"EMAIL_NOT_REGISTERED"});
     if(user.status==="suspended") return res.status(403).json({message:"Account suspended",code:"ACCOUNT_SUSPENDED"});
     if(user.status==="deactivated") return res.status(403).json({message:"This account has been deactivated.",code:"ACCOUNT_DEACTIVATED"});
@@ -708,7 +713,10 @@ router.post("/google-reset-authorize",async(req,res)=>{
     console.error("GOOGLE PASSWORD RESET AUTHORIZATION ERROR:",error);
     return res.status(500).json({message:"Google password verification is temporarily unavailable."});
   }
-});
+}
+
+router.post("/google-reset-authorize/current",auth,(req,res)=>authorizeGooglePasswordReset(req,res,true));
+router.post("/google-reset-authorize",(req,res)=>authorizeGooglePasswordReset(req,res,false));
 
 router.post("/google-register", async (req, res) => {
   let createdSession=null;
