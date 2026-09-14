@@ -81,6 +81,13 @@ role: {
   index: true
 },
 
+accountOrigin: {
+  type: String,
+  enum: ["self_registered", "school_managed", "admin_provisioned", "employer_managed", "legacy"],
+  default: "legacy",
+  index: true
+},
+
 /* ============================================
    ACCOUNT STATUS / LIFECYCLE
 ============================================ */
