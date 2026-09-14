@@ -31,7 +31,7 @@ const courses = [
     subtitle: "Turn an idea into a practical, customer-focused business.",
     subject: "Business",
     description: "A beginner-friendly course covering customers, business models, operations, money and a simple action plan.",
-    cover: "images/course-business-foundations.png",
+    cover: "images/course-business-foundations.webp",
     outcomes: ["Explain how a business creates value", "Identify customers and their needs", "Build a simple business model", "Track basic costs, revenue and profit"],
     modules: [
       { title: "How business works", lessons: [
@@ -69,7 +69,7 @@ const courses = [
     subtitle: "Communicate with empathy, solve problems and build trust.",
     subject: "Customer Service",
     description: "Practical service skills for calls, chat and email, including discovery, de-escalation, resolution and quality.",
-    cover: "images/course-customer-service.png",
+    cover: "images/course-customer-service.webp",
     outcomes: ["Use a professional service structure", "Ask effective discovery questions", "Handle difficult conversations calmly", "Document and follow up accurately"],
     modules: [
       { title: "Service essentials", lessons: [
@@ -107,7 +107,7 @@ const courses = [
     subtitle: "Speak and write clearly in everyday and professional situations.",
     subject: "English",
     description: "An accessible English course covering sentence building, useful tenses, conversations and professional communication.",
-    cover: "images/course-practical-english.png",
+    cover: "images/course-practical-english.webp",
     outcomes: ["Build clear English sentences", "Use essential tenses accurately", "Ask and answer questions naturally", "Write professional messages"],
     modules: [
       { title: "Build clear sentences", lessons: [
@@ -145,7 +145,7 @@ const courses = [
     subtitle: "Reach the right audience with a clear message and measurable plan.",
     subject: "Marketing",
     description: "Learn audience research, positioning, content, channels, campaigns and ethical measurement through practical activities.",
-    cover: "images/course-marketing-fundamentals.png",
+    cover: "images/course-marketing-fundamentals.webp",
     outcomes: ["Define a useful target audience", "Create clear positioning and messages", "Plan content across suitable channels", "Measure and improve a campaign"],
     modules: [
       { title: "Know the market", lessons: [
@@ -183,7 +183,7 @@ const courses = [
     subtitle: "Understand choices, markets, money and the wider economy.",
     subject: "Economics",
     description: "A practical introduction to scarcity, supply and demand, inflation, growth, trade and everyday economic decisions.",
-    cover: "images/course-economics-made-simple.png",
+    cover: "images/course-economics-made-simple.webp",
     outcomes: ["Explain scarcity and opportunity cost", "Use supply and demand to understand prices", "Describe inflation, unemployment and growth", "Make better personal and business decisions"],
     modules: [
       { title: "Choices and markets", lessons: [
@@ -267,6 +267,26 @@ async function createCourse(provider, definition) {
 }
 
 async function ensureAiftLearningCourses() {
+  const locks = Class.db.collection("aift_seed_locks");
+  const lockId = "aift-learning-courses-v1";
+  const lockOwner = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const now = new Date();
+  const lock = { _id: lockId, owner: lockOwner, expiresAt: new Date(now.getTime() + 5 * 60 * 1000) };
+
+  try {
+    await locks.insertOne(lock);
+  } catch (error) {
+    if (error?.code !== 11000) throw error;
+    await locks.deleteOne({ _id: lockId, expiresAt: { $lte: now } });
+    try {
+      await locks.insertOne(lock);
+    } catch (retryError) {
+      if (retryError?.code === 11000) return;
+      throw retryError;
+    }
+  }
+
+  try {
   const provider = await User.findOne({ role: "admin", status: { $nin: ["suspended", "deactivated"] } }).select("_id").lean();
   if (!provider) {
     console.warn("AIFT LEARNING SEED: no active admin provider was found");
@@ -274,8 +294,31 @@ async function ensureAiftLearningCourses() {
   }
 
   for (const definition of courses) {
-    const exists = await Class.exists({ "publishingSettings.slug": definition.slug });
-    if (!exists) await createCourse(provider, definition);
+    const matches = await Class.find({ "publishingSettings.slug": definition.slug }).sort({ createdAt: 1, _id: 1 }).select("_id").lean();
+    const course = matches[0];
+    for (const duplicate of matches.slice(1)) {
+      await Promise.all([
+        Quiz.deleteMany({ classId: duplicate._id }),
+        ClassLesson.deleteMany({ classId: duplicate._id }),
+        ClassModule.deleteMany({ classId: duplicate._id }),
+        Class.findByIdAndDelete(duplicate._id)
+      ]);
+    }
+    if (!course) {
+      await createCourse(provider, definition);
+      continue;
+    }
+    const coverUrl = `${FRONTEND}/${definition.cover}`;
+    await Class.updateOne({ _id: course._id }, { $set: {
+      coverImage: coverUrl,
+      bannerImage: coverUrl,
+      "appearanceSettings.thumbnailImage": coverUrl,
+      "learningSettings.sequentialLessons": false,
+      "learningSettings.allowLessonSkipping": true
+    } });
+  }
+  } finally {
+    await locks.deleteOne({ _id: lockId, owner: lockOwner }).catch(() => null);
   }
 }
 
