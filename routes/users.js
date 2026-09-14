@@ -233,7 +233,7 @@ router.post("/", adminOnly, async (req, res) => {
     const managedRoles = new Set(["employer", "school", "agent"]);
 
     if (!managedRoles.has(cleanRole)) {
-      return res.status(400).json({ message: "Admin provisioning is limited to Hiring Organizations, Education Providers, and Talent Partners." });
+      return res.status(400).json({ message: "Admin provisioning is limited to Employers, Schools, and Recruitment Partners." });
     }
     if (!cleanName || !cleanEmail || !password) {
       return res.status(400).json({ message: "Name, email, and initial password are required." });
