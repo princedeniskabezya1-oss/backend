@@ -681,6 +681,34 @@ router.post("/forgot-password/current",auth,async(req,res)=>{try{const user=awai
 router.post("/reset-password",async(req,res)=>{try{const password=String(req.body?.password||"");if(password.length<8)return res.status(400).json({message:"Password must be at least 8 characters."});const hash=tokenHash(req.body?.token);const user=await User.findOne({passwordResetTokenHash:hash,passwordResetTokenExpires:{$gt:new Date()}}).select("+passwordResetTokenHash +passwordResetTokenExpires");if(!user)return res.status(400).json({message:"This password reset link is invalid or has expired."});user.password=await bcrypt.hash(password,10);user.passwordChangedAt=new Date();user.passwordResetTokenHash=null;user.passwordResetTokenExpires=null;await user.save();await AuthSession.updateMany({userId:user._id,revokedAt:null},{$set:{revokedAt:new Date(),revokedReason:"password_changed"}});return res.json({message:"Password reset successfully. Sign in with your new password."});}catch(error){console.error("RESET PASSWORD ERROR:",error);return res.status(500).json({message:"Unable to reset password right now."});}});
 
 const GOOGLE_CLIENT_ID = String(process.env.GOOGLE_CLIENT_ID || "137825461456-ihqf0q7c8fien1vf66iueiidcgdd0k2f.apps.googleusercontent.com").trim();
+const GOOGLE_PASSWORD_RESET_DURATION_MS = 10 * 60 * 1000;
+
+router.post("/google-reset-authorize",async(req,res)=>{
+  try{
+    const credential=String(req.body?.credential||"").trim();
+    if(!credential||credential.length>6000) return res.status(400).json({message:"Google verification information is missing.",code:"GOOGLE_CREDENTIAL_MISSING"});
+    const verificationResponse=await fetch("https://oauth2.googleapis.com/tokeninfo?id_token="+encodeURIComponent(credential),{headers:{Accept:"application/json"}});
+    const googleProfile=await verificationResponse.json().catch(()=>({}));
+    const tokenExpiresAt=Number(googleProfile.exp||0)*1000;
+    if(!verificationResponse.ok||googleProfile.aud!==GOOGLE_CLIENT_ID||googleProfile.email_verified!=="true"||tokenExpiresAt<=Date.now()||!validEmail(googleProfile.email)){
+      return res.status(401).json({message:"Google could not verify this account. Please try again.",code:"GOOGLE_VERIFICATION_FAILED"});
+    }
+    const email=String(googleProfile.email).toLowerCase().trim();
+    const user=await User.findOne({email}).select("+passwordResetTokenHash +passwordResetTokenExpires");
+    if(!user) return res.status(404).json({message:"This Google email is not registered with AIFT.",code:"EMAIL_NOT_REGISTERED"});
+    if(user.status==="suspended") return res.status(403).json({message:"Account suspended",code:"ACCOUNT_SUSPENDED"});
+    if(user.status==="deactivated") return res.status(403).json({message:"This account has been deactivated.",code:"ACCOUNT_DEACTIVATED"});
+    if(user.isBlockedByEmployer===true) return res.status(403).json({message:"Your employer has restricted access to this account.",code:"EMPLOYER_RESTRICTED"});
+    const resetToken=secureToken();
+    user.passwordResetTokenHash=tokenHash(resetToken);
+    user.passwordResetTokenExpires=new Date(Date.now()+GOOGLE_PASSWORD_RESET_DURATION_MS);
+    await user.save();
+    return res.json({message:"Google verified your identity.",resetToken,expiresIn:600});
+  }catch(error){
+    console.error("GOOGLE PASSWORD RESET AUTHORIZATION ERROR:",error);
+    return res.status(500).json({message:"Google password verification is temporarily unavailable."});
+  }
+});
 
 router.post("/google-register", async (req, res) => {
   let createdSession=null;
