@@ -391,9 +391,8 @@ router.post(
       const PUBLIC_REGISTRATION_ROLES =
         new Set([
           "talent",
-          "employer",
-          "school",
           "student",
+          "teacher",
           "family"
         ]);
 
@@ -541,6 +540,9 @@ router.post(
 
           role:
             requestedRole,
+
+          accountOrigin:
+            "self_registered",
 
           emailVerified: !verificationRequired,
           emailVerificationTokenHash: emailVerificationToken ? tokenHash(emailVerificationToken) : null,
@@ -723,7 +725,7 @@ router.post("/google-register", async (req, res) => {
   try{
     const credential=String(req.body?.credential||"").trim();
     const requestedRole=String(req.body?.role||"talent").trim().toLowerCase();
-    const allowedRoles=new Set(["talent","student","employer","school","family"]);
+    const allowedRoles=new Set(["talent","student","teacher","family"]);
     if(!allowedRoles.has(requestedRole)) return res.status(400).json({message:"Please select a valid AIFT account type."});
     if(!credential||credential.length>6000) return res.status(400).json({message:"Google sign-up information is missing."});
     const verificationResponse=await fetch("https://oauth2.googleapis.com/tokeninfo?id_token="+encodeURIComponent(credential),{headers:{Accept:"application/json"}});
@@ -736,7 +738,7 @@ router.post("/google-register", async (req, res) => {
     const password=await bcrypt.hash(secureToken(),12);
     const user=await User.create({
       name:String(googleProfile.name||email.split("@")[0]).trim().slice(0,100),
-      email,password,role:requestedRole,emailVerified:true,
+      email,password,role:requestedRole,accountOrigin:"self_registered",emailVerified:true,
       profileImage:String(googleProfile.picture||"").trim()||null,
       familyProfile:requestedRole==="family"?{investorEnabled:false,relationshipType:"",preferredLocation:"",educationPriorities:[],investmentInterests:[],investorProfileCompleted:false,onboardingCompleted:false}:undefined
     });
