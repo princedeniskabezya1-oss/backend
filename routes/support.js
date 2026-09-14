@@ -455,6 +455,14 @@ router.post('/public/tickets', ticketLimit, async (req,res) => {
   const body=req.body || {};
   const name=safeString(body.name,120), email=safeString(body.email,180).toLowerCase();
   const message=safeString(body.message,5000);
+  const requestedCategory=safeString(body.category,40).toLowerCase();
+  const publicCategories=new Set(['career','account','security','technical','billing','other']);
+  const category=publicCategories.has(requestedCategory) ? requestedCategory : 'other';
+  const subject=safeString(body.subject,200) || message.slice(0,200);
+  const requestedSource=safeString(body.source,40).toLowerCase();
+  const source=new Set(['public-contact','public-careers','public-kabezya']).has(requestedSource)
+    ? requestedSource
+    : 'public-contact';
   if(!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || message.length<10 || body.website) {
     return res.status(400).json({success:false,message:'Please provide your name, a valid email and an issue description of at least 10 characters.'});
   }
@@ -463,10 +471,10 @@ router.post('/public/tickets', ticketLimit, async (req,res) => {
     const ticket=await SupportTicket.create({
       ticketNumber:await generateTicketNumber(),isGuest:true,userId:null,accountRole:'other',
       guestAccessHash:crypto.createHash('sha256').update(accessToken).digest('hex'),
-      name,email,subject:message.slice(0,200),additionalInfo:message,
-      page:safeString(body.page,100),category:'other',status:'open',priority:'normal',
+      name,email,subject,additionalInfo:message,
+      page:safeString(body.page,100),category,status:'open',priority:'normal',
       conversation:body.includeConversation === true ? normalizeConversation(body.conversation).filter(m=>m.role!=='system').slice(-12) : [],
-      metadata:{source:'public-kabezya',contactVerified:false},lastActivityAt:new Date()
+      metadata:{source,contactVerified:false},lastActivityAt:new Date()
     });
     return res.status(201).json({success:true,ticket:{id:ticket._id,ticketNumber:ticket.ticketNumber,status:ticket.status},accessToken});
   } catch(error) {
@@ -2486,4 +2494,3 @@ router.patch(
 
 module.exports =
   router;
-
