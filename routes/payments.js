@@ -72,6 +72,20 @@ async function completePayment(payment, capture, method="paypal"){
 
 router.get("/config", (req,res) => res.json({ enabled:configured(), clientId:configured()?process.env.PAYPAL_CLIENT_ID:"", mode:liveMode()?"live":"sandbox" }));
 
+router.get("/mine", auth, async(req,res) => {
+  try{
+    const payments=await Payment.find({userId:req.user._id})
+      .select("productType productName amount currency method status transactionId providerOrderId paidAt createdAt")
+      .sort({createdAt:-1})
+      .limit(200)
+      .lean();
+    res.json({payments});
+  }catch(error){
+    console.error("LOAD USER PAYMENTS ERROR:",error.message);
+    res.status(500).json({message:"Unable to load your billing history."});
+  }
+});
+
 router.post("/quote", auth, async(req,res) => { try{ const q=await quote(req.body); res.json({ type:q.type, id:q.productId, name:q.name, amount:q.amount, currency:q.currency, returnUrl:q.returnUrl, notice:q.type === "venture_contribution" ? "This is a voluntary contribution. It does not provide shares, ownership, profit, or a guaranteed return." : "" }); }catch(error){ res.status(error.status||500).json({message:error.message||"Unable to prepare payment."}); } });
 
 router.post("/orders", auth, async(req,res) => {
