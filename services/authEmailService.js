@@ -11,7 +11,7 @@ function mailConfigured(){
 }
 
 function frontendUrl(){
-  return String(process.env.FRONTEND_URL || "https://job-platform-frontend-nine.vercel.app").replace(/\/+$/,"");
+  return String(process.env.FRONTEND_URL || "https://aiftph.com").replace(/\/+$/,"");
 }
 
 function transporter({port=465,secure=true}={}){
