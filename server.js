@@ -27,6 +27,7 @@ const taskTemplateRoutes = require("./routes/taskTemplates");
 const agentSessionRoutes = require("./routes/agentSessions");
 
 const classRoutes = require("./routes/classes");
+const paymentRoutes = require("./routes/payments");
 const projectRoutes = require("./routes/projects");
 const assignmentRoutes = require("./routes/Assignment");
 const submissionRoutes = require("./routes/submissions");
@@ -432,6 +433,7 @@ app.use("/api/agent-activity", agentSessionRoutes);
 app.use("/api/agent-attendance", agentSessionRoutes);
 
 app.use("/api/classes", classRoutes);
+app.use("/api/payments", paymentRoutes);
 app.use("/api/projects", projectRoutes);
 app.use("/api/assignments", assignmentRoutes);
 app.use("/api/submissions", submissionRoutes);
