@@ -2,17 +2,29 @@ const mongoose = require("mongoose");
 
 const PaymentSchema = new mongoose.Schema(
   {
-    employerId: {
+    userId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true
+      index: true
     },
+
+    employerId: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
 
     jobId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Job",
-      required: true
+      default: null
     },
+
+    productType: {
+      type: String,
+      enum: ["course", "venture_contribution", "travel", "job", "other"],
+      default: "other",
+      index: true
+    },
+
+    productId: { type: mongoose.Schema.Types.ObjectId, default: null, index: true },
+    productName: { type: String, trim: true, maxlength: 180, default: "" },
 
     amount: {
       type: Number,
@@ -26,23 +38,27 @@ const PaymentSchema = new mongoose.Schema(
 
     method: {
       type: String,
-      enum: ["stripe", "manual", "paypal"],
-      default: "manual"
+      enum: ["stripe", "manual", "paypal", "card"],
+      default: "paypal"
     },
 
     status: {
       type: String,
       enum: ["pending", "paid", "failed", "refunded"],
-      default: "paid"
+      default: "pending"
     },
 
     transactionId: {
       type: String
-    }
+    },
+
+    providerOrderId: { type: String, trim: true, unique: true, sparse: true },
+    providerCaptureId: { type: String, trim: true, unique: true, sparse: true },
+    paidAt: { type: Date, default: null },
+    metadata: { type: mongoose.Schema.Types.Mixed, default: {} }
 
   },
   { timestamps: true }
 );
 
 module.exports = mongoose.model("Payment", PaymentSchema);
-
