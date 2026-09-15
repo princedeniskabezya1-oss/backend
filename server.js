@@ -185,6 +185,8 @@ app.set("trust proxy", 1);
 ============================================ */
 
 const PRODUCTION_FRONTEND_ORIGINS = [
+  "https://aiftph.com",
+  "https://www.aiftph.com",
   "https://job-platform-frontend-nine.vercel.app"
 ];
 
