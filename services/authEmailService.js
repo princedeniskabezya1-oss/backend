@@ -6,8 +6,17 @@ function smtpPassword(){
   return String(process.env.SMTP_PASSWORD || process.env.SMTP_APP_PASSWORD || "").replace(/\s+/g,"");
 }
 
+function resendApiKey(){
+  return String(process.env.RESEND_API_KEY || smtpPassword()).replace(/\s+/g,"");
+}
+
+function useResendApi(){
+  return String(process.env.SMTP_HOST || "").trim().toLowerCase() === "smtp.resend.com"
+    || Boolean(String(process.env.RESEND_API_KEY || "").trim());
+}
+
 function mailConfigured(){
-  return Boolean(String(process.env.SMTP_USER || DEFAULT_SENDER).trim() && smtpPassword());
+  return Boolean(String(process.env.SMTP_USER || DEFAULT_SENDER).trim() && resendApiKey());
 }
 
 function frontendUrl(){
@@ -42,6 +51,30 @@ async function sendMail({to,subject,title,message,buttonLabel,buttonUrl}){
     text:`${title}\n\n${message}\n\n${buttonUrl}\n\nIf you did not request this, you can ignore this email.`,
     html:`<!doctype html><html><body style="margin:0;background:#f3f6fa;font-family:Arial,sans-serif;color:#172033"><div style="max-width:560px;margin:32px auto;background:#fff;border:1px solid #e3e8ef;border-radius:18px;overflow:hidden"><div style="padding:22px 26px;background:#0a66c2;color:#fff;font-size:22px;font-weight:800">AIFT</div><div style="padding:28px"><h1 style="font-size:23px;margin:0 0 12px">${title}</h1><p style="font-size:15px;line-height:1.65;color:#526071">${message}</p><a href="${buttonUrl}" style="display:inline-block;margin-top:12px;padding:13px 20px;border-radius:10px;background:#0a66c2;color:#fff;text-decoration:none;font-weight:800">${buttonLabel}</a><p style="margin-top:24px;font-size:12px;line-height:1.5;color:#7b8794">This secure link expires soon. If you did not request it, you can ignore this email.</p></div></div></body></html>`
   };
+  if(useResendApi()){
+    const response=await fetch("https://api.resend.com/emails",{
+      method:"POST",
+      headers:{
+        Authorization:`Bearer ${resendApiKey()}`,
+        "Content-Type":"application/json"
+      },
+      body:JSON.stringify({
+        from:mail.from,
+        to:[mail.to],
+        subject:mail.subject,
+        text:mail.text,
+        html:mail.html
+      })
+    });
+    if(response.ok) return {sent:true};
+    const raw=String(await response.text()).slice(0,1000);
+    let detail=raw.slice(0,240);
+    try{
+      const payload=JSON.parse(raw);
+      detail=String(payload.message || payload.name || detail).slice(0,240);
+    }catch(_error){}
+    throw new Error(`Resend API rejected email (${response.status})${detail ? `: ${detail}` : ""}`);
+  }
   let lastError=null;
   const configuredPort=Number(process.env.SMTP_PORT);
   const configuredSecure=String(process.env.SMTP_SECURE || "").toLowerCase();
