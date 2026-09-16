@@ -126,4 +126,24 @@ async function sendPasswordResetEmail(user,token){
   });
 }
 
-module.exports={mailConfigured,sendVerificationEmail,sendPasswordResetEmail};
+async function sendSecurityAlertEmail(event){
+  const recipient=String(process.env.SECURITY_ALERT_EMAIL || "support@aiftph.com").trim();
+  const details=[
+    `Severity: ${String(event?.severity || "high").toUpperCase()}`,
+    `Event: ${String(event?.type || "security_event")}`,
+    `Time: ${new Date(event?.time || Date.now()).toISOString()}`,
+    `Source: ${String(event?.maskedIp || "Unavailable")}`,
+    `Request: ${String(event?.method || "-")} ${String(event?.path || "-")}`,
+    `Reference: ${String(event?.requestId || "Unavailable")}`
+  ].join(" | ");
+  return sendMail({
+    to:recipient,
+    subject:`AIFT security alert: ${String(event?.type || "suspicious activity")}`,
+    title:"AIFT security alert",
+    message:`AIFT blocked or detected suspicious activity. ${details}. Review the security events in the Admin system. Never reply with passwords, tokens or private credentials.`,
+    buttonLabel:"Open AIFT",
+    buttonUrl:frontendUrl()
+  });
+}
+
+module.exports={mailConfigured,sendVerificationEmail,sendPasswordResetEmail,sendSecurityAlertEmail};
