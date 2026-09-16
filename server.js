@@ -4,6 +4,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
+const crypto = require("crypto");
 
 const User = require("./models/User");
 const Message = require("./models/Message");
@@ -11,6 +12,8 @@ const Message = require("./models/Message");
 require("dotenv").config();
 
 const authRoutes = require("./routes/auth");
+const adminSecurityRoutes = require("./routes/adminSecurity");
+const { reportSecurityEvent } = require("./services/securityEventService");
 const jobsRoutes = require("./routes/jobs");
 const applicationRoutes = require("./routes/applications");
 const adminStatsRoutes = require("./routes/adminStats");
@@ -169,6 +172,22 @@ const mediaRoutes =
 
 const app = express();
 
+app.disable("x-powered-by");
+
+app.use((req,res,next)=>{
+  req.securityRequestId = String(req.headers["x-request-id"] || crypto.randomUUID()).slice(0,100);
+  res.setHeader("X-Request-Id",req.securityRequestId);
+  res.setHeader("X-Content-Type-Options","nosniff");
+  res.setHeader("X-Frame-Options","DENY");
+  res.setHeader("Referrer-Policy","no-referrer");
+  res.setHeader("Permissions-Policy","camera=(), microphone=(), geolocation=(), payment=()");
+  if(req.path.startsWith("/api/auth") || req.path.startsWith("/api/admin")){
+    res.setHeader("Cache-Control","no-store, max-age=0");
+    res.setHeader("Pragma","no-cache");
+  }
+  next();
+});
+
 /*
   Render places the Node.js application behind one reverse proxy.
 
@@ -243,25 +262,6 @@ function normalizeOrigin(origin) {
     .replace(/\/+$/, "");
 }
 
-function isAllowedVercelOrigin(origin) {
-  const normalizedOrigin = normalizeOrigin(origin);
-
-  if (!normalizedOrigin) {
-    return false;
-  }
-
-  try {
-    const parsedOrigin = new URL(normalizedOrigin);
-
-    return (
-      parsedOrigin.protocol === "https:" &&
-      parsedOrigin.hostname.endsWith(".vercel.app")
-    );
-  } catch (error) {
-    return false;
-  }
-}
-
 function validateRequestOrigin(origin, callback) {
   /*
     Requests without an Origin header may include:
@@ -284,10 +284,7 @@ function validateRequestOrigin(origin, callback) {
         normalizedOrigin
     );
 
-  if (
-    originIsExplicitlyAllowed ||
-    isAllowedVercelOrigin(normalizedOrigin)
-  ) {
+  if (originIsExplicitlyAllowed) {
     return callback(null, true);
   }
 
@@ -295,6 +292,13 @@ function validateRequestOrigin(origin, callback) {
     origin: normalizedOrigin,
     allowedOrigins:
       Array.from(allowedOrigins)
+  });
+
+  reportSecurityEvent({
+    type:"cors_origin_denied",
+    severity:"high",
+    outcome:"blocked",
+    metadata:{ origin:normalizedOrigin }
   });
 
   const corsError = new Error(
@@ -389,6 +393,27 @@ app.use(
   })
 );
 
+function containsDangerousObjectKey(value,seen=new WeakSet(),depth=0){
+  if(!value || typeof value !== "object" || depth>20) return false;
+  if(seen.has(value)) return false;
+  seen.add(value);
+  for(const [key,entry] of Object.entries(value)){
+    if(key.startsWith("$") || key.includes(".")) return true;
+    if(containsDangerousObjectKey(entry,seen,depth+1)) return true;
+  }
+  return false;
+}
+
+app.use((req,res,next)=>{
+  if(!containsDangerousObjectKey(req.body)) return next();
+  reportSecurityEvent({ req, type:"dangerous_request_keys", severity:"high", outcome:"blocked" });
+  return res.status(400).json({
+    message:"This request was blocked because it contained unsafe field names.",
+    code:"UNSAFE_REQUEST_BLOCKED",
+    requestId:req.securityRequestId
+  });
+});
+
 /* ============================================
    HEALTH
 ============================================ */
@@ -400,6 +425,7 @@ app.get("/", (req, res) => {
    ROUTES
 ============================================ */
 app.use("/api/auth", authRoutes);
+app.use("/api/admin-security", adminSecurityRoutes);
 app.use("/api/jobs", jobsRoutes);
 app.use("/api/admin", adminStatsRoutes);
 app.use("/api/applications", applicationRoutes);
