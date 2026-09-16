@@ -23,6 +23,12 @@ function frontendUrl(){
   return String(process.env.FRONTEND_URL || "https://aiftph.com").replace(/\/+$/,"");
 }
 
+function escapeHtml(value){
+  return String(value || "").replace(/[&<>"']/g,(character)=>({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  })[character]);
+}
+
 function transporter({port=465,secure=true}={}){
   if(!mailConfigured()) return null;
   return nodemailer.createTransport({
@@ -44,12 +50,17 @@ function transporter({port=465,secure=true}={}){
 async function sendMail({to,subject,title,message,buttonLabel,buttonUrl}){
   if(!mailConfigured()) return { sent:false, reason:"Email delivery is not configured" };
   const sender=String(process.env.EMAIL_FROM || process.env.SMTP_USER || DEFAULT_SENDER).trim();
+  const safeTitle=escapeHtml(title);
+  const safeMessage=escapeHtml(message);
+  const safeButtonLabel=escapeHtml(buttonLabel);
+  const safeButtonUrl=escapeHtml(buttonUrl);
+  const siteUrl=frontendUrl();
   const mail={
     from:`AIFT Support <${sender}>`,
     to,
     subject,
     text:`${title}\n\n${message}\n\n${buttonUrl}\n\nIf you did not request this, you can ignore this email.`,
-    html:`<!doctype html><html><body style="margin:0;background:#f3f6fa;font-family:Arial,sans-serif;color:#172033"><div style="max-width:560px;margin:32px auto;background:#fff;border:1px solid #e3e8ef;border-radius:18px;overflow:hidden"><div style="padding:22px 26px;background:#0a66c2;color:#fff;font-size:22px;font-weight:800">AIFT</div><div style="padding:28px"><h1 style="font-size:23px;margin:0 0 12px">${title}</h1><p style="font-size:15px;line-height:1.65;color:#526071">${message}</p><a href="${buttonUrl}" style="display:inline-block;margin-top:12px;padding:13px 20px;border-radius:10px;background:#0a66c2;color:#fff;text-decoration:none;font-weight:800">${buttonLabel}</a><p style="margin-top:24px;font-size:12px;line-height:1.5;color:#7b8794">This secure link expires soon. If you did not request it, you can ignore this email.</p></div></div></body></html>`
+    html:`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light only"></head><body style="margin:0;padding:0;background:#f2f6fb;font-family:Arial,Helvetica,sans-serif;color:#13213a"><div style="display:none;max-height:0;overflow:hidden;opacity:0">${safeTitle} — secure AIFT account access.</div><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="background:#f2f6fb"><tr><td align="center" style="padding:28px 14px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:580px;background:#ffffff;border:1px solid #dce5f0;border-radius:20px;overflow:hidden;box-shadow:0 10px 30px rgba(20,51,91,.08)"><tr><td style="padding:24px 28px;border-bottom:1px solid #e8eef5"><a href="${siteUrl}" style="text-decoration:none"><img src="${siteUrl}/images/aift-logo-header.png" width="150" alt="AIFT" style="display:block;width:150px;max-width:45%;height:auto;border:0"></a></td></tr><tr><td style="padding:36px 28px 20px"><div style="display:inline-block;padding:7px 11px;border-radius:999px;background:#eaf4ff;color:#0868c9;font-size:12px;font-weight:700;letter-spacing:.5px;text-transform:uppercase">Account security</div><h1 style="margin:18px 0 12px;font-size:29px;line-height:1.2;color:#13213a">${safeTitle}</h1><p style="margin:0;color:#53627a;font-size:16px;line-height:1.7">${safeMessage}</p></td></tr><tr><td style="padding:8px 28px 30px"><a href="${safeButtonUrl}" style="display:inline-block;padding:15px 24px;border-radius:12px;background:#086fce;color:#ffffff;text-decoration:none;font-size:16px;font-weight:700">${safeButtonLabel}</a></td></tr><tr><td style="padding:22px 28px;background:#f8fafc;border-top:1px solid #e8eef5"><p style="margin:0 0 8px;color:#5f6f85;font-size:13px;line-height:1.6">This secure link expires soon. If you did not request this action, you can safely ignore this email.</p><p style="margin:0;color:#8793a5;font-size:12px;line-height:1.5">Sent securely by AIFT Support · <a href="${siteUrl}" style="color:#086fce;text-decoration:none">aiftph.com</a></p></td></tr></table></td></tr></table></body></html>`
   };
   if(useResendApi()){
     const response=await fetch("https://api.resend.com/emails",{
