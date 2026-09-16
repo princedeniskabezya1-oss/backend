@@ -70,7 +70,7 @@ const googleSecurityLimit = securityRateLimit({
 
 router.use("/login",loginSecurityLimit);
 router.use("/register",registrationSecurityLimit);
-router.use(["/forgot-password","/forgot-password/current","/resend-verification","/reset-password"],recoverySecurityLimit);
+router.use(["/forgot-password","/forgot-password/current","/resend-verification","/reset-password","/reset-admin-password"],recoverySecurityLimit);
 router.use(["/google-login","/google-register","/google-reset-authorize","/google-reset-authorize/current"],googleSecurityLimit);
 
 
@@ -2368,6 +2368,7 @@ router.post(
       const {
         setupKey,
         email,
+        newEmail,
         newPassword
       } = req.body;
 
@@ -2389,17 +2390,34 @@ router.post(
       }
 
 
-      if (
-        !email ||
-        !newPassword
-      ) {
+      if (!newPassword) {
 
         return res
           .status(400)
           .json({
 
             message:
-              "Email and new password are required"
+              "A new password is required"
+
+          });
+
+      }
+
+
+      const normalizedNewEmail =
+        String(newEmail || email || "")
+          .toLowerCase()
+          .trim();
+
+
+      if (!validEmail(normalizedNewEmail)) {
+
+        return res
+          .status(400)
+          .json({
+
+            message:
+              "Enter a valid Admin email address"
 
           });
 
@@ -2423,18 +2441,55 @@ router.post(
       }
 
 
-      const admin =
-        await User.findOne({
+      let admin = null;
 
-          email:
-            String(email)
-              .toLowerCase()
-              .trim(),
 
-          role:
-            "admin"
+      if (email) {
 
-        });
+        admin =
+          await User.findOne({
+
+            email:
+              String(email)
+                .toLowerCase()
+                .trim(),
+
+            role:
+              "admin"
+
+          });
+
+      } else {
+
+        const admins =
+          await User.find({
+
+            role:
+              "admin"
+
+          })
+            .sort({ createdAt: 1 })
+            .limit(2);
+
+
+        if (admins.length === 1) {
+
+          admin = admins[0];
+
+        } else if (admins.length > 1) {
+
+          return res
+            .status(409)
+            .json({
+
+              message:
+                "More than one Admin account exists. Enter the current Admin email to select the account."
+
+            });
+
+        }
+
+      }
 
 
       if (
@@ -2447,6 +2502,34 @@ router.post(
 
             message:
               "Admin not found"
+
+          });
+
+      }
+
+
+      const emailOwner =
+        await User.findOne({
+
+          email:
+            normalizedNewEmail,
+
+          _id: {
+            $ne:
+              admin._id
+          }
+
+        });
+
+
+      if (emailOwner) {
+
+        return res
+          .status(409)
+          .json({
+
+            message:
+              "That email address is already connected to another account"
 
           });
 
@@ -2470,6 +2553,30 @@ router.post(
 
       admin.passwordChangedAt =
         new Date();
+
+
+      admin.email =
+        normalizedNewEmail;
+
+
+      admin.emailVerified =
+        true;
+
+
+      admin.emailVerifiedAt =
+        new Date();
+
+
+      admin.aiftVerified =
+        true;
+
+
+      admin.isVerified =
+        true;
+
+
+      admin.status =
+        "active";
 
 
       await admin.save();
@@ -2503,7 +2610,10 @@ router.post(
       return res.json({
 
         message:
-          "Admin password updated successfully"
+          "Admin account recovered successfully",
+
+        email:
+          admin.email
 
       });
 
