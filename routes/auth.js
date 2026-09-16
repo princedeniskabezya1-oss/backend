@@ -3,15 +3,75 @@ const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
 const crypto = require("crypto");
 const dns = require("dns").promises;
+const { rateLimit } = require("express-rate-limit");
 
 const User = require("../models/User");
 const AuthSession = require("../models/AuthSession");
 const { mailConfigured, sendVerificationEmail, sendPasswordResetEmail } = require("../services/authEmailService");
+const { reportSecurityEvent } = require("../services/securityEventService");
 
 const auth = require("../middleware/auth");
 
 
 const router = express.Router();
+
+function securityRateLimit({ windowMs, limit, type, message, skipSuccessfulRequests=false }){
+  return rateLimit({
+    windowMs,
+    limit,
+    standardHeaders:"draft-8",
+    legacyHeaders:false,
+    skipSuccessfulRequests,
+    handler:(req,res)=>{
+      reportSecurityEvent({
+        req,
+        type,
+        severity:"high",
+        outcome:"temporarily_limited",
+        metadata:{ retryAfterSeconds:Math.ceil(windowMs/1000) }
+      });
+      return res.status(429).json({
+        message,
+        code:"SECURITY_RATE_LIMIT",
+        retryAfterSeconds:Math.ceil(windowMs/1000)
+      });
+    }
+  });
+}
+
+const loginSecurityLimit = securityRateLimit({
+  windowMs:15*60*1000,
+  limit:10,
+  type:"repeated_login_attempts",
+  skipSuccessfulRequests:true,
+  message:"Too many unsuccessful sign-in attempts were detected. For your security, access from this network is temporarily limited. Wait 15 minutes and try again."
+});
+
+const registrationSecurityLimit = securityRateLimit({
+  windowMs:60*60*1000,
+  limit:8,
+  type:"excessive_registration_attempts",
+  message:"Too many account-creation attempts were detected. For security, wait one hour before trying again."
+});
+
+const recoverySecurityLimit = securityRateLimit({
+  windowMs:15*60*1000,
+  limit:5,
+  type:"excessive_password_recovery_attempts",
+  message:"Too many password-recovery attempts were detected. For security, wait 15 minutes before trying again."
+});
+
+const googleSecurityLimit = securityRateLimit({
+  windowMs:15*60*1000,
+  limit:15,
+  type:"excessive_google_auth_attempts",
+  message:"Too many Google authentication attempts were detected. For security, wait 15 minutes before trying again."
+});
+
+router.use("/login",loginSecurityLimit);
+router.use("/register",registrationSecurityLimit);
+router.use(["/forgot-password","/forgot-password/current","/resend-verification","/reset-password"],recoverySecurityLimit);
+router.use(["/google-login","/google-register","/google-reset-authorize","/google-reset-authorize/current"],googleSecurityLimit);
 
 
 /* ============================================
