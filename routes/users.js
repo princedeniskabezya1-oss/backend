@@ -4906,6 +4906,9 @@ router.get(
               "contactEmail",
               "contactPhone",
               "industry",
+              "services",
+              "tools",
+              "industries",
               "companyTags",
               "followers",
               "following",
@@ -5269,6 +5272,21 @@ router.get(
 
         industry:
           employer.industry,
+
+        services:
+          Array.isArray(employer.services)
+            ? employer.services
+            : [],
+
+        tools:
+          Array.isArray(employer.tools)
+            ? employer.tools
+            : [],
+
+        industries:
+          Array.isArray(employer.industries)
+            ? employer.industries
+            : [],
 
         companyTags:
           Array.isArray(
