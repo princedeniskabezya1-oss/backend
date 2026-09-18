@@ -421,6 +421,22 @@ app.get("/", (req, res) => {
   res.send("AIFT Backend is running");
 });
 
+app.get("/api/health", (_req, res) => {
+  res.set("Cache-Control", "no-store, max-age=0").json({
+    ok: true,
+    service: "aift-backend",
+    commit:
+      process.env.RENDER_GIT_COMMIT ||
+      process.env.GIT_COMMIT ||
+      process.env.COMMIT_SHA ||
+      "unknown",
+    deployedAt:
+      process.env.RENDER_DEPLOYMENT_ID ||
+      process.env.RENDER_INSTANCE_ID ||
+      "unknown"
+  });
+});
+
 /* ============================================
    ROUTES
 ============================================ */
