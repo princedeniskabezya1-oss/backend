@@ -796,16 +796,17 @@ const media = [];
 
 for (const file of files) {
   let uploadResult;
+  const type = file.mimetype?.startsWith("video/") ? "video" : "image";
   try {
     uploadResult = file.path
       ? await cloudinary.uploader.upload_large(file.path, {
           folder: "aift_posts",
-          resource_type: "auto",
+          resource_type: type,
           chunk_size: 6 * 1024 * 1024
         })
       : await new Promise((resolve, reject) => {
           const stream = cloudinary.uploader.upload_stream(
-            { folder: "aift_posts", resource_type: "auto" },
+            { folder: "aift_posts", resource_type: type },
             (error, result) => (error ? reject(error) : resolve(result))
           );
           if (file.buffer) stream.end(file.buffer);
@@ -814,8 +815,6 @@ for (const file of files) {
   } finally {
     if (file.path) await fsPromises.unlink(file.path).catch(() => {});
   }
-
-  const type = file.mimetype?.startsWith("video/") ? "video" : "image";
 
   media.push({
     url: uploadResult.secure_url,
