@@ -766,7 +766,19 @@ if (!groupId && !authorId && followingIds.length > 0) {
 /* ==========================
    CREATE POST
 ========================== */
-router.post("/", auth, upload.array("media", 10), async (req, res) => {
+function receivePostMedia(req, res, next) {
+  upload.postMedia.array("media", 10)(req, res, error => {
+    if (!error) return next();
+    const message = error.code === "LIMIT_FILE_SIZE"
+      ? "Each image or video must be no larger than 100 MB."
+      : error.code === "LIMIT_FILE_COUNT" || error.code === "LIMIT_UNEXPECTED_FILE"
+        ? "Choose up to 10 images or videos using the media field."
+        : error.message;
+    res.status(400).json({ message });
+  });
+}
+
+router.post("/", auth, receivePostMedia, async (req, res) => {
   try {
     const text = req.body.text?.trim();
     const files = req.files || [];
