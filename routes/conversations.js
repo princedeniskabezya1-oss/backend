@@ -73,7 +73,8 @@ async function findOrCreateDirectConversation(userA,userB,createdBy){
     type:"direct",
     participantIds:{
       $all:[userA,userB]
-    }
+    },
+    "metadata.source":{ $ne:"family_chat" }
   });
 
   if(conversation) return conversation;
@@ -114,7 +115,8 @@ router.get("/", authMiddleware, async (req,res)=>{
 
     const query = {
       participantIds:userId,
-      isActive:true
+      isActive:true,
+      "metadata.source":{ $ne:"family_chat" }
     };
 
     if(type){
