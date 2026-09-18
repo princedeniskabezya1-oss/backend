@@ -766,6 +766,62 @@ if (!groupId && !authorId && followingIds.length > 0) {
 });
 
 /* ==========================
+   DIRECT POST MEDIA UPLOAD
+   Browser uploads directly to Cloudinary so large media does
+   not travel through Render before it can be posted.
+========================== */
+router.get("/media-upload-signature", auth, (req, res) => {
+  try {
+    const resourceType =
+      String(req.query.type || "").toLowerCase() === "video"
+        ? "video"
+        : "image";
+
+    const timestamp = Math.floor(Date.now() / 1000);
+    const folder = "aift_posts";
+
+    const signature = cloudinary.utils.api_sign_request(
+      { timestamp, folder },
+      process.env.CLOUDINARY_API_SECRET
+    );
+
+    return res.json({
+      cloudName: process.env.CLOUDINARY_CLOUD_NAME,
+      apiKey: process.env.CLOUDINARY_API_KEY,
+      timestamp,
+      folder,
+      signature,
+      resourceType
+    });
+  } catch (err) {
+    console.error("MEDIA SIGNATURE ERROR:", err.message);
+    return res.status(500).json({
+      message: "Could not prepare media upload."
+    });
+  }
+});
+
+function normalizeDirectMedia(value) {
+  if (!Array.isArray(value)) return [];
+
+  const cloudName = String(process.env.CLOUDINARY_CLOUD_NAME || "").trim();
+  const expectedPrefix = cloudName
+    ? `https://res.cloudinary.com/${cloudName}/`
+    : "";
+
+  return value
+    .slice(0, 10)
+    .map(item => ({
+      url: String(item?.url || "").trim(),
+      type: String(item?.type || "").toLowerCase() === "video" ? "video" : "image"
+    }))
+    .filter(item =>
+      item.url &&
+      (!expectedPrefix || item.url.startsWith(expectedPrefix))
+    );
+}
+
+/* ==========================
    CREATE POST
 ========================== */
 function receivePostMedia(req, res, next) {
@@ -784,7 +840,8 @@ router.post("/", auth, receivePostMedia, async (req, res) => {
   try {
     const text = req.body.text?.trim();
     const files = req.files || [];
-const hasMedia = files.length > 0;
+    const directMedia = normalizeDirectMedia(req.body.media);
+    const hasMedia = files.length > 0 || directMedia.length > 0;
 
     if (!text && !hasMedia) {
       return res.status(400).json({ message: "Post content or media is required" });
@@ -792,7 +849,7 @@ const hasMedia = files.length > 0;
 
 let mediaUrl = null;
 let mediaType = null;
-const media = [];
+const media = [...directMedia];
 
 for (const file of files) {
   let uploadResult;
