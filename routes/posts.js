@@ -12,6 +12,8 @@ const analyticsContext = require(
 );
 
 const cloudinary = require("../config/cloudinary");
+const fs = require("fs");
+const fsPromises = require("fs/promises");
 
 const Post = require("../models/Post");
 const User = require("../models/User");
@@ -770,7 +772,7 @@ function receivePostMedia(req, res, next) {
   upload.postMedia.array("media", 10)(req, res, error => {
     if (!error) return next();
     const message = error.code === "LIMIT_FILE_SIZE"
-      ? "Each image or video must be no larger than 100 MB."
+      ? "Each image or video must be no larger than 250 MB."
       : error.code === "LIMIT_FILE_COUNT" || error.code === "LIMIT_UNEXPECTED_FILE"
         ? "Choose up to 10 images or videos using the media field."
         : error.message;
@@ -793,14 +795,25 @@ let mediaType = null;
 const media = [];
 
 for (const file of files) {
-  const uploadResult = await new Promise((resolve, reject) => {
-    cloudinary.uploader
-      .upload_stream(
-        { folder: "aift_posts", resource_type: "auto" },
-        (error, result) => (error ? reject(error) : resolve(result))
-      )
-      .end(file.buffer);
-  });
+  let uploadResult;
+  try {
+    uploadResult = file.path
+      ? await cloudinary.uploader.upload_large(file.path, {
+          folder: "aift_posts",
+          resource_type: "auto",
+          chunk_size: 6 * 1024 * 1024
+        })
+      : await new Promise((resolve, reject) => {
+          const stream = cloudinary.uploader.upload_stream(
+            { folder: "aift_posts", resource_type: "auto" },
+            (error, result) => (error ? reject(error) : resolve(result))
+          );
+          if (file.buffer) stream.end(file.buffer);
+          else fs.createReadStream(file.path).pipe(stream);
+        });
+  } finally {
+    if (file.path) await fsPromises.unlink(file.path).catch(() => {});
+  }
 
   const type = file.mimetype?.startsWith("video/") ? "video" : "image";
 
@@ -850,6 +863,9 @@ const post = await Post.create({
 
     res.status(201).json(populated);
   } catch (err) {
+    await Promise.all((req.files || []).map(file =>
+      file.path ? fsPromises.unlink(file.path).catch(() => {}) : Promise.resolve()
+    ));
     console.error("CREATE POST ERROR:", err.message);
     res.status(500).json({ message: err.message });
   }
