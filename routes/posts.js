@@ -799,10 +799,16 @@ for (const file of files) {
   const type = file.mimetype?.startsWith("video/") ? "video" : "image";
   try {
     uploadResult = file.path
-      ? await cloudinary.uploader.upload_large(file.path, {
-          folder: "aift_posts",
-          resource_type: type,
-          chunk_size: 6 * 1024 * 1024
+      ? await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_large(
+            file.path,
+            {
+              folder: "aift_posts",
+              resource_type: type,
+              chunk_size: 20 * 1024 * 1024
+            },
+            (error, result) => (error ? reject(error) : resolve(result))
+          );
         })
       : await new Promise((resolve, reject) => {
           const stream = cloudinary.uploader.upload_stream(
@@ -814,6 +820,10 @@ for (const file of files) {
         });
   } finally {
     if (file.path) await fsPromises.unlink(file.path).catch(() => {});
+  }
+
+  if (!uploadResult?.secure_url) {
+    throw new Error("Media upload completed without a delivery URL. Please try again.");
   }
 
   media.push({
