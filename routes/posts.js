@@ -805,14 +805,43 @@ for (const file of files) {
             {
               folder: "aift_posts",
               resource_type: type,
-              chunk_size: 20 * 1024 * 1024
+              chunk_size: 20 * 1024 * 1024,
+              ...(type === "video"
+                ? {
+                    eager: [
+                      {
+                        format: "mp4",
+                        video_codec: "h264",
+                        quality: "auto",
+                        flags: "progressive"
+                      }
+                    ],
+                    eager_async: true
+                  }
+                : {})
             },
             (error, result) => (error ? reject(error) : resolve(result))
           );
         })
       : await new Promise((resolve, reject) => {
           const stream = cloudinary.uploader.upload_stream(
-            { folder: "aift_posts", resource_type: type },
+            {
+              folder: "aift_posts",
+              resource_type: type,
+              ...(type === "video"
+                ? {
+                    eager: [
+                      {
+                        format: "mp4",
+                        video_codec: "h264",
+                        quality: "auto",
+                        flags: "progressive"
+                      }
+                    ],
+                    eager_async: true
+                  }
+                : {})
+            },
             (error, result) => (error ? reject(error) : resolve(result))
           );
           if (file.buffer) stream.end(file.buffer);
