@@ -191,3 +191,13 @@ module.exports.ALLOWED_MIME_TYPES =
 
 module.exports.MAX_UPLOAD_SIZE =
   MAX_UPLOAD_SIZE;
+
+// Feed posts accept media categories without broadening document/security uploads.
+module.exports.postMedia = multer({
+  storage,
+  limits: { fileSize: MAX_UPLOAD_SIZE, files: 10, fields: 40, fieldSize: 1024 * 1024 },
+  fileFilter(req, file, callback) {
+    if (/^(image|video)\//i.test(file.mimetype || "")) return callback(null, true);
+    callback(new Error("Please choose an image or video file."));
+  }
+});
