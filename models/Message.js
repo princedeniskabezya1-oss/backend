@@ -407,6 +407,21 @@ metadata: {
       storyReply: {
         type: storyReplySchema,
         default: undefined
+      },
+      familyChat: {
+        anonymous: {
+          type: Boolean,
+          default: false
+        },
+        senderAlias: {
+          type: String,
+          trim: true,
+          maxlength: 80
+        },
+        mode: {
+          type: String,
+          enum: ["family","investor"]
+        }
       }
     }
   },
