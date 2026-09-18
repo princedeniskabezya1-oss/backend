@@ -1,4 +1,7 @@
 const multer = require("multer");
+const crypto = require("crypto");
+const os = require("os");
+const path = require("path");
 
 /* =========================================================
    CONSTANTS
@@ -6,6 +9,9 @@ const multer = require("multer");
 
 const MAX_UPLOAD_SIZE =
   100 * 1024 * 1024;
+
+const MAX_POST_MEDIA_SIZE =
+  250 * 1024 * 1024;
 
 const ALLOWED_MIME_TYPES =
 new Set([
@@ -194,10 +200,19 @@ module.exports.MAX_UPLOAD_SIZE =
 
 // Feed posts accept media categories without broadening document/security uploads.
 module.exports.postMedia = multer({
-  storage,
-  limits: { fileSize: MAX_UPLOAD_SIZE, files: 10, fields: 40, fieldSize: 1024 * 1024 },
+  storage: multer.diskStorage({
+    destination: os.tmpdir(),
+    filename(req, file, callback) {
+      const extension = path.extname(file.originalname || "").slice(0, 12);
+      callback(null, `aift-post-${crypto.randomUUID()}${extension}`);
+    }
+  }),
+  limits: { fileSize: MAX_POST_MEDIA_SIZE, files: 10, fields: 40, fieldSize: 1024 * 1024 },
   fileFilter(req, file, callback) {
     if (/^(image|video)\//i.test(file.mimetype || "")) return callback(null, true);
     callback(new Error("Please choose an image or video file."));
   }
 });
+
+module.exports.MAX_POST_MEDIA_SIZE =
+  MAX_POST_MEDIA_SIZE;
