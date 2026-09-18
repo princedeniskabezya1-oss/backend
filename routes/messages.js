@@ -12,7 +12,6 @@ const ChatSafetyViolation = require("../models/ChatSafetyViolation");
 const authMiddleware = require("../middleware/auth");
 const adminOnly = require("../middleware/adminOnly");
 const cloudinary = require("../config/cloudinary");
-const { enforceContactSafety, hasMessagingRestriction } = require("../utils/contactSafety");
 const { createManyNotifications } = require("../services/notificationService");
 
 const router = express.Router();
@@ -84,7 +83,8 @@ async function findOrCreateDirectConversation(userA,userB,createdBy){
     type:"direct",
     participantIds:{
       $all:[userA,userB]
-    }
+    },
+    "metadata.source":{ $ne:"family_chat" }
   });
 
   if(conversation) return conversation;
@@ -153,7 +153,8 @@ router.get("/", authMiddleware, async (req,res)=>{
 
     let conversations = await Conversation.find({
       participantIds:userId,
-      isActive:true
+      isActive:true,
+      "metadata.source":{ $ne:"family_chat" }
     })
       .populate("participants.user","name companyName schoolName role profileImage logo headline profession")
       .populate("lastMessage.sender","name companyName schoolName role profileImage")
@@ -315,10 +316,6 @@ router.post("/", authMiddleware, upload.fields([{name:"file",maxCount:1},{name:"
     if(!text.trim()&&!uploadedFiles.length&&!fileUrl){
       return res.status(400).json({message:"Message text, file, GIF, or sticker is required"});
     }
-    if(await hasMessagingRestriction(senderId)){
-      return res.status(403).json({code:"AIFT_MESSAGING_RESTRICTED",message:"Messaging is restricted pending AIFT review."});
-    }
-
     let conversation;
     if(isValidId(conversationId)){
       conversation=await Conversation.findById(conversationId);
@@ -333,12 +330,15 @@ router.post("/", authMiddleware, upload.fields([{name:"file",maxCount:1},{name:"
       conversation=await findOrCreateDirectConversation(senderId,receiverId,senderId);
     }
 
+    if(conversation?.metadata?.source === "family_chat"){
+      return res.status(403).json({
+        code:"AIFT_FAMILY_CHAT_ONLY",
+        message:"This conversation belongs to AIFT Family. Open Family Messages to continue."
+      });
+    }
+
     const isGroup=conversation.type!=="direct";
     const recipientIds=conversation.participantIds.map(String).filter(id=>id!==String(senderId));
-    if(!isGroup){
-      const safety=await enforceContactSafety({user:req.user,text,receiverId});
-      if(!safety.allowed)return res.status(safety.statusCode).json({code:"AIFT_CONTACT_SHARING_BLOCKED",message:safety.message,warningNumber:safety.warningNumber,action:safety.action});
-    }
 
     let attachments=uploadedFiles.length?await Promise.all(uploadedFiles.map(uploadToCloudinary)):[];
     let attachment=attachments[0]||null;
@@ -616,13 +616,15 @@ router.patch("/:id/edit", authMiddleware, async (req,res)=>{
       return res.status(400).json({ message:"Deleted message cannot be edited" });
     }
 
-    if(await hasMessagingRestriction(userId)){
-      return res.status(403).json({ code:"AIFT_MESSAGING_RESTRICTED", message:"Messaging is restricted pending AIFT review." });
-    }
+    const editConversation = message.conversationId
+      ? await Conversation.findById(message.conversationId).select("metadata.source").lean()
+      : null;
 
-    const safety = await enforceContactSafety({ user:req.user, text, conversationId:message.conversationId, receiverId:message.receiver });
-    if(!safety.allowed){
-      return res.status(safety.statusCode).json({ code:"AIFT_CONTACT_SHARING_BLOCKED", message:safety.message, warningNumber:safety.warningNumber, action:safety.action });
+    if(editConversation?.metadata?.source === "family_chat"){
+      return res.status(403).json({
+        code:"AIFT_FAMILY_CHAT_ONLY",
+        message:"Family messages can only be edited from AIFT Family."
+      });
     }
 
     message.editText(String(text || "").trim());

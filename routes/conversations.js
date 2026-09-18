@@ -73,7 +73,8 @@ async function findOrCreateDirectConversation(userA,userB,createdBy){
     type:"direct",
     participantIds:{
       $all:[userA,userB]
-    }
+    },
+    "metadata.source":{ $ne:"family_chat" }
   });
 
   if(conversation) return conversation;
@@ -114,7 +115,8 @@ router.get("/", authMiddleware, async (req,res)=>{
 
     const query = {
       participantIds:userId,
-      isActive:true
+      isActive:true,
+      "metadata.source":{ $ne:"family_chat" }
     };
 
     if(type){
@@ -359,6 +361,13 @@ router.get("/:id", authMiddleware, async (req,res)=>{
       return res.status(404).json({ message:"Conversation not found" });
     }
 
+    if(conversation?.metadata?.source === "family_chat"){
+      return res.status(403).json({
+        code:"AIFT_FAMILY_CHAT_ONLY",
+        message:"Open AIFT Family Messages to access this conversation."
+      });
+    }
+
     if(!isParticipant(conversation,req.user.id)){
       return res.status(403).json({ message:"You do not have access to this conversation" });
     }
@@ -412,6 +421,13 @@ router.get("/:id/messages", authMiddleware, async (req,res)=>{
 
     if(!conversation){
       return res.status(404).json({ message:"Conversation not found" });
+    }
+
+    if(conversation?.metadata?.source === "family_chat"){
+      return res.status(403).json({
+        code:"AIFT_FAMILY_CHAT_ONLY",
+        message:"Open AIFT Family Messages to access this conversation."
+      });
     }
 
     if(!isParticipant(conversation,req.user.id)){
@@ -489,6 +505,13 @@ router.patch("/:id/read", authMiddleware, async (req,res)=>{
 
     if(!conversation){
       return res.status(404).json({ message:"Conversation not found" });
+    }
+
+    if(conversation?.metadata?.source === "family_chat"){
+      return res.status(403).json({
+        code:"AIFT_FAMILY_CHAT_ONLY",
+        message:"Open AIFT Family Messages to manage this conversation."
+      });
     }
 
     if(!isParticipant(conversation,req.user.id)){

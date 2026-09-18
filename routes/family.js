@@ -9,6 +9,9 @@ const SchoolOpportunity = require("../models/SchoolOpportunity");
 const ScholarshipApplication = require("../models/ScholarshipApplication");
 const Venture = require("../models/Venture");
 const FamilySavedDiscovery = require("../models/FamilySavedDiscovery");
+const Conversation = require("../models/Conversation");
+const Message = require("../models/Message");
+const { enforceContactSafety, hasMessagingRestriction } = require("../utils/contactSafety");
 
 const router = express.Router();
 
@@ -910,6 +913,546 @@ router.delete("/saved/:itemType/:itemId",async (req,res) => {
     return res.status(500).json({
       success:false,
       message:"Could not remove this saved item"
+    });
+  }
+});
+
+
+/* =========================================================
+   FAMILY-ONLY MESSAGING
+   Kept separate from the main AIFT Messages experience.
+   Investor anonymity hides identity from the other participant,
+   while AIFT still retains the authenticated account internally
+   for abuse prevention, moderation and legal/compliance needs.
+========================================================= */
+
+function familyChatParticipant(conversation,userId){
+  return (conversation?.participants || []).find(participant =>
+    String(participant?.user?._id || participant?.user || "") === String(userId) &&
+    participant.isActive !== false
+  );
+}
+
+function familyChatHasParticipant(conversation,userId){
+  return Boolean(familyChatParticipant(conversation,userId));
+}
+
+function familyChatAnonymousIds(conversation){
+  return new Set(
+    (conversation?.metadata?.familyChat?.anonymousInvestorIds || [])
+      .map(value => String(value?._id || value || ""))
+      .filter(Boolean)
+  );
+}
+
+function familyChatUserName(user = {}){
+  return user.companyName || user.schoolName || user.name || "AIFT Member";
+}
+
+function familyChatUserImage(user = {}){
+  return user.profileImage || user.logo || "";
+}
+
+function serializeFamilyConversation(conversation,viewerId){
+  const participants = Array.isArray(conversation?.participants)
+    ? conversation.participants
+    : [];
+
+  const otherParticipant =
+    participants.find(item =>
+      String(item?.user?._id || item?.user || "") !== String(viewerId)
+    ) || participants[0];
+
+  const otherUser = otherParticipant?.user || {};
+  const otherId = String(otherUser?._id || otherUser || "");
+  const anonymousIds = familyChatAnonymousIds(conversation);
+  const hideOtherIdentity =
+    otherId &&
+    otherId !== String(viewerId) &&
+    anonymousIds.has(otherId);
+
+  const me = familyChatParticipant(conversation,viewerId);
+
+  return {
+    _id:conversation._id,
+    conversationId:conversation._id,
+    type:"family_chat",
+    mode:conversation?.metadata?.familyChat?.mode || "family",
+    displayName:hideOtherIdentity
+      ? "Anonymous Investor"
+      : familyChatUserName(otherUser),
+    displayImage:hideOtherIdentity
+      ? ""
+      : familyChatUserImage(otherUser),
+    otherRole:hideOtherIdentity
+      ? "investor"
+      : String(otherUser?.role || ""),
+    anonymous:hideOtherIdentity,
+    myAnonymousMode:anonymousIds.has(String(viewerId)),
+    unreadCount:Number(me?.unreadCount || 0),
+    lastMessage:conversation?.lastMessage?.text || "",
+    lastMessageDate:conversation?.lastMessage?.createdAt || conversation?.updatedAt,
+    updatedAt:conversation?.updatedAt
+  };
+}
+
+function serializeFamilyMessage(message,viewerId,conversation){
+  const senderId = String(message?.sender?._id || message?.sender || "");
+  const mine = senderId === String(viewerId);
+  const messageAnonymous =
+    message?.metadata?.familyChat?.anonymous === true;
+  const hideSender = messageAnonymous && !mine;
+  const sender = message?.sender || {};
+
+  return {
+    _id:message._id,
+    conversationId:message.conversationId,
+    text:message.deletedForEveryone
+      ? "This message was deleted"
+      : String(message.text || ""),
+    createdAt:message.createdAt,
+    updatedAt:message.updatedAt,
+    status:message.status,
+    mine,
+    senderAnonymous:hideSender,
+    senderDisplayName:hideSender
+      ? "Anonymous Investor"
+      : familyChatUserName(sender),
+    senderImage:hideSender
+      ? ""
+      : familyChatUserImage(sender),
+    mode:message?.metadata?.familyChat?.mode ||
+      conversation?.metadata?.familyChat?.mode ||
+      "family"
+  };
+}
+
+async function loadFamilyConversation(conversationId,userId){
+  if(!validId(conversationId)) return null;
+
+  const conversation = await Conversation.findOne({
+    _id:conversationId,
+    "metadata.source":"family_chat",
+    participantIds:userId,
+    isActive:true
+  });
+
+  return conversation;
+}
+
+router.get("/chat/conversations",async (req,res) => {
+  try{
+    const userId = req.user._id || req.user.id;
+
+    const conversations = await Conversation.find({
+      participantIds:userId,
+      isActive:true,
+      "metadata.source":"family_chat"
+    })
+      .populate(
+        "participants.user",
+        "name companyName schoolName role profileImage logo"
+      )
+      .sort({ updatedAt:-1 })
+      .limit(100)
+      .lean();
+
+    return res.json({
+      success:true,
+      conversations:conversations.map(item =>
+        serializeFamilyConversation(item,userId)
+      )
+    });
+  }catch(error){
+    console.error("GET FAMILY CHAT CONVERSATIONS ERROR:",error);
+    return res.status(500).json({
+      success:false,
+      message:"Could not load Family conversations"
+    });
+  }
+});
+
+router.post("/chat/direct",async (req,res) => {
+  try{
+    const userId = req.user._id || req.user.id;
+    const targetId = cleanString(req.body?.userId,100);
+    const requestedMode =
+      cleanString(req.body?.mode,20).toLowerCase() === "investor"
+        ? "investor"
+        : "family";
+    const anonymous = req.body?.anonymous === true;
+
+    if(!validId(targetId) || String(targetId) === String(userId)){
+      return res.status(400).json({
+        success:false,
+        message:"A valid Family chat recipient is required"
+      });
+    }
+
+    const [me,target] = await Promise.all([
+      User.findById(userId).select("_id familyProfile"),
+      User.findById(targetId).select("_id name companyName schoolName role profileImage logo")
+    ]);
+
+    if(!me || !target){
+      return res.status(404).json({
+        success:false,
+        message:"The selected AIFT account could not be found"
+      });
+    }
+
+    if(
+      anonymous &&
+      (
+        requestedMode !== "investor" ||
+        me.familyProfile?.investorEnabled !== true
+      )
+    ){
+      return res.status(403).json({
+        success:false,
+        message:"Anonymous chat is available only when Investor Mode is enabled."
+      });
+    }
+
+    let conversation = await Conversation.findOne({
+      type:"direct",
+      participantIds:{ $all:[userId,targetId] },
+      "metadata.source":"family_chat"
+    });
+
+    if(!conversation){
+      conversation = await Conversation.create({
+        type:"direct",
+        createdBy:userId,
+        participants:[
+          { user:userId,role:"member" },
+          { user:targetId,role:"member" }
+        ],
+        participantIds:[userId,targetId],
+        metadata:{
+          source:"family_chat",
+          familyChat:{
+            mode:requestedMode,
+            anonymousInvestorIds:anonymous ? [userId] : [],
+            createdFrom:"family"
+          }
+        }
+      });
+    }else{
+      conversation.metadata = conversation.metadata || {};
+      conversation.metadata.source = "family_chat";
+      conversation.metadata.familyChat = conversation.metadata.familyChat || {};
+      conversation.metadata.familyChat.mode = requestedMode;
+      conversation.metadata.familyChat.createdFrom = "family";
+
+      const anonymousIds = new Set(
+        (conversation.metadata.familyChat.anonymousInvestorIds || [])
+          .map(value => String(value))
+      );
+
+      if(anonymous) anonymousIds.add(String(userId));
+      else anonymousIds.delete(String(userId));
+
+      conversation.metadata.familyChat.anonymousInvestorIds =
+        [...anonymousIds]
+          .filter(validId)
+          .map(value => new mongoose.Types.ObjectId(value));
+
+      conversation.markModified("metadata.familyChat");
+      await conversation.save();
+    }
+
+    const populated = await Conversation.findById(conversation._id)
+      .populate(
+        "participants.user",
+        "name companyName schoolName role profileImage logo"
+      )
+      .lean();
+
+    return res.status(201).json({
+      success:true,
+      conversation:serializeFamilyConversation(populated,userId)
+    });
+  }catch(error){
+    console.error("CREATE FAMILY CHAT ERROR:",error);
+    return res.status(500).json({
+      success:false,
+      message:"Could not start the Family conversation"
+    });
+  }
+});
+
+router.patch("/chat/:conversationId/privacy",async (req,res) => {
+  try{
+    const userId = req.user._id || req.user.id;
+    const anonymous = req.body?.anonymous === true;
+    const conversation = await loadFamilyConversation(
+      req.params.conversationId,
+      userId
+    );
+
+    if(!conversation){
+      return res.status(404).json({
+        success:false,
+        message:"Family conversation not found"
+      });
+    }
+
+    const user = await User.findById(userId).select("_id familyProfile");
+
+    if(
+      anonymous &&
+      (
+        conversation.metadata?.familyChat?.mode !== "investor" ||
+        user?.familyProfile?.investorEnabled !== true
+      )
+    ){
+      return res.status(403).json({
+        success:false,
+        message:"Anonymous identity is available only in Investor Mode."
+      });
+    }
+
+    conversation.metadata = conversation.metadata || {};
+    conversation.metadata.familyChat = conversation.metadata.familyChat || {};
+
+    const anonymousIds = new Set(
+      (conversation.metadata.familyChat.anonymousInvestorIds || [])
+        .map(value => String(value))
+    );
+
+    if(anonymous) anonymousIds.add(String(userId));
+    else anonymousIds.delete(String(userId));
+
+    conversation.metadata.familyChat.anonymousInvestorIds =
+      [...anonymousIds]
+        .filter(validId)
+        .map(value => new mongoose.Types.ObjectId(value));
+
+    conversation.markModified("metadata.familyChat");
+    await conversation.save();
+
+    return res.json({
+      success:true,
+      anonymous
+    });
+  }catch(error){
+    console.error("UPDATE FAMILY CHAT PRIVACY ERROR:",error);
+    return res.status(500).json({
+      success:false,
+      message:"Could not update your Family chat privacy"
+    });
+  }
+});
+
+router.get("/chat/:conversationId/messages",async (req,res) => {
+  try{
+    const userId = req.user._id || req.user.id;
+    const conversation = await loadFamilyConversation(
+      req.params.conversationId,
+      userId
+    );
+
+    if(!conversation){
+      return res.status(404).json({
+        success:false,
+        message:"Family conversation not found"
+      });
+    }
+
+    const messages = await Message.find({
+      conversationId:conversation._id,
+      deletedFor:{ $ne:userId }
+    })
+      .populate(
+        "sender",
+        "name companyName schoolName role profileImage logo"
+      )
+      .sort({ createdAt:1 })
+      .limit(500)
+      .lean();
+
+    return res.json({
+      success:true,
+      conversationId:conversation._id,
+      messages:messages.map(message =>
+        serializeFamilyMessage(message,userId,conversation)
+      )
+    });
+  }catch(error){
+    console.error("GET FAMILY CHAT MESSAGES ERROR:",error);
+    return res.status(500).json({
+      success:false,
+      message:"Could not load Family messages"
+    });
+  }
+});
+
+router.patch("/chat/:conversationId/read",async (req,res) => {
+  try{
+    const userId = req.user._id || req.user.id;
+    const conversation = await loadFamilyConversation(
+      req.params.conversationId,
+      userId
+    );
+
+    if(!conversation){
+      return res.status(404).json({
+        success:false,
+        message:"Family conversation not found"
+      });
+    }
+
+    conversation.markRead(userId);
+    await conversation.save();
+
+    await Message.updateMany(
+      {
+        conversationId:conversation._id,
+        sender:{ $ne:userId },
+        seen:{ $ne:true }
+      },
+      {
+        $set:{
+          seen:true,
+          seenAt:new Date(),
+          status:"seen"
+        }
+      }
+    );
+
+    return res.json({ success:true });
+  }catch(error){
+    console.error("READ FAMILY CHAT ERROR:",error);
+    return res.status(500).json({
+      success:false,
+      message:"Could not mark Family messages as read"
+    });
+  }
+});
+
+router.post("/chat/:conversationId/messages",async (req,res) => {
+  try{
+    const senderId = req.user._id || req.user.id;
+    const textValue = cleanString(req.body?.text,10000);
+
+    if(!textValue){
+      return res.status(400).json({
+        success:false,
+        message:"Write a message first."
+      });
+    }
+
+    const conversation = await loadFamilyConversation(
+      req.params.conversationId,
+      senderId
+    );
+
+    if(!conversation){
+      return res.status(404).json({
+        success:false,
+        message:"Family conversation not found"
+      });
+    }
+
+    if(await hasMessagingRestriction(senderId)){
+      return res.status(403).json({
+        success:false,
+        code:"AIFT_FAMILY_MESSAGING_RESTRICTED",
+        message:"Family messaging is restricted pending AIFT review."
+      });
+    }
+
+    const recipientId = (conversation.participantIds || [])
+      .map(String)
+      .find(value => value !== String(senderId));
+
+    if(!recipientId){
+      return res.status(400).json({
+        success:false,
+        message:"The Family chat recipient is unavailable."
+      });
+    }
+
+    const safety = await enforceContactSafety({
+      user:req.user,
+      text:textValue,
+      conversationId:conversation._id,
+      receiverId:recipientId
+    });
+
+    if(!safety.allowed){
+      return res.status(safety.statusCode).json({
+        success:false,
+        code:"AIFT_FAMILY_CONTACT_SHARING_BLOCKED",
+        message:safety.message,
+        warningNumber:safety.warningNumber,
+        action:safety.action
+      });
+    }
+
+    const mode =
+      conversation.metadata?.familyChat?.mode === "investor"
+        ? "investor"
+        : "family";
+
+    const anonymousIds = familyChatAnonymousIds(conversation);
+    const anonymous =
+      mode === "investor" &&
+      anonymousIds.has(String(senderId));
+
+    const message = await Message.create({
+      conversationId:conversation._id,
+      sender:senderId,
+      receiver:recipientId,
+      participants:conversation.participantIds,
+      text:textValue,
+      messageType:"text",
+      metadata:{
+        source:"family_chat",
+        ipAddress:req.ip,
+        userAgent:req.headers["user-agent"],
+        familyChat:{
+          anonymous,
+          senderAlias:anonymous
+            ? "Anonymous Investor"
+            : "",
+          mode
+        }
+      }
+    });
+
+    conversation.setLastMessage(message);
+    conversation.incrementUnreadForOthers(senderId);
+    await conversation.save();
+
+    const populated = await Message.findById(message._id)
+      .populate(
+        "sender",
+        "name companyName schoolName role profileImage logo"
+      )
+      .lean();
+
+    const io = req.app.get("io") || req.io;
+
+    io?.to(String(recipientId)).emit("familyMessage",{
+      conversationId:String(conversation._id),
+      messageId:String(message._id)
+    });
+
+    return res.status(201).json({
+      success:true,
+      message:serializeFamilyMessage(
+        populated,
+        senderId,
+        conversation
+      )
+    });
+  }catch(error){
+    console.error("SEND FAMILY CHAT MESSAGE ERROR:",error);
+    return res.status(500).json({
+      success:false,
+      message:"Could not send the Family message"
     });
   }
 });

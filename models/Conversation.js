@@ -332,14 +332,34 @@ enum: [
   "class",
   "support",
   "system",
-  "meeting_invite"
+  "meeting_invite",
+  "family_chat"
 ],
         default: "manual"
       },
 
       clientConversationId: String,
       ipAddress: String,
-      userAgent: String
+      userAgent: String,
+
+      familyChat: {
+        mode: {
+          type: String,
+          enum: ["family","investor"],
+          default: "family"
+        },
+        anonymousInvestorIds: [
+          {
+            type: Schema.Types.ObjectId,
+            ref: "User"
+          }
+        ],
+        createdFrom: {
+          type: String,
+          trim: true,
+          maxlength: 100
+        }
+      }
     }
   },
   {
