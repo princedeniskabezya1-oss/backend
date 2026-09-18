@@ -10,9 +10,6 @@ const path = require("path");
 const MAX_UPLOAD_SIZE =
   100 * 1024 * 1024;
 
-const MAX_POST_MEDIA_SIZE =
-  250 * 1024 * 1024;
-
 const ALLOWED_MIME_TYPES =
 new Set([
 
@@ -207,12 +204,10 @@ module.exports.postMedia = multer({
       callback(null, `aift-post-${crypto.randomUUID()}${extension}`);
     }
   }),
-  limits: { fileSize: MAX_POST_MEDIA_SIZE, files: 10, fields: 40, fieldSize: 1024 * 1024 },
+  limits: { files: 10, fields: 40, fieldSize: 1024 * 1024 },
   fileFilter(req, file, callback) {
     if (/^(image|video)\//i.test(file.mimetype || "")) return callback(null, true);
     callback(new Error("Please choose an image or video file."));
   }
 });
 
-module.exports.MAX_POST_MEDIA_SIZE =
-  MAX_POST_MEDIA_SIZE;
