@@ -72,6 +72,63 @@ async function completePayment(payment, capture, method="paypal"){
 
 router.get("/config", (req,res) => res.json({ enabled:configured(), clientId:configured()?process.env.PAYPAL_CLIENT_ID:"", mode:liveMode()?"live":"sandbox" }));
 
+router.get("/venture/:ventureId/contributors", async(req,res) => {
+  try{
+    const ventureId=String(req.params.ventureId||"").trim();
+    if(!mongoose.Types.ObjectId.isValid(ventureId)){
+      return res.status(400).json({message:"Invalid venture ID."});
+    }
+
+    const venture=await Venture.findById(ventureId)
+      .select("_id title status visibility fundingRaised currency")
+      .lean();
+
+    if(!venture || venture.visibility!=="public" || !["active","funded","closed"].includes(venture.status)){
+      return res.status(404).json({message:"Venture not found."});
+    }
+
+    const payments=await Payment.find({
+      productType:"venture_contribution",
+      productId:venture._id,
+      status:"paid"
+    })
+      .populate("userId","name companyName schoolName profileImage logo")
+      .select("userId amount currency paidAt createdAt metadata")
+      .sort({paidAt:-1,createdAt:-1})
+      .limit(250)
+      .lean();
+
+    const contributors=payments.map(payment=>{
+      const anonymous=payment.metadata?.publicContributor===false;
+      const user=payment.userId||{};
+      const displayName=anonymous
+        ? "Anonymous"
+        : String(user.companyName||user.schoolName||user.name||"AIFT Supporter").trim();
+
+      return {
+        id:String(payment._id),
+        displayName,
+        profileImage:anonymous ? "" : String(user.profileImage||user.logo||""),
+        anonymous,
+        amount:money(payment.amount),
+        currency:String(payment.currency||venture.currency||"PHP").toUpperCase(),
+        paidAt:payment.paidAt||payment.createdAt
+      };
+    });
+
+    return res.json({
+      ventureId:String(venture._id),
+      count:contributors.length,
+      fundingRaised:money(venture.fundingRaised),
+      currency:String(venture.currency||"PHP").toUpperCase(),
+      contributors
+    });
+  }catch(error){
+    console.error("LOAD VENTURE CONTRIBUTORS ERROR:",error.message);
+    return res.status(500).json({message:"Unable to load venture contributors."});
+  }
+});
+
 router.get("/mine", auth, async(req,res) => {
   try{
     const payments=await Payment.find({userId:req.user._id})
@@ -97,7 +154,26 @@ router.post("/orders", auth, async(req,res) => {
     const response=await fetch(`${PAYPAL_BASE}/v2/checkout/orders`, { method:"POST", headers:{ Authorization:`Bearer ${token}`, "Content-Type":"application/json", "PayPal-Request-Id":requestId }, body:JSON.stringify({ intent:"CAPTURE", purchase_units:[{ reference_id:requestId, description:q.name.slice(0,127), custom_id:`${q.type}:${q.productId||"travel"}:${req.user._id}`, amount:{ currency_code:q.currency, value:q.amount.toFixed(2) } }], application_context:{ shipping_preference:"NO_SHIPPING", user_action:"PAY_NOW" } }) });
     const order=await response.json().catch(()=>({}));
     if(!response.ok || !order.id) return res.status(502).json({message:order.message||"PayPal could not create this order."});
-    await Payment.create({ userId:req.user._id, productType:q.type, productId:q.productId, productName:q.name, amount:q.amount, currency:q.currency, method:"paypal", status:"pending", providerOrderId:order.id, metadata:{ returnUrl:q.returnUrl } });
+    const paymentMetadata={
+      returnUrl:q.returnUrl
+    };
+
+    if(q.type==="venture_contribution"){
+      paymentMetadata.publicContributor=req.body?.anonymous!==true;
+    }
+
+    await Payment.create({
+      userId:req.user._id,
+      productType:q.type,
+      productId:q.productId,
+      productName:q.name,
+      amount:q.amount,
+      currency:q.currency,
+      method:"paypal",
+      status:"pending",
+      providerOrderId:order.id,
+      metadata:paymentMetadata
+    });
     res.status(201).json({ id:order.id });
   }catch(error){ console.error("CREATE PAYMENT ORDER ERROR:",error.message); res.status(error.status||500).json({message:error.message||"Unable to start payment."}); }
 });
