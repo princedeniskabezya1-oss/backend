@@ -1,6 +1,7 @@
 const express = require("express");
 const mongoose = require("mongoose");
 const Notification = require("../models/Notification");
+const User = require("../models/User");
 const FamilyStudentLinkRequest = require("../models/FamilyStudentLinkRequest");
 const FamilyChild = require("../models/FamilyChild");
 const Group = require("../models/Group");
@@ -16,7 +17,7 @@ const userId = req => req.user?._id || req.user?.id;
 const validId = value => mongoose.Types.ObjectId.isValid(value);
 const emit = (req,event,payload) => req.app.get("io")?.to(String(userId(req))).emit(event,payload);
 const escapeRegExp = value => String(value).replace(/[.*+?^${}()|[\]\\]/g,"\\$&");
-const NETWORK_TYPES=["follow","group_invite","family_link_request","family_link_accepted","family_link_declined","family_link_revoked"];
+const NETWORK_TYPES=["follow","follow_request","group_invite","family_link_request","family_link_accepted","family_link_declined","family_link_revoked"];
 const JOB_TYPES=["job_invite","job_update","opportunity"];
 
 function baseQuery(req){
@@ -160,7 +161,77 @@ router.post("/:id/action",auth,async(req,res)=>{
     if(notification.actionState&&notification.actionState!=="pending")return res.status(409).json({message:"This notification was already handled"});
     const action=String(req.body.action||"");
     if(!["accept","decline"].includes(action))return res.status(400).json({message:"Invalid notification action"});
-    if(notification.type==="family_link_request"){
+    if(notification.type==="follow_request"){
+      const requesterId=notification.metadata?.requesterId||notification.sender;
+      const targetId=userId(req);
+
+      if(!requesterId||!validId(requesterId)){
+        return res.status(409).json({message:"This follow request is no longer available"});
+      }
+
+      const [requester,target]=await Promise.all([
+        User.findById(requesterId).select("_id name following followRequestsSent status"),
+        User.findById(targetId).select("_id name followers status")
+      ]);
+
+      if(!requester||!target||requester.status==="suspended"||target.status==="suspended"){
+        return res.status(409).json({message:"This follow request is no longer available"});
+      }
+
+      const pending=(requester.followRequestsSent||[]).some(id=>String(id)===String(targetId));
+      const alreadyFollowing=(requester.following||[]).some(id=>String(id)===String(targetId));
+
+      if(!pending&&!alreadyFollowing){
+        return res.status(409).json({message:"This follow request is no longer available"});
+      }
+
+      if(action==="accept"){
+        await Promise.all([
+          User.updateOne(
+            {_id:requesterId},
+            {$pull:{followRequestsSent:targetId},$addToSet:{following:targetId}}
+          ),
+          User.updateOne(
+            {_id:targetId},
+            {$addToSet:{followers:requesterId}}
+          )
+        ]);
+
+        const acceptedNotice=await Notification.create({
+          user:requesterId,
+          sender:targetId,
+          type:"follow",
+          title:"Follow request accepted",
+          text:`${target.name||"This user"} accepted your follow request`,
+          link:`/public-profile.html?id=${targetId}`,
+          entityType:"follow",
+          entityId:targetId,
+          priority:"normal",
+          groupKey:`follow-accepted:${targetId}:${requesterId}`
+        });
+
+        req.app.get("io")?.to(String(requesterId)).emit("newNotification",acceptedNotice);
+        req.app.get("io")?.to(String(requesterId)).emit("user_follow_updated",{
+          followerId:requesterId,
+          targetId,
+          following:true,
+          requested:false,
+          followers:(target.followers||[]).length+((target.followers||[]).some(id=>String(id)===String(requesterId))?0:1)
+        });
+      }else{
+        await User.updateOne(
+          {_id:requesterId},
+          {$pull:{followRequestsSent:targetId}}
+        );
+
+        req.app.get("io")?.to(String(requesterId)).emit("user_follow_updated",{
+          followerId:requesterId,
+          targetId,
+          following:false,
+          requested:false
+        });
+      }
+    }else if(notification.type==="family_link_request"){
       const request=await FamilyStudentLinkRequest.findOne({_id:notification.metadata?.requestId,studentId:userId(req),status:"pending"});
       if(!request)return res.status(409).json({message:"This request is no longer available"});
       request.status=action==="accept"?"accepted":"declined";request.respondedAt=new Date();await request.save();
