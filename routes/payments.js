@@ -153,6 +153,17 @@ router.post("/quote", auth, async(req,res) => { try{ const q=await quote(req.bod
 router.post("/orders", auth, async(req,res) => {
   try{
     const q=await quote(req.body);
+
+    if(
+      q.type === "venture_contribution" &&
+      req.body?.termsAccepted !== true
+    ){
+      return res.status(400).json({
+        code:"AIFT_VENTURE_POLICY_REQUIRED",
+        message:"You must read and agree to the AIFT Venture Support & Payment Policy before making a contribution."
+      });
+    }
+
     if(q.type === "course" && q.course.studentIds.map(String).includes(String(req.user._id))) return res.status(409).json({message:"You are already enrolled in this course."});
     const token=await accessToken();
     const requestId=crypto.randomUUID();
@@ -165,6 +176,12 @@ router.post("/orders", auth, async(req,res) => {
 
     if(q.type==="venture_contribution"){
       paymentMetadata.publicContributor=req.body?.anonymous!==true;
+      paymentMetadata.venturePolicyAccepted=true;
+      paymentMetadata.venturePolicyVersion=String(
+        req.body?.termsVersion ||
+        "venture-support-policy-2026-09-19"
+      ).slice(0,100);
+      paymentMetadata.venturePolicyAcceptedAt=new Date();
     }
 
     await Payment.create({
