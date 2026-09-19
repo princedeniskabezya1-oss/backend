@@ -778,6 +778,16 @@ router.get("/media-upload-signature", auth, (req, res) => {
         ? "video"
         : "image";
 
+    // Videos no longer use Cloudinary from the feed. Blocking the legacy
+    // signature path prevents stale mobile clients from uploading an entire
+    // large video only to hit Cloudinary's 100 MB plan limit at the end.
+    if (resourceType === "video") {
+      return res.status(409).json({
+        message:
+          "AIFT video uploads were upgraded. Refresh AIFT and try again so this video uploads directly to R2."
+      });
+    }
+
     const timestamp = Math.floor(Date.now() / 1000);
     const folder = "aift_posts";
 
