@@ -87,16 +87,21 @@ router.get("/venture/:ventureId/contributors", async(req,res) => {
       return res.status(404).json({message:"Venture not found."});
     }
 
-    const payments=await Payment.find({
+    const contributionQuery={
       productType:"venture_contribution",
       productId:venture._id,
       status:"paid"
-    })
-      .populate("userId","name companyName schoolName profileImage logo")
-      .select("userId amount currency paidAt createdAt metadata")
-      .sort({paidAt:-1,createdAt:-1})
-      .limit(250)
-      .lean();
+    };
+
+    const [payments,totalCount]=await Promise.all([
+      Payment.find(contributionQuery)
+        .populate("userId","name companyName schoolName profileImage logo")
+        .select("userId amount currency paidAt createdAt metadata")
+        .sort({paidAt:-1,createdAt:-1})
+        .limit(250)
+        .lean(),
+      Payment.countDocuments(contributionQuery)
+    ]);
 
     const contributors=payments.map(payment=>{
       const anonymous=payment.metadata?.publicContributor===false;
@@ -118,7 +123,7 @@ router.get("/venture/:ventureId/contributors", async(req,res) => {
 
     return res.json({
       ventureId:String(venture._id),
-      count:contributors.length,
+      count:totalCount,
       fundingRaised:money(venture.fundingRaised),
       currency:String(venture.currency||"PHP").toUpperCase(),
       contributors
