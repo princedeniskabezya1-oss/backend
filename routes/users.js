@@ -568,6 +568,17 @@ router.post(
 router.get("/me", auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
+    if(!user){
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const Post = require("../models/Post");
+    const impressions = await Post.aggregate([
+      { $match: { author: user._id, isHiddenByAdmin: { $ne: true } } },
+      { $group: { _id: null, total: { $sum: { $ifNull: ["$viewsCount", 0] } } } }
+    ]);
+
+    const postImpressions = Number(impressions?.[0]?.total || 0);
 
     let score = 0;
     if (user.profileImage) score += 15;
@@ -579,10 +590,102 @@ router.get("/me", auth, async (req, res) => {
 
     res.json({
       ...user.toObject(),
+      postImpressions,
       completeness: score
     });
   } catch (err) {
+    console.error("GET CURRENT USER ERROR:", err);
     res.status(500).json({ message: "Failed to load user" });
+  }
+});
+
+router.patch("/:id/profile-view", auth, async (req, res) => {
+  try {
+    const targetId = String(req.params.id || "");
+    const viewerId = String(req.user?._id || req.user?.id || "");
+
+    if(!validObjectId(targetId)){
+      return res.status(400).json({ message: "Invalid profile ID." });
+    }
+
+    if(!viewerId || viewerId === targetId){
+      const target = await User.findById(targetId).select("_id profileViews").lean();
+      return res.json({
+        profileViews: Number(target?.profileViews || 0),
+        counted: false
+      });
+    }
+
+    const [viewer, target] = await Promise.all([
+      User.findById(viewerId).select("_id name companyName schoolName profileImage role status").lean(),
+      User.findById(targetId).select("_id name role profileViews uniqueProfileViewers isPublic status")
+    ]);
+
+    if(!viewer){
+      return res.status(401).json({ message: "Viewer account not found." });
+    }
+
+    if(!target || target.status === "suspended"){
+      return res.status(404).json({ message: "Profile not found." });
+    }
+
+    if(target.isPublic === false){
+      return res.status(403).json({ message: "This profile is private." });
+    }
+
+    target.uniqueProfileViewers = Array.isArray(target.uniqueProfileViewers)
+      ? target.uniqueProfileViewers
+      : [];
+
+    const alreadyViewed = target.uniqueProfileViewers.some(
+      id => String(id) === viewerId
+    );
+
+    if(!alreadyViewed){
+      target.uniqueProfileViewers.addToSet(viewerId);
+      target.profileViews = Number(target.profileViews || 0) + 1;
+      await target.save({ validateModifiedOnly: true });
+
+      const viewerName =
+        viewer.companyName ||
+        viewer.schoolName ||
+        viewer.name ||
+        "An AIFT member";
+
+      const notification = await Notification.create({
+        user: target._id,
+        sender: viewer._id,
+        type: "profile_view",
+        title: "Profile view",
+        text: `${viewerName} viewed your profile`,
+        link: `/public-profile.html?id=${viewer._id}`,
+        entityType: "profile",
+        entityId: target._id,
+        priority: "normal",
+        groupKey: `profile-view:${target._id}:${viewer._id}`,
+        metadata: {
+          viewerId: String(viewer._id),
+          profileId: String(target._id)
+        }
+      });
+
+      const io = req.app.get("io");
+      io?.to(String(target._id)).emit("newNotification", notification);
+      io?.to(String(target._id)).emit("profile_viewed", {
+        profileId: String(target._id),
+        viewerId: String(viewer._id),
+        profileViews: Number(target.profileViews || 0)
+      });
+      io?.to(String(target._id)).emit("navigationCountsUpdated", { category: "notifications" });
+    }
+
+    return res.json({
+      profileViews: Number(target.profileViews || 0),
+      counted: !alreadyViewed
+    });
+  } catch (error) {
+    console.error("PROFILE VIEW ERROR:", error);
+    return res.status(500).json({ message: "Failed to record profile view." });
   }
 });
 
@@ -5267,30 +5370,6 @@ router.get("/:id/public", async (req, res) => {
         message: "This profile is private"
       });
     }
-
-/*
-  School profile views are recorded through the dedicated
-  analytics event endpoint, which provides:
-
-  - session deduplication
-  - self-view prevention
-  - unique visitor tracking
-  - traffic-source tracking
-  - device tracking
-
-  Continue preserving the legacy counter behavior for other
-  profile roles until their analytics migration is completed.
-*/
-if (user.role !== "school") {
-  user.profileViews =
-    Number(
-      user.profileViews || 0
-    ) + 1;
-
-  await user.save({
-    validateModifiedOnly: true
-  });
-}
 
     let posts = [];
 
