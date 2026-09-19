@@ -824,6 +824,46 @@ function normalizeDirectMedia(value) {
 /* ==========================
    CREATE POST
 ========================== */
+
+router.post("/direct", auth, async (req, res) => {
+  try {
+    const text = String(req.body?.text || "").trim();
+    const directMedia = normalizeDirectMedia(req.body?.media);
+    const hasMedia = directMedia.length > 0;
+
+    if (!text && !hasMedia) {
+      return res.status(400).json({ message: "Post content or media is required" });
+    }
+
+    const mediaUrl = directMedia[0]?.url || null;
+    const mediaType = directMedia[0]?.type || null;
+
+    const post = await Post.create({
+      author: req.user.id,
+      groupId: null,
+      text,
+      media: directMedia,
+      mediaUrl,
+      mediaType,
+      repostOf: null,
+      likes: [],
+      comments: [],
+      uniqueViewers: [],
+      sharesCount: 0,
+      viewsCount: 0,
+      engagementScore: 0
+    });
+
+    const populated = await populatePost(post._id);
+    getIo(req)?.emit("post_created", populated);
+
+    return res.status(201).json(populated);
+  } catch (err) {
+    console.error("CREATE DIRECT POST ERROR:", err.message);
+    return res.status(500).json({ message: err.message || "Could not publish post." });
+  }
+});
+
 function receivePostMedia(req, res, next) {
   upload.postMedia.array("media", 10)(req, res, error => {
     if (!error) return next();
