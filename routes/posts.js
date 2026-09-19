@@ -857,7 +857,12 @@ function getR2Config() {
   };
 }
 
-function createR2PresignedPut({ key, contentType, expiresIn = 900 }) {
+function createR2PresignedPut({
+  key,
+  contentType,
+  expiresIn = 900,
+  extraQuery = {}
+}) {
   const config = getR2Config();
   const now = new Date();
   const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
@@ -871,6 +876,7 @@ function createR2PresignedPut({ key, contentType, expiresIn = 900 }) {
     `${config.endpointPath}/${encodeR2Path(key)}`.replace(/\/+/g, "/");
 
   const query = {
+    ...extraQuery,
     "X-Amz-Algorithm": algorithm,
     "X-Amz-Credential": `${config.accessKeyId}/${credentialScope}`,
     "X-Amz-Date": amzDate,
@@ -884,7 +890,7 @@ function createR2PresignedPut({ key, contentType, expiresIn = 900 }) {
     .join("&");
 
   const canonicalHeaders =
-    `content-type:${contentType.trim()}\n` +
+    `content-type:${String(contentType || "").trim()}\n` +
     `host:${config.endpoint.host}\n`;
 
   const canonicalRequest = [
@@ -918,6 +924,141 @@ function createR2PresignedPut({ key, contentType, expiresIn = 900 }) {
   return { uploadUrl, publicUrl, expiresIn };
 }
 
+function r2CanonicalQuery(query = {}) {
+  return Object.keys(query)
+    .sort()
+    .map(name => `${encodeR2Query(name)}=${encodeR2Query(query[name])}`)
+    .join("&");
+}
+
+function r2NormalizeHeaderValue(value) {
+  return String(value == null ? "" : value).trim().replace(/\s+/g, " ");
+}
+
+async function r2SignedRequest({
+  method,
+  key,
+  query = {},
+  body = "",
+  headers = {}
+}) {
+  const config = getR2Config();
+  const now = new Date();
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const dateStamp = amzDate.slice(0, 8);
+  const region = "auto";
+  const service = "s3";
+  const algorithm = "AWS4-HMAC-SHA256";
+  const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
+  const canonicalUri =
+    `${config.endpointPath}/${encodeR2Path(key)}`.replace(/\/+/g, "/");
+  const canonicalQuery = r2CanonicalQuery(query);
+  const bodyBuffer = Buffer.isBuffer(body) ? body : Buffer.from(String(body), "utf8");
+  const payloadHash = crypto.createHash("sha256").update(bodyBuffer).digest("hex");
+
+  const requestHeaders = {
+    ...Object.fromEntries(
+      Object.entries(headers).map(([name, value]) => [
+        String(name).toLowerCase(),
+        r2NormalizeHeaderValue(value)
+      ])
+    ),
+    host: config.endpoint.host,
+    "x-amz-content-sha256": payloadHash,
+    "x-amz-date": amzDate
+  };
+
+  const signedHeaderNames = Object.keys(requestHeaders).sort();
+  const signedHeaders = signedHeaderNames.join(";");
+  const canonicalHeaders =
+    signedHeaderNames.map(name => `${name}:${requestHeaders[name]}\n`).join("");
+
+  const canonicalRequest = [
+    String(method || "GET").toUpperCase(),
+    canonicalUri,
+    canonicalQuery,
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash
+  ].join("\n");
+
+  const stringToSign = [
+    algorithm,
+    amzDate,
+    credentialScope,
+    crypto.createHash("sha256").update(canonicalRequest).digest("hex")
+  ].join("\n");
+
+  const signature = crypto
+    .createHmac(
+      "sha256",
+      r2SigningKey(config.secretAccessKey, dateStamp, region, service)
+    )
+    .update(stringToSign)
+    .digest("hex");
+
+  const authorization =
+    `${algorithm} Credential=${config.accessKeyId}/${credentialScope}, ` +
+    `SignedHeaders=${signedHeaders}, Signature=${signature}`;
+
+  const url =
+    `${config.endpoint.origin}${canonicalUri}` +
+    (canonicalQuery ? `?${canonicalQuery}` : "");
+
+  const fetchHeaders = {
+    ...requestHeaders,
+    Authorization: authorization
+  };
+  delete fetchHeaders.host;
+
+  return fetch(url, {
+    method: String(method || "GET").toUpperCase(),
+    headers: fetchHeaders,
+    body: bodyBuffer.length ? bodyBuffer : undefined
+  });
+}
+
+function xmlEscape(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function parseR2UploadId(xml) {
+  const match = String(xml || "").match(/<UploadId>([\s\S]*?)<\/UploadId>/i);
+  if (!match) return "";
+
+  return match[1]
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'");
+}
+
+function r2UserPrefix(req) {
+  const userId = String(req.user?.id || "user").replace(/[^a-zA-Z0-9_-]/g, "");
+  return `posts/${userId}/`;
+}
+
+function assertOwnedR2Key(req, key) {
+  const value = String(key || "").trim();
+  if (!value || !value.startsWith(r2UserPrefix(req))) {
+    const error = new Error("Invalid R2 upload key.");
+    error.status = 400;
+    throw error;
+  }
+  return value;
+}
+
+function buildR2VideoKey(req, extension) {
+  const day = new Date().toISOString().slice(0, 10);
+  return `${r2UserPrefix(req)}${day}/${crypto.randomUUID()}.${extension}`;
+}
+
 function safeR2VideoExtension(filename, contentType) {
   const byMime = {
     "video/mp4": "mp4",
@@ -949,33 +1090,40 @@ function safeR2VideoExtension(filename, contentType) {
     : "";
 }
 
+function validateR2VideoRequest(body) {
+  const filename = String(body?.filename || "video").trim();
+  const contentType = String(body?.contentType || "")
+    .toLowerCase()
+    .split(";")[0]
+    .trim();
+  const size = Number(body?.size || 0);
+  const extension = safeR2VideoExtension(filename, contentType);
+
+  if (!extension || !contentType.startsWith("video/")) {
+    const error = new Error("Only recognized video files can be uploaded to R2.");
+    error.status = 400;
+    throw error;
+  }
+
+  if (!Number.isFinite(size) || size <= 0) {
+    const error = new Error("Video file size is required.");
+    error.status = 400;
+    throw error;
+  }
+
+  if (size > 5 * 1024 * 1024 * 1024) {
+    const error = new Error("This video is larger than AIFT's current 5 GB upload limit.");
+    error.status = 413;
+    throw error;
+  }
+
+  return { filename, contentType, size, extension };
+}
+
 router.post("/media-upload-r2-url", auth, express.json({ limit: "32kb" }), (req, res) => {
   try {
-    const filename = String(req.body?.filename || "video").trim();
-    const contentType = String(req.body?.contentType || "").toLowerCase().split(";")[0].trim();
-    const size = Number(req.body?.size || 0);
-    const extension = safeR2VideoExtension(filename, contentType);
-
-    if (!extension || !contentType.startsWith("video/")) {
-      return res.status(400).json({
-        message: "Only recognized video files can be uploaded to R2."
-      });
-    }
-
-    if (!Number.isFinite(size) || size <= 0) {
-      return res.status(400).json({ message: "Video file size is required." });
-    }
-
-    if (size > 5 * 1024 * 1024 * 1024) {
-      return res.status(413).json({
-        message: "This video is larger than the current 5 GB direct-upload limit."
-      });
-    }
-
-    const userId = String(req.user.id || "user").replace(/[^a-zA-Z0-9_-]/g, "");
-    const day = new Date().toISOString().slice(0, 10);
-    const objectId = crypto.randomUUID();
-    const key = `posts/${userId}/${day}/${objectId}.${extension}`;
+    const { contentType, extension } = validateR2VideoRequest(req.body);
+    const key = buildR2VideoKey(req, extension);
 
     const signed = createR2PresignedPut({
       key,
@@ -991,11 +1139,217 @@ router.post("/media-upload-r2-url", auth, express.json({ limit: "32kb" }), (req,
     });
   } catch (err) {
     console.error("R2 PRESIGN ERROR:", err.message);
-    return res.status(500).json({
-      message: "Could not prepare the video upload."
+    return res.status(Number(err.status || 500)).json({
+      message: err.message || "Could not prepare the video upload."
     });
   }
 });
+
+router.post(
+  "/media-upload-r2-multipart/start",
+  auth,
+  express.json({ limit: "32kb" }),
+  async (req, res) => {
+    try {
+      const { contentType, extension } = validateR2VideoRequest(req.body);
+      const key = buildR2VideoKey(req, extension);
+
+      const response = await r2SignedRequest({
+        method: "POST",
+        key,
+        query: { uploads: "" },
+        headers: { "content-type": contentType }
+      });
+
+      const responseText = await response.text();
+
+      if (!response.ok) {
+        console.error(
+          "R2 MULTIPART START ERROR:",
+          response.status,
+          responseText.slice(0, 500)
+        );
+        return res.status(502).json({
+          message: "R2 could not start the large video upload."
+        });
+      }
+
+      const uploadId = parseR2UploadId(responseText);
+      if (!uploadId) {
+        console.error("R2 MULTIPART START ERROR: missing UploadId");
+        return res.status(502).json({
+          message: "R2 started the upload without returning an upload ID."
+        });
+      }
+
+      const config = getR2Config();
+      return res.json({
+        uploadId,
+        key,
+        publicUrl: `${config.publicUrl}/${encodeR2Path(key)}`,
+        contentType,
+        partSize: 25 * 1024 * 1024,
+        type: "video"
+      });
+    } catch (err) {
+      console.error("R2 MULTIPART START ERROR:", err.message);
+      return res.status(Number(err.status || 500)).json({
+        message: err.message || "Could not start the large video upload."
+      });
+    }
+  }
+);
+
+router.post(
+  "/media-upload-r2-multipart/part-url",
+  auth,
+  express.json({ limit: "32kb" }),
+  (req, res) => {
+    try {
+      const key = assertOwnedR2Key(req, req.body?.key);
+      const uploadId = String(req.body?.uploadId || "").trim();
+      const partNumber = Number(req.body?.partNumber || 0);
+
+      if (!uploadId || !Number.isInteger(partNumber) || partNumber < 1 || partNumber > 10000) {
+        return res.status(400).json({ message: "Invalid multipart upload part." });
+      }
+
+      const signed = createR2PresignedPut({
+        key,
+        contentType: "application/octet-stream",
+        expiresIn: 15 * 60,
+        extraQuery: {
+          partNumber: String(partNumber),
+          uploadId
+        }
+      });
+
+      return res.json({
+        uploadUrl: signed.uploadUrl,
+        expiresIn: signed.expiresIn,
+        partNumber
+      });
+    } catch (err) {
+      console.error("R2 MULTIPART PART URL ERROR:", err.message);
+      return res.status(Number(err.status || 500)).json({
+        message: err.message || "Could not prepare the video part."
+      });
+    }
+  }
+);
+
+router.post(
+  "/media-upload-r2-multipart/complete",
+  auth,
+  express.json({ limit: "256kb" }),
+  async (req, res) => {
+    try {
+      const key = assertOwnedR2Key(req, req.body?.key);
+      const uploadId = String(req.body?.uploadId || "").trim();
+      const parts = Array.isArray(req.body?.parts) ? req.body.parts : [];
+
+      if (!uploadId || !parts.length || parts.length > 10000) {
+        return res.status(400).json({ message: "Invalid multipart completion request." });
+      }
+
+      const normalizedParts = parts
+        .map(part => ({
+          partNumber: Number(part?.partNumber || 0),
+          etag: String(part?.etag || "").trim()
+        }))
+        .filter(part =>
+          Number.isInteger(part.partNumber) &&
+          part.partNumber >= 1 &&
+          part.partNumber <= 10000 &&
+          part.etag
+        )
+        .sort((a, b) => a.partNumber - b.partNumber);
+
+      if (normalizedParts.length !== parts.length) {
+        return res.status(400).json({ message: "One or more uploaded video parts are invalid." });
+      }
+
+      const body =
+        "<CompleteMultipartUpload>" +
+        normalizedParts
+          .map(part =>
+            `<Part><PartNumber>${part.partNumber}</PartNumber><ETag>${xmlEscape(part.etag)}</ETag></Part>`
+          )
+          .join("") +
+        "</CompleteMultipartUpload>";
+
+      const response = await r2SignedRequest({
+        method: "POST",
+        key,
+        query: { uploadId },
+        body,
+        headers: { "content-type": "application/xml" }
+      });
+
+      const responseText = await response.text();
+
+      if (!response.ok || /<Error>/i.test(responseText)) {
+        console.error(
+          "R2 MULTIPART COMPLETE ERROR:",
+          response.status,
+          responseText.slice(0, 700)
+        );
+        return res.status(502).json({
+          message: "R2 received the video parts but could not finish the upload."
+        });
+      }
+
+      const config = getR2Config();
+      return res.json({
+        url: `${config.publicUrl}/${encodeR2Path(key)}`,
+        type: "video"
+      });
+    } catch (err) {
+      console.error("R2 MULTIPART COMPLETE ERROR:", err.message);
+      return res.status(Number(err.status || 500)).json({
+        message: err.message || "Could not finish the large video upload."
+      });
+    }
+  }
+);
+
+router.post(
+  "/media-upload-r2-multipart/abort",
+  auth,
+  express.json({ limit: "32kb" }),
+  async (req, res) => {
+    try {
+      const key = assertOwnedR2Key(req, req.body?.key);
+      const uploadId = String(req.body?.uploadId || "").trim();
+
+      if (!uploadId) {
+        return res.status(400).json({ message: "Upload ID is required." });
+      }
+
+      const response = await r2SignedRequest({
+        method: "DELETE",
+        key,
+        query: { uploadId }
+      });
+
+      if (!response.ok && response.status !== 404) {
+        const responseText = await response.text();
+        console.error(
+          "R2 MULTIPART ABORT ERROR:",
+          response.status,
+          responseText.slice(0, 500)
+        );
+      }
+
+      return res.status(204).end();
+    } catch (err) {
+      console.error("R2 MULTIPART ABORT ERROR:", err.message);
+      return res.status(Number(err.status || 500)).json({
+        message: err.message || "Could not cancel the large video upload."
+      });
+    }
+  }
+);
 
 function normalizeDirectMedia(value) {
   if (!Array.isArray(value)) return [];
