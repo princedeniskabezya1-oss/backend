@@ -252,6 +252,14 @@ deletionScheduledFor: {
       default: []
     },
 
+    followRequestsSent: {
+      type: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User"
+      }],
+      default: []
+    },
+
 
     /* ============================================
        FAMILY & INVESTOR PROFILE
