@@ -15,6 +15,7 @@ const notificationSchema = new mongoose.Schema({
       "group_invite",
       "group_update",
       "follow",
+      "follow_request",
       "like",
       "comment",
       "comment_reply",
