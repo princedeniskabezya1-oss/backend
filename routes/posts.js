@@ -2,6 +2,7 @@
 
 const express = require("express");
 const mongoose = require("mongoose");
+const crypto = require("crypto");
 
 const router = express.Router();
 
@@ -801,13 +802,210 @@ router.get("/media-upload-signature", auth, (req, res) => {
   }
 });
 
+function encodeR2Path(value) {
+  return String(value || "")
+    .split("/")
+    .filter(Boolean)
+    .map(part => encodeURIComponent(part).replace(/[!'()*]/g, char =>
+      `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+    ))
+    .join("/");
+}
+
+function encodeR2Query(value) {
+  return encodeURIComponent(String(value))
+    .replace(/[!'()*]/g, char =>
+      `%${char.charCodeAt(0).toString(16).toUpperCase()}`
+    );
+}
+
+function r2SigningKey(secret, dateStamp, region, service) {
+  const hmac = (key, value) =>
+    crypto.createHmac("sha256", key).update(value).digest();
+
+  const dateKey = hmac(Buffer.from(`AWS4${secret}`, "utf8"), dateStamp);
+  const regionKey = hmac(dateKey, region);
+  const serviceKey = hmac(regionKey, service);
+  return hmac(serviceKey, "aws4_request");
+}
+
+function getR2Config() {
+  const endpointRaw = String(process.env.R2_ENDPOINT || "").trim().replace(/\/+$/, "");
+  const accessKeyId = String(process.env.R2_ACCESS_KEY_ID || "").trim();
+  const secretAccessKey = String(process.env.R2_SECRET_ACCESS_KEY || "").trim();
+  const bucket = String(process.env.R2_BUCKET_NAME || "").trim();
+  const publicUrl = String(process.env.R2_PUBLIC_URL || "").trim().replace(/\/+$/, "");
+
+  if (!endpointRaw || !accessKeyId || !secretAccessKey || !bucket || !publicUrl) {
+    throw new Error("R2 media storage is not fully configured.");
+  }
+
+  const endpoint = new URL(endpointRaw);
+  const encodedBucket = encodeR2Path(bucket);
+  const endpointPath = endpoint.pathname.replace(/\/+$/, "");
+  const hasBucketPath =
+    endpointPath === `/${encodedBucket}` ||
+    endpointPath.endsWith(`/${encodedBucket}`);
+
+  return {
+    endpoint,
+    endpointPath: hasBucketPath ? endpointPath : `${endpointPath}/${encodedBucket}`,
+    accessKeyId,
+    secretAccessKey,
+    bucket,
+    publicUrl
+  };
+}
+
+function createR2PresignedPut({ key, contentType, expiresIn = 900 }) {
+  const config = getR2Config();
+  const now = new Date();
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, "");
+  const dateStamp = amzDate.slice(0, 8);
+  const region = "auto";
+  const service = "s3";
+  const algorithm = "AWS4-HMAC-SHA256";
+  const credentialScope = `${dateStamp}/${region}/${service}/aws4_request`;
+  const signedHeaders = "content-type;host";
+  const canonicalUri =
+    `${config.endpointPath}/${encodeR2Path(key)}`.replace(/\/+/g, "/");
+
+  const query = {
+    "X-Amz-Algorithm": algorithm,
+    "X-Amz-Credential": `${config.accessKeyId}/${credentialScope}`,
+    "X-Amz-Date": amzDate,
+    "X-Amz-Expires": String(expiresIn),
+    "X-Amz-SignedHeaders": signedHeaders
+  };
+
+  const canonicalQuery = Object.keys(query)
+    .sort()
+    .map(name => `${encodeR2Query(name)}=${encodeR2Query(query[name])}`)
+    .join("&");
+
+  const canonicalHeaders =
+    `content-type:${contentType.trim()}\n` +
+    `host:${config.endpoint.host}\n`;
+
+  const canonicalRequest = [
+    "PUT",
+    canonicalUri,
+    canonicalQuery,
+    canonicalHeaders,
+    signedHeaders,
+    "UNSIGNED-PAYLOAD"
+  ].join("\n");
+
+  const stringToSign = [
+    algorithm,
+    amzDate,
+    credentialScope,
+    crypto.createHash("sha256").update(canonicalRequest).digest("hex")
+  ].join("\n");
+
+  const signature = crypto
+    .createHmac(
+      "sha256",
+      r2SigningKey(config.secretAccessKey, dateStamp, region, service)
+    )
+    .update(stringToSign)
+    .digest("hex");
+
+  const uploadUrl =
+    `${config.endpoint.origin}${canonicalUri}?${canonicalQuery}&X-Amz-Signature=${signature}`;
+  const publicUrl = `${config.publicUrl}/${encodeR2Path(key)}`;
+
+  return { uploadUrl, publicUrl, expiresIn };
+}
+
+function safeR2VideoExtension(filename, contentType) {
+  const byMime = {
+    "video/mp4": "mp4",
+    "video/quicktime": "mov",
+    "video/webm": "webm",
+    "video/x-m4v": "m4v",
+    "video/3gpp": "3gp",
+    "video/3gpp2": "3g2",
+    "video/mpeg": "mpeg",
+    "video/x-msvideo": "avi",
+    "video/x-matroska": "mkv",
+    "video/mp2t": "ts"
+  };
+
+  const mime = String(contentType || "").toLowerCase().split(";")[0].trim();
+  if (byMime[mime]) return byMime[mime];
+
+  const extension = String(filename || "")
+    .toLowerCase()
+    .split(".")
+    .pop()
+    .replace(/[^a-z0-9]/g, "");
+
+  return new Set([
+    "mp4", "mov", "m4v", "webm", "avi", "mkv",
+    "3gp", "3g2", "mpeg", "mpg", "mts", "m2ts", "ts"
+  ]).has(extension)
+    ? extension
+    : "";
+}
+
+router.post("/media-upload-r2-url", auth, express.json({ limit: "32kb" }), (req, res) => {
+  try {
+    const filename = String(req.body?.filename || "video").trim();
+    const contentType = String(req.body?.contentType || "").toLowerCase().split(";")[0].trim();
+    const size = Number(req.body?.size || 0);
+    const extension = safeR2VideoExtension(filename, contentType);
+
+    if (!extension || !contentType.startsWith("video/")) {
+      return res.status(400).json({
+        message: "Only recognized video files can be uploaded to R2."
+      });
+    }
+
+    if (!Number.isFinite(size) || size <= 0) {
+      return res.status(400).json({ message: "Video file size is required." });
+    }
+
+    if (size > 5 * 1024 * 1024 * 1024) {
+      return res.status(413).json({
+        message: "This video is larger than the current 5 GB direct-upload limit."
+      });
+    }
+
+    const userId = String(req.user.id || "user").replace(/[^a-zA-Z0-9_-]/g, "");
+    const day = new Date().toISOString().slice(0, 10);
+    const objectId = crypto.randomUUID();
+    const key = `posts/${userId}/${day}/${objectId}.${extension}`;
+
+    const signed = createR2PresignedPut({
+      key,
+      contentType,
+      expiresIn: 15 * 60
+    });
+
+    return res.json({
+      ...signed,
+      key,
+      contentType,
+      type: "video"
+    });
+  } catch (err) {
+    console.error("R2 PRESIGN ERROR:", err.message);
+    return res.status(500).json({
+      message: "Could not prepare the video upload."
+    });
+  }
+});
+
 function normalizeDirectMedia(value) {
   if (!Array.isArray(value)) return [];
 
   const cloudName = String(process.env.CLOUDINARY_CLOUD_NAME || "").trim();
-  const expectedPrefix = cloudName
+  const cloudinaryPrefix = cloudName
     ? `https://res.cloudinary.com/${cloudName}/`
     : "";
+  const r2PublicUrl = String(process.env.R2_PUBLIC_URL || "").trim().replace(/\/+$/, "");
+  const r2Prefix = r2PublicUrl ? `${r2PublicUrl}/` : "";
 
   return value
     .slice(0, 10)
@@ -815,10 +1013,12 @@ function normalizeDirectMedia(value) {
       url: String(item?.url || "").trim(),
       type: String(item?.type || "").toLowerCase() === "video" ? "video" : "image"
     }))
-    .filter(item =>
-      item.url &&
-      (!expectedPrefix || item.url.startsWith(expectedPrefix))
-    );
+    .filter(item => {
+      if (!item.url) return false;
+      if (item.type === "video" && r2Prefix && item.url.startsWith(r2Prefix)) return true;
+      if (cloudinaryPrefix && item.url.startsWith(cloudinaryPrefix)) return true;
+      return false;
+    });
 }
 
 /* ==========================
