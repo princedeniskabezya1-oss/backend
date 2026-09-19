@@ -4054,496 +4054,226 @@ router.patch(
   auth,
   analyticsContext,
   async (req, res) => {
-
     try {
+      const currentUserId = req.user?._id || req.user?.id;
+      const targetUserId = req.params.id;
 
-      /* ========================================
-         CURRENT USER
-      ======================================== */
-
-      const currentUserId =
-        req.user?._id ||
-        req.user?.id;
-
-
-      const targetUserId =
-        req.params.id;
-
-
-      /* ========================================
-         VALIDATE IDS
-      ======================================== */
-
-      if (
-        !currentUserId ||
-        !validObjectId(
-          currentUserId
-        )
-      ) {
-
-        return res
-          .status(401)
-          .json({
-            message:
-              "Current user is invalid."
-          });
-
+      if (!currentUserId || !validObjectId(currentUserId)) {
+        return res.status(401).json({ message: "Current user is invalid." });
       }
 
-
-      if (
-        !targetUserId ||
-        !validObjectId(
-          targetUserId
-        )
-      ) {
-
-        return res
-          .status(400)
-          .json({
-            message:
-              "Invalid user ID."
-          });
-
+      if (!targetUserId || !validObjectId(targetUserId)) {
+        return res.status(400).json({ message: "Invalid user ID." });
       }
 
-
-      if (
-        String(currentUserId) ===
-        String(targetUserId)
-      ) {
-
-        return res
-          .status(400)
-          .json({
-            message:
-              "You cannot follow yourself."
-          });
-
+      if (String(currentUserId) === String(targetUserId)) {
+        return res.status(400).json({ message: "You cannot follow yourself." });
       }
 
-
-      /* ========================================
-         LOAD BOTH ACCOUNTS
-
-         No Mongo transaction is required for this
-         social toggle.
-
-         Atomic $addToSet / $pull operations below
-         make each relationship update idempotent.
-      ======================================== */
-
-      const [
-        currentUser,
-        targetUser
-      ] =
-        await Promise.all([
-
-          User.findById(
-            currentUserId
-          )
-            .select(
-              "_id name role following status"
-            )
-            .lean(),
-
-          User.findById(
-            targetUserId
-          )
-            .select(
-              "_id name role followers status"
-            )
-            .lean()
-
-        ]);
-
+      const [currentUser, targetUser] = await Promise.all([
+        User.findById(currentUserId)
+          .select("_id name role following followRequestsSent status")
+          .lean(),
+        User.findById(targetUserId)
+          .select("_id name role followers status")
+          .lean()
+      ]);
 
       if (!currentUser) {
-
-        return res
-          .status(401)
-          .json({
-            message:
-              "Current user was not found."
-          });
-
+        return res.status(401).json({ message: "Current user was not found." });
       }
-
 
       if (!targetUser) {
-
-        return res
-          .status(404)
-          .json({
-            message:
-              "User not found."
-          });
-
+        return res.status(404).json({ message: "User not found." });
       }
 
-
-      if (
-        targetUser.status ===
-        "suspended"
-      ) {
-
-        return res
-          .status(403)
-          .json({
-            message:
-              "This account is unavailable."
-          });
-
+      if (targetUser.status === "suspended") {
+        return res.status(403).json({ message: "This account is unavailable." });
       }
 
-
-      /* ========================================
-         CURRENT RELATIONSHIP
-
-         following can contain ObjectIds.
-
-         Normalize every value before comparison.
-      ======================================== */
-
-      const alreadyFollowing =
-        Array.isArray(
-          currentUser.following
-        ) &&
-        currentUser.following.some(
-          id =>
-            String(
-              id?._id ||
-              id
-            ) ===
-            String(
-              targetUserId
-            )
-        );
-
-
-      let following =
-        false;
-
-
-      /* ========================================
-         UNFOLLOW
-      ======================================== */
-
-      if (alreadyFollowing) {
-
-        await Promise.all([
-
-          User.updateOne(
-            {
-              _id:
-                currentUserId
-            },
-            {
-              $pull: {
-                following:
-                  targetUserId
-              }
-            }
-          ),
-
-          User.updateOne(
-            {
-              _id:
-                targetUserId
-            },
-            {
-              $pull: {
-                followers:
-                  currentUserId
-              }
-            }
-          )
-
-        ]);
-
-
-        following =
-          false;
-
-      }
-
-
-      /* ========================================
-         FOLLOW
-      ======================================== */
-
-      else {
-
-        await Promise.all([
-
-          User.updateOne(
-            {
-              _id:
-                currentUserId
-            },
-            {
-              $addToSet: {
-                following:
-                  targetUserId
-              }
-            }
-          ),
-
-          User.updateOne(
-            {
-              _id:
-                targetUserId
-            },
-            {
-              $addToSet: {
-                followers:
-                  currentUserId
-              }
-            }
-          )
-
-        ]);
-
-
-        following =
-          true;
-
-      }
-
-
-      /* ========================================
-         RELOAD TARGET FOLLOWER COUNT
-
-         Do not calculate this from the stale targetUser
-         document loaded before the update.
-      ======================================== */
-
-      const updatedTarget =
-        await User.findById(
-          targetUserId
-        )
-          .select(
-            "_id followers"
-          )
-          .lean();
-
-
-      const followersCount =
-        Array.isArray(
-          updatedTarget?.followers
-        )
-          ? updatedTarget
-              .followers
-              .length
-          : 0;
-
-
-      /* ========================================
-         NOTIFICATION
-
-         Secondary operation.
-
-         A notification failure must NEVER undo or
-         reject a successful follow relationship.
-      ======================================== */
-
-      if (following) {
-
-        try {
-
-          await Notification.create({
-            user:
-              targetUserId,
-
-            type:
-              "follow",
-
-            sender:
-              currentUserId,
-
-            text:
-              `${
-                currentUser.name ||
-                "Someone"
-              } started following you`,
-
-            link:
-              `/public-profile.html?id=${currentUserId}`
-          });
-
-        } catch (
-          notificationError
-        ) {
-
-          console.warn(
-            "FOLLOW NOTIFICATION ERROR:",
-            notificationError?.message ||
-            notificationError
-          );
-
-        }
-
-      }
-
-
-      /* ========================================
-         SCHOOL FOLLOW ANALYTICS
-
-         Secondary operation.
-
-         Analytics must NEVER make the actual social
-         relationship fail.
-      ======================================== */
-
-      if (
-        targetUser.role ===
-        "school"
-      ) {
-
-        try {
-
-          await recordSchoolAnalyticsEvent({
-            req,
-
-            schoolId:
-              targetUserId,
-
-            eventType:
-              following
-                ? "follow"
-                : "unfollow",
-
-            entityType:
-              "school",
-
-            entityId:
-              targetUserId,
-
-            metadata: {
-              followerRole:
-                currentUser.role ||
-                "unknown"
-            }
-          });
-
-        } catch (
-          analyticsError
-        ) {
-
-          console.warn(
-            "FOLLOW ANALYTICS ERROR:",
-            analyticsError?.message ||
-            analyticsError
-          );
-
-        }
-
-      }
-
-
-      /* ========================================
-         REALTIME EVENT
-
-         Secondary operation.
-      ======================================== */
-
-      try {
-
-        const io =
-          req.app.get(
-            "io"
-          );
-
-
-        if (io) {
-
-          io.to(
-            String(
-              targetUserId
-            )
-          ).emit(
-            "user_follow_updated",
-            {
-              followerId:
-                currentUserId,
-
-              targetId:
-                targetUserId,
-
-              following,
-
-              followers:
-                followersCount
-            }
-          );
-
-        }
-
-      } catch (
-        socketError
-      ) {
-
-        console.warn(
-          "FOLLOW SOCKET ERROR:",
-          socketError?.message ||
-          socketError
-        );
-
-      }
-
-
-      /* ========================================
-         AUTHORITATIVE RESPONSE
-      ======================================== */
-
-      return res.json({
-
-        success:
-          true,
-
-        following,
-
-        targetId:
-          targetUserId,
-
-        followers:
-          followersCount
-
-      });
-
-
-    } catch (
-      error
-    ) {
-
-      console.error(
-        "FOLLOW ERROR:",
-        error
+      const alreadyFollowing = (currentUser.following || []).some(
+        id => String(id?._id || id) === String(targetUserId)
       );
 
+      const requestPending = (currentUser.followRequestsSent || []).some(
+        id => String(id?._id || id) === String(targetUserId)
+      );
 
-      return res
-        .status(500)
-        .json({
+      if (alreadyFollowing) {
+        await Promise.all([
+          User.updateOne(
+            { _id: currentUserId },
+            { $pull: { following: targetUserId, followRequestsSent: targetUserId } }
+          ),
+          User.updateOne(
+            { _id: targetUserId },
+            { $pull: { followers: currentUserId } }
+          )
+        ]);
 
-          message:
-            "Follow operation failed.",
+        await Notification.updateMany(
+          {
+            user: targetUserId,
+            sender: currentUserId,
+            type: "follow_request",
+            actionState: "pending"
+          },
+          {
+            $set: {
+              actionState: "declined",
+              dismissed: true,
+              dismissedAt: new Date(),
+              read: true,
+              readAt: new Date()
+            }
+          }
+        ).catch(() => null);
 
-          /*
-            Development/debug value.
+        const updatedTarget = await User.findById(targetUserId)
+          .select("_id followers")
+          .lean();
 
-            This is useful in Render logs and browser
-            debugging without exposing a stack trace.
-          */
+        const followersCount = Array.isArray(updatedTarget?.followers)
+          ? updatedTarget.followers.length
+          : 0;
 
-          code:
-            error?.code ||
-            null
+        if (targetUser.role === "school") {
+          try {
+            await recordSchoolAnalyticsEvent({
+              req,
+              schoolId: targetUserId,
+              eventType: "unfollow",
+              entityType: "school",
+              entityId: targetUserId,
+              metadata: { followerRole: currentUser.role || "unknown" }
+            });
+          } catch (analyticsError) {
+            console.warn("FOLLOW ANALYTICS ERROR:", analyticsError?.message || analyticsError);
+          }
+        }
 
+        req.app.get("io")?.to(String(targetUserId)).emit("user_follow_updated", {
+          followerId: currentUserId,
+          targetId: targetUserId,
+          following: false,
+          requested: false,
+          followers: followersCount
         });
 
-    }
+        return res.json({
+          success: true,
+          status: "unfollowed",
+          following: false,
+          requested: false,
+          targetId: targetUserId,
+          followers: followersCount
+        });
+      }
 
+      if (requestPending) {
+        await User.updateOne(
+          { _id: currentUserId },
+          { $pull: { followRequestsSent: targetUserId } }
+        );
+
+        await Notification.updateMany(
+          {
+            user: targetUserId,
+            sender: currentUserId,
+            type: "follow_request",
+            actionState: "pending"
+          },
+          {
+            $set: {
+              actionState: "declined",
+              dismissed: true,
+              dismissedAt: new Date(),
+              read: true,
+              readAt: new Date()
+            }
+          }
+        );
+
+        req.app.get("io")?.to(String(targetUserId)).emit("user_follow_request_updated", {
+          requesterId: currentUserId,
+          targetId: targetUserId,
+          requested: false
+        });
+
+        return res.json({
+          success: true,
+          status: "request_cancelled",
+          following: false,
+          requested: false,
+          targetId: targetUserId,
+          followers: Array.isArray(targetUser.followers) ? targetUser.followers.length : 0
+        });
+      }
+
+      await User.updateOne(
+        { _id: currentUserId },
+        { $addToSet: { followRequestsSent: targetUserId } }
+      );
+
+      const notification = await Notification.findOneAndUpdate(
+        {
+          user: targetUserId,
+          sender: currentUserId,
+          type: "follow_request",
+          actionState: "pending"
+        },
+        {
+          $set: {
+            text: `${currentUser.name || "Someone"} requested to follow you`,
+            link: `/public-profile.html?id=${currentUserId}`,
+            title: "Follow request",
+            entityType: "follow_request",
+            entityId: currentUserId,
+            priority: "normal",
+            actionState: "pending",
+            metadata: {
+              requesterId: String(currentUserId),
+              targetId: String(targetUserId),
+              actions: ["accept", "decline"]
+            },
+            dismissed: false,
+            read: false,
+            seen: false
+          },
+          $unset: {
+            dismissedAt: 1,
+            readAt: 1,
+            seenAt: 1
+          }
+        },
+        { new: true, upsert: true, setDefaultsOnInsert: true }
+      );
+
+      const io = req.app.get("io");
+      if (io) {
+        io.to(String(targetUserId)).emit("newNotification", notification);
+        io.to(String(targetUserId)).emit("user_follow_request_updated", {
+          requesterId: currentUserId,
+          targetId: targetUserId,
+          requested: true
+        });
+      }
+
+      return res.json({
+        success: true,
+        status: "requested",
+        following: false,
+        requested: true,
+        targetId: targetUserId,
+        followers: Array.isArray(targetUser.followers) ? targetUser.followers.length : 0
+      });
+    } catch (error) {
+      console.error("FOLLOW REQUEST ERROR:", error);
+      return res.status(500).json({
+        message: "Follow operation failed.",
+        code: error?.code || null
+      });
+    }
   }
 );
 
