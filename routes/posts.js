@@ -1346,6 +1346,12 @@ router.patch(
           Number(
             post.viewsCount || 0
           ) + 1;
+
+        await User.updateOne(
+          { _id: post.author },
+          { $inc: { postImpressions: 1 } },
+          { session: mongoSession }
+        );
       }
 
       post.viewsCount =
@@ -1452,6 +1458,14 @@ router.patch(
         "post_viewed",
         payload
       );
+
+      if(payload.firstLifetimeView){
+        getIo(req)?.to(String(post.author)).emit("post_impression_updated", {
+          postId: String(post._id),
+          postImpressionsDelta: 1,
+          viewsCount: Number(post.viewsCount || 0)
+        });
+      }
 
       return res.json(payload);
     } catch (error) {
