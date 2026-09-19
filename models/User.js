@@ -683,6 +683,14 @@ profileViews: {
   default: 0
 },
 
+uniqueProfileViewers: {
+  type: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User"
+  }],
+  default: []
+},
+
 postImpressions: {
   type: Number,
   default: 0
