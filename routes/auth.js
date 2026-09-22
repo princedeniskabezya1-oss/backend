@@ -714,7 +714,76 @@ router.post(
    embeds the session ID inside the JWT.
 ============================================ */
 
-router.post("/verify-email",async(req,res)=>{try{const hash=tokenHash(req.body?.token);const user=await User.findOne({emailVerificationTokenHash:hash,emailVerificationTokenExpires:{$gt:new Date()}}).select("+emailVerificationTokenHash +emailVerificationTokenExpires");if(!user)return res.status(400).json({message:"This verification link is invalid or has expired."});user.emailVerified=true;user.emailVerificationTokenHash=null;user.emailVerificationTokenExpires=null;await user.save();return res.json({message:"Email verified successfully. You can now sign in."});}catch(error){console.error("VERIFY EMAIL ERROR:",error);return res.status(500).json({message:"Unable to verify email right now."});}});
+router.post("/verify-email",async(req,res)=>{
+  try{
+    const rawToken=String(req.body?.token||"").trim();
+    const verificationUserId=String(req.body?.userId||"").trim();
+
+    if(!rawToken){
+      return res.status(400).json({
+        message:"The verification link is missing its secure token.",
+        code:"VERIFICATION_TOKEN_MISSING"
+      });
+    }
+
+    const hash=tokenHash(rawToken);
+    const user=await User.findOne({
+      emailVerificationTokenHash:hash
+    }).select("+emailVerificationTokenHash +emailVerificationTokenExpires");
+
+    if(user){
+      if(user.emailVerified===true){
+        user.emailVerificationTokenHash=null;
+        user.emailVerificationTokenExpires=null;
+        await user.save().catch(()=>{});
+        return res.json({
+          message:"Your email is already verified. You can sign in.",
+          alreadyVerified:true
+        });
+      }
+
+      const expiresAt=user.emailVerificationTokenExpires
+        ? new Date(user.emailVerificationTokenExpires).getTime()
+        : 0;
+
+      if(!expiresAt || expiresAt<=Date.now()){
+        return res.status(400).json({
+          message:"This verification link has expired. Request a new verification email.",
+          code:"VERIFICATION_LINK_EXPIRED"
+        });
+      }
+
+      user.emailVerified=true;
+      user.emailVerificationTokenHash=null;
+      user.emailVerificationTokenExpires=null;
+      await user.save();
+
+      return res.json({
+        message:"Email verified successfully. You can now sign in."
+      });
+    }
+
+    if(/^[a-f0-9]{24}$/i.test(verificationUserId)){
+      const knownUser=await User.findById(verificationUserId).select("emailVerified");
+      if(knownUser?.emailVerified===true){
+        return res.json({
+          message:"Your email is already verified. You can sign in.",
+          alreadyVerified:true
+        });
+      }
+    }
+
+    return res.status(400).json({
+      message:"This verification link is no longer valid. Request a new verification email.",
+      code:"VERIFICATION_LINK_INVALID"
+    });
+  }catch(error){
+    console.error("VERIFY EMAIL ERROR:",error);
+    return res.status(500).json({
+      message:"Unable to verify email right now."
+    });
+  }
+});
 
 router.post("/resend-verification",async(req,res)=>{try{const email=String(req.body?.email||"").toLowerCase().trim();const generic={message:"If that account needs verification, a new email has been sent."};if(!validEmail(email)||!mailConfigured())return res.json(generic);const user=await User.findOne({email}).select("+emailVerificationTokenHash +emailVerificationTokenExpires");if(!user||user.emailVerified!==false)return res.json(generic);const token=secureToken();user.emailVerificationTokenHash=tokenHash(token);user.emailVerificationTokenExpires=new Date(Date.now()+EMAIL_VERIFICATION_DURATION_MS);await user.save();await sendVerificationEmail(user,token);return res.json(generic);}catch(error){console.error("RESEND VERIFICATION ERROR:",error);return res.status(500).json({message:"Unable to send verification email right now."});}});
 
