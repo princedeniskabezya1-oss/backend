@@ -103,7 +103,7 @@ async function sendMail({to,subject,title,message,buttonLabel,buttonUrl}){
 }
 
 async function sendVerificationEmail(user,token){
-  const url=`${frontendUrl()}/account-access.html?mode=verify&token=${encodeURIComponent(token)}`;
+  const url=`${frontendUrl()}/account-access.html?mode=verify&token=${encodeURIComponent(token)}&uid=${encodeURIComponent(String(user._id||""))}`;
   return sendMail({
     to:user.email,
     subject:"Verify your AIFT email address",
