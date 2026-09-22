@@ -8,6 +8,7 @@ const router = express.Router();
 
 const User = require("../models/User");
 const Job = require("../models/Job");
+const Post = require("../models/Post");
 const Application = require("../models/Application");
 const Notification = require("../models/Notification");
 
@@ -4535,10 +4536,52 @@ res.json(
 /* ============================================
    NETWORK
 ============================================ */
+router.get("/network/search", async (req, res) => {
+  try {
+    const term = String(req.query.q || "").trim().slice(0, 80);
+    if (term.length < 2) return res.json({ users: [], jobs: [], posts: [] });
+    const pattern = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
+    const visibleUser = {
+      role: { $ne: "admin" },
+      isPublic: { $ne: false },
+      allowProfileIndexing: { $ne: false },
+      status: { $nin: ["suspended", "deactivated"] },
+      isBlockedByEmployer: { $ne: true }
+    };
+    const [users, jobs, posts] = await Promise.all([
+      User.find({ ...visibleUser, $or: [
+        { name: pattern }, { companyName: pattern }, { schoolName: pattern },
+        { headline: pattern }, { profession: pattern }, { bio: pattern },
+        { location: pattern }, { skills: pattern }, { languages: pattern }
+      ] }).select("_id name companyName schoolName headline profession role profileImage").limit(8).lean(),
+      Job.find({ status: "active", $or: [
+        { title: pattern }, { company: pattern }, { location: pattern },
+        { description: pattern }, { skills: pattern }
+      ] }).select("_id title company location employerId").populate("employerId", "role companyName profileImage").limit(12).lean(),
+      Post.find({ isHiddenByAdmin: { $ne: true }, groupId: null, text: pattern })
+        .select("_id text author").populate("author", "role name profileImage isPublic allowProfileIndexing status")
+        .sort({ createdAt: -1 }).limit(16).lean()
+    ]);
+    res.json({
+      users,
+      jobs: jobs.filter(job => job.employerId && job.employerId.role !== "admin").slice(0, 8)
+        .map(({ employerId, ...job }) => ({ ...job, companyName: employerId.companyName || job.company, companyLogo: employerId.profileImage })),
+      posts: posts.filter(post => post.author && post.author.role !== "admin" &&
+        post.author.isPublic !== false && post.author.allowProfileIndexing !== false &&
+        !["suspended", "deactivated"].includes(post.author.status)).slice(0, 8)
+        .map(({ author, ...post }) => ({ ...post, author: { name: author.name, profileImage: author.profileImage } }))
+    });
+  } catch (err) {
+    console.error("NETWORK SEARCH ERROR:", err);
+    res.status(500).json({ message: "Search unavailable" });
+  }
+});
+
 router.get("/network", auth, async (req, res) => {
   try {
     const users = await User.find({
-      _id: { $ne: req.user.id }
+      _id: { $ne: req.user.id },
+      role: { $ne: "admin" }
     }).select("_id name email headline bio role profileImage bannerImage followers following skills languages certifications profession availability workPreference yearsOfExperience aiftVerified aiftCertified department course companyId teamRole isBlockedByEmployer education experience expectedSalary companyName industry schoolName programs location");
 
     res.json(users);
@@ -5335,9 +5378,9 @@ router.get(
 ============================================ */
 router.get("/:id/cv/inline", async (req, res) => {
   try {
-    const user = await User.findById(req.params.id).select("cvUrl showCV isPublic");
+    const user = await User.findById(req.params.id).select("cvUrl showCV isPublic role");
 
-    if (!user || !user.cvUrl) {
+    if (!user || user.role === "admin" || !user.cvUrl) {
       return res.status(404).send("CV not found");
     }
 
@@ -5380,11 +5423,11 @@ router.get("/:id/public", async (req, res) => {
       )
       .populate(
         "companyId",
-        "name companyName profileImage bannerImage headline"
+        "name companyName profileImage bannerImage headline role"
       )
       .populate(
         "schoolId",
-        "name schoolName schoolLogo schoolBanner"
+        "name schoolName schoolLogo schoolBanner role"
       );
 
     if (!user) {
@@ -5393,11 +5436,20 @@ router.get("/:id/public", async (req, res) => {
       });
     }
 
+    if (user.role === "admin") {
+      return res.status(404).json({ message: "User not found" });
+    }
+
     if(user.isPublic === false){
       return res.status(403).json({
         message: "This profile is private"
       });
     }
+
+    user.followers = (user.followers || []).filter(item => item?.role !== "admin");
+    user.following = (user.following || []).filter(item => item?.role !== "admin");
+    if(user.companyId?.role === "admin") user.companyId = null;
+    if(user.schoolId?.role === "admin") user.schoolId = null;
 
     let posts = [];
 
