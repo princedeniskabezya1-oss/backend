@@ -5848,12 +5848,21 @@ router.get("/activity", auth, async (req, res) => {
 router.get("/suggestions", auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id);
+    const excludedIds = [
+      req.user.id,
+      ...(user.following || []),
+      ...(user.followRequestsSent || [])
+    ];
 
     const suggestions = await User.find({
-      _id: { $ne: req.user.id, $nin: user.following || [] }
+      _id: { $nin: excludedIds },
+      role: { $ne: "admin" },
+      status: { $nin: ["suspended", "deactivated"] },
+      isPublic: { $ne: false },
+      allowProfileIndexing: { $ne: false }
     })
       .limit(5)
-      .select("name profileImage headline role");
+      .select("name companyName profileImage headline profession role");
 
     res.json(suggestions);
   } catch (err) {
